@@ -106,6 +106,7 @@ def _validate_and_load(path_str: str) -> None:
 
     # Step 5: 검증 통과 → dataset_meta 구성 및 저장
     meta = _build_dataset_meta(root)
+    _handle_path_change(str(root))
     st.session_state["dataset_path"] = str(root)
     st.session_state["dataset_meta"] = meta
     st.success("데이터셋 구조 검증 완료.")
@@ -293,6 +294,15 @@ def _render_thumbnails(root: Path, meta: dict) -> None:
 # ---------------------------------------------------------------------------
 # 내부 헬퍼
 # ---------------------------------------------------------------------------
+
+def _handle_path_change(new_path: str) -> None:
+    """새 경로가 기존 dataset_path와 다를 때 하위 session_state 초기화."""
+    if new_path != st.session_state.get("dataset_path"):
+        st.session_state["preprocessing_config"] = None
+        st.session_state["model_config"] = None
+        st.session_state["device_info"] = None
+        # experiments, selected_experiment_id는 유지 (이전 실험 보존)
+
 
 def _clear_dataset_state() -> None:
     st.session_state["dataset_path"] = None

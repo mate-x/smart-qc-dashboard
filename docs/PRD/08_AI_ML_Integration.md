@@ -5,6 +5,15 @@
 > **버전**: v1.0
 > **작성일**: 2026-05-08
 > **중요**: 이 문서는 ML 구현의 Single Source of Truth다. Anomalib API 클래스명·파라미터 매핑·알고리즘 수식은 이 문서에서 확정되며, `model_factory.py`, `training_worker.py`, `image_utils.py` 구현 시 이 문서와 100% 일치해야 한다.
+>
+> ⚠️ **[2026-05-09 정오표 적용]**: 05/06/07 문서 작성 후 아래 항목이 수정됐다. 구현 시 본문보다 **Z절 정오표**를 우선 적용한다.
+> - `B.2.2` ImageNet penalty 경로 및 fallback 정책 수정
+> - `B.6` TrainingWorker 생성자 파라미터 (`device_info` → `device`)
+> - `B.6` `stopped` 메시지에 `step` 필드 추가
+> - `B.6` `completed` 메시지에 `anomaly_maps` 필드 공식화
+> - `C.1` configs.yaml 저장 방식 (`shutil.copy` → `save_config_section`)
+> - `C.2` anomaly_maps 캐시 방식 (`session_state` 직접 접근 → `cache_manager`)
+> - `B.7.2` `load_model_for_inference()` 시그니처 (`exp_id` 파라미터 추가)
 
 ---
 
@@ -1421,3 +1430,273 @@ Then:   반환값 ≈ np.percentile(normal_scores, 95)
 ---
 
 *다음 문서*: [05_Data_Model_and_Storage_Strategy.md](./05_Data_Model_and_Storage_Strategy.md)
+
+---
+
+## Z. 정오표 (Errata)
+
+> **적용 기준**: 2026-05-09. 05/06/07 문서 확정 이후 본문과 충돌하는 항목을 아래에서 확정한다.  
+> 구현 시 **본문 코드보다 이 절의 수정 코드를 우선 적용**한다.
+
+---
+
+### Z.1 B.2.2 — ImageNet Penalty 경로 및 Fallback 정책
+
+**본문 (삭제):**
+```python
+# B.2.2 본문 — 사용 금지
+imagenet_path = Path("/app/dataset/imagenet_penalty")
+if not imagenet_path.exists():
+    from torchvision.datasets import FakeData
+    imagenet_dataset = FakeData(size=1000, image_size=(3, 256, 256), ...)
+```
+
+**수정 (적용):**
+```python
+# utils/storage.py 에서 임포트 — 05절 §2.4 확정 경로
+from utils.storage import IMAGENET_PENALTY_DIR, validate_imagenet_penalty_dir
+
+# TrainingWorker.run() 진입 직후 precondition 체크 (07절 §B.3 step 2와 동일)
+if model_config["model_type"] == "efficientad":
+    validate_imagenet_penalty_dir()   # 실패 시 ValueError → error 메시지 큐 전송 후 종료
+    imagenet_path = IMAGENET_PENALTY_DIR
+
+# FakeData fallback 없음 — validate_imagenet_penalty_dir()가 경로 부재 시 raise
+```
+
+**근거**: 05절 §2.4에서 `IMAGENET_PENALTY_DIR = Path("./dataset/imagenet_penalty")`로 확정.
+FakeData fallback은 재현성을 훼손하므로 제거. 경로 검증은 학습 시작 전 precondition으로 처리.
+
+---
+
+### Z.2 B.6 — TrainingWorker 생성자 파라미터
+
+**본문 (삭제):**
+```python
+class TrainingWorker(threading.Thread):
+    def __init__(
+        self,
+        experiment_id: str,
+        model_config: dict,
+        preprocessing_config: dict,
+        dataset_path: str,
+        device_info: dict,          # ← 삭제
+        stop_event: threading.Event,
+        result_queue: queue.Queue,
+    ):
+        self.device_str = device_info["device"]   # ← 삭제
+        self.log_file = Path(f"./logs/{experiment_id}.log")  # ← 삭제
+```
+
+**수정 (적용):**
+```python
+class TrainingWorker(threading.Thread):
+    def __init__(
+        self,
+        experiment_id: str,
+        model_config: dict,
+        preprocessing_config: dict,
+        dataset_path: str,
+        device: str,                # ← device_info dict 아님, 문자열 직접 전달
+        stop_event: threading.Event,
+        result_queue: queue.Queue,
+    ):
+        super().__init__(daemon=True)
+        self.experiment_id = experiment_id
+        self.model_config = model_config
+        self.preprocessing_config = preprocessing_config
+        self.dataset_path = dataset_path
+        self.device = device                        # ← self.device_str 아님
+        self.stop_event = stop_event
+        self.result_queue = result_queue
+        self._log_writer = None                     # get_log_writer()로 lazy init
+```
+
+**근거**: 07절 §B.2에서 `_handle_start_training()`이 `device: str`를 직접 전달하는 것으로 확정.
+`log_file` 직접 관리 금지 — 06절 §C.2 `get_log_writer(experiment_id)` 사용.
+
+---
+
+### Z.3 B.6 — `stopped` 메시지 `step` 필드 추가
+
+**본문 (삭제):**
+```python
+result_queue.put({"type": "stopped"})
+```
+
+**수정 (적용):**
+```python
+# _train_efficientad(), _train_patchcore() 내부 — stop_event 감지 시점
+result_queue.put({"type": "stopped", "step": current_step})
+```
+
+`_train_efficientad` 및 `_train_patchcore`는 중단된 시점의 `current_step`(int)을 추적해  
+`stopped` 메시지에 포함해야 한다. 이는 06절 `StoppedMessage` TypedDict의 `step` 필드와 일치한다:
+
+```python
+# 06절 §B.3.2 (참조)
+class StoppedMessage(TypedDict):
+    type: Literal["stopped"]
+    step: int      # 중단 시점 step (0-based)
+```
+
+**근거**: 06절 §B.3.2에서 `StoppedMessage`에 `step: int` 필드 확정. tab4 UI가 "N step 완료 후 중단" 표시에 사용.
+
+---
+
+### Z.4 B.6 — `completed` 메시지 `anomaly_maps` 필드 공식화
+
+**본문 (부분 삭제):**
+```python
+result_queue.put({
+    "type": "completed",
+    "y_true": y_true,
+    "anomaly_scores": anomaly_scores,
+    "model": engine.model,
+    "duration_seconds": int(elapsed),
+})
+```
+
+**수정 (적용):**
+```python
+result_queue.put({
+    "type": "completed",
+    "y_true": y_true,
+    "anomaly_scores": anomaly_scores,
+    "anomaly_maps": anomaly_maps,   # ← 추가: dict[str, np.ndarray] — key = 이미지 경로
+    "image_paths": image_paths,     # ← 추가: list[str] — anomaly_maps key 순서 보장
+    "model": engine.model,
+    "duration_seconds": int(elapsed),
+})
+```
+
+06절 `CompletedMessage` TypedDict 전체:
+```python
+class CompletedMessage(TypedDict):
+    type: Literal["completed"]
+    y_true: list[int]
+    anomaly_scores: list[float]
+    anomaly_maps: dict[str, np.ndarray]   # key = 이미지 경로
+    image_paths: list[str]
+    model: object
+    duration_seconds: int
+```
+
+**근거**: tab4 핸들러가 `set_anomaly_map_cache()`를 호출할 때 `anomaly_maps`와 `image_paths` 모두 필요 (Z.6 참조).
+
+---
+
+### Z.5 C.1 — configs.yaml 저장 방식
+
+**본문 (삭제):**
+```python
+import shutil
+shutil.copy("./configs.yaml", cfg_path)
+```
+
+**수정 (적용):**
+```python
+from utils.config_manager import save_config_section
+
+# save_completed_experiment() Stage 2 내부 (05절 §3.2 프로토콜 참조)
+cfg_path = model_dir / "configs.yaml"
+for section, data in [
+    ("model", experiment_record["model_config"]),
+    ("preprocessing", experiment_record["preprocessing_config"]),
+    ("experiment", {
+        "experiment_id": experiment_id,
+        "model_type": experiment_record["model_type"],
+        "dataset_path": experiment_record["dataset_path"],
+    }),
+]:
+    save_config_section(section, data, path=cfg_path)
+```
+
+**근거**: 07절 §B.2 `_handle_start_training()`이 `save_config_section("experiment", ...)` 패턴을 사용하는 것으로 확정.
+`shutil.copy`는 실행 시점 전역 `./configs.yaml`을 참조하므로 실험별 설정 추적이 불가능.
+
+---
+
+### Z.6 C.2 — anomaly_maps 캐시 방식
+
+**본문 (삭제):**
+```python
+# tab4 completed 핸들러 — 사용 금지
+st.session_state[f"_anomaly_maps_{exp_id}"] = msg["anomaly_maps"]
+```
+
+**수정 (적용):**
+```python
+from utils.cache_manager import set_anomaly_map_cache
+
+# tab4 _handle_terminal() 내부 — completed 분기
+def _handle_terminal(msg: dict) -> None:
+    if msg["type"] == "completed":
+        set_anomaly_map_cache(
+            experiment_id=st.session_state["current_experiment_id"],
+            data={
+                "anomaly_maps": msg["anomaly_maps"],   # dict[str, np.ndarray]
+                "image_paths": msg["image_paths"],     # list[str]
+            },
+        )
+        # ... 나머지 session_state 업데이트
+```
+
+`set_anomaly_map_cache()` 내부에서 LRU 3-entry 상한 및 `cached_at` 타임스탬프 관리 (05절 §4.2 확정):
+```python
+# utils/cache_manager.py (05절 §4.2)
+MAX_ANOMALY_MAP_CACHE = 3
+
+def set_anomaly_map_cache(experiment_id: str, data: dict) -> None:
+    cached_keys = [k for k in st.session_state if k.startswith("_anomaly_maps_")]
+    if len(cached_keys) >= MAX_ANOMALY_MAP_CACHE:
+        oldest = min(cached_keys, key=lambda k: st.session_state[k]["cached_at"])
+        del st.session_state[oldest]
+    st.session_state[f"_anomaly_maps_{experiment_id}"] = {**data, "cached_at": time.time()}
+```
+
+**근거**: 05절 §4.2에서 LRU 캐시 상한·eviction 정책 확정. session_state 직접 접근 시 상한 초과 위험.
+
+---
+
+### Z.7 B.7.2 — `load_model_for_inference()` 시그니처
+
+**본문 (삭제):**
+```python
+def load_model_for_inference(
+    model_path: str | Path,
+    model_config: dict,
+    device: str,
+) -> AnomalyModule:
+```
+
+**수정 (적용):**
+```python
+def load_model_for_inference(
+    experiment_id: str,             # ← 추가: 로그 컨텍스트 및 경로 검증용
+    model_path: str | Path,
+    model_config: dict,
+    device: str,
+) -> AnomalyModule:
+    """
+    experiment_id는 로드 실패 시 로그에 context를 포함하기 위해 사용한다.
+    실제 모델 로드 경로는 model_path가 결정한다.
+    """
+```
+
+호출 측 (tab6 pipeline — 07절 §C.3):
+```python
+model = load_model_for_inference(
+    experiment_id=exp_id,
+    model_path=st.session_state["selected_model_path"],
+    model_config=st.session_state["selected_model_config"],
+    device=st.session_state["device"],
+)
+```
+
+**근거**: 07절 §C.3 tab6 pipeline에서 `load_model_for_inference(exp_id, model_path, model_config, device)` 4-인자 형태로 확정.
+`experiment_id`는 오류 로그 context 제공 및 향후 캐시 키 확장을 위해 필수.
+
+---
+
+*[Z절 끝 — 2026-05-09 정오표]*

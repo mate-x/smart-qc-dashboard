@@ -301,7 +301,7 @@ Docker 볼륨 마운트로 런타임에 연결 (09절 §H.2).
 
 ```dockerfile
 # Dockerfile — 보안 강화 시
-FROM nvidia/cuda:12.4.1-cudnn9-runtime-ubuntu22.04
+FROM nvcr.io/nvidia/cuda:12.4.1-runtime-ubuntu22.04
 
 # 비루트 사용자 생성
 RUN groupadd -r appuser && useradd -r -g appuser appuser

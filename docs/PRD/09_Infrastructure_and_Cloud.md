@@ -110,7 +110,7 @@ Python 3.12 (확정 — 00절 §10.2 기준)
 | **12.4** | **9.1** | ≥ 2.3.x | **확정 — 00절 §10.2 기준** |
 
 NVIDIA 드라이버 버전: CUDA 12.4 기준 **550.xx 이상**.  
-베이스 Docker 이미지: `nvidia/cuda:12.4.1-cudnn9-runtime-ubuntu22.04` (00절 §10.2).
+베이스 Docker 이미지: `nvcr.io/nvidia/cuda:12.4.1-runtime-ubuntu22.04` + `libcudnn9-cuda-12` (apt 설치, 00절 §10.2).
 
 > GPU 없는 환경에서는 CUDA 설치 불필요. `device_info.device == "cpu"` 자동 선택.
 
@@ -410,7 +410,7 @@ fastReruns = true          # 빠른 rerun 활성화 (tab4 폴링 최적화)
 ### H.1 Dockerfile
 
 ```dockerfile
-FROM nvidia/cuda:12.4.1-cudnn9-runtime-ubuntu22.04
+FROM nvcr.io/nvidia/cuda:12.4.1-runtime-ubuntu22.04
 
 WORKDIR /app
 

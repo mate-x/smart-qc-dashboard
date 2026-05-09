@@ -768,7 +768,7 @@ LOG_FORMAT = {
 | **Python** | 3.12 |
 | **CUDA** | 12.4 |
 | **cuDNN** | 9.1 |
-| **베이스 Docker 이미지** | `nvidia/cuda:12.4.1-cudnn9-runtime-ubuntu22.04` |
+| **베이스 Docker 이미지** | `nvcr.io/nvidia/cuda:12.4.1-cudnn9-runtime-ubuntu22.04` |
 
 ### 10.3 지원 이미지 포맷
 

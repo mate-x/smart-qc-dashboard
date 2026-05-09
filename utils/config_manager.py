@@ -8,10 +8,14 @@ import yaml
 _logger = logging.getLogger(__name__)
 
 
+class ConfigLoadError(Exception):
+    """YAML 파일 파싱 실패 시 발생하는 예외."""
+
+
 def load_config(path: str | Path = "./configs.yaml") -> dict:
     """
     YAML 파일 로드. 파일 미존재 시 빈 dict 반환.
-    YAML 파싱 실패 시 빈 dict 반환 + WARNING 로그 (예외 전파 금지 — PRD §4.2).
+    YAML 파싱 실패 시 ConfigLoadError raise.
     """
     p = Path(path)
     if not p.exists():
@@ -21,11 +25,11 @@ def load_config(path: str | Path = "./configs.yaml") -> dict:
             return yaml.safe_load(f) or {}
     except yaml.YAMLError as e:
         _logger.warning(
-            "ERR_CONFIG_LOAD_FAILED: YAML 파싱 실패, 빈 dict 반환. path=%s error=%s",
+            "ERR_CONFIG_LOAD_FAILED: YAML 파싱 실패. path=%s error=%s",
             p,
             e,
         )
-        return {}
+        raise ConfigLoadError(f"ERR_CONFIG_LOAD_FAILED: {p}: {e}") from e
 
 
 def save_config_section(

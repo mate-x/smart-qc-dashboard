@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+import torch
 
 import utils.storage as storage
 from utils.storage import load_history, save_completed_experiment
@@ -18,7 +19,8 @@ def isolated_dirs(tmp_path, monkeypatch):
 
 def _fake_model():
     mock = MagicMock()
-    mock.state_dict.return_value = {"layer": MagicMock()}
+    # MagicMock 대신 실제 텐서나 빈 딕셔너리를 반환하도록 수정
+    mock.state_dict.return_value = {"layer_weight": torch.randn(1, 1)} 
     return mock
 
 

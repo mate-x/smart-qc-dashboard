@@ -120,6 +120,40 @@ streamlit run app.py
 
 ---
 
+## 테스트
+
+### 빠른 실행 (단위 + 통합, ML 제외)
+
+```bash
+pytest tests/unit/ tests/integration/ -m "not slow" -v
+```
+
+### 커버리지 포함
+
+```bash
+pytest tests/unit/ tests/integration/ -m "not slow" --cov=utils --cov-report=term-missing
+```
+
+### 전체 실행 (E2E 포함, ML 환경 필요)
+
+```bash
+pytest -v
+```
+
+### 테스트 구조
+
+```
+tests/
+├── conftest.py             # 공유 픽스처 (mvtec_dataset 등)
+├── unit/                   # 단위 테스트 — utils 함수별
+├── integration/            # 통합 테스트 — 모듈 간 연동
+└── e2e/                    # E2E 테스트 (@pytest.mark.slow, ML 환경 필요)
+```
+
+> `slow` 마커가 붙은 테스트는 ML 라이브러리(anomalib 등)가 설치된 환경에서만 실행하세요.
+
+---
+
 ## 프로젝트 구조
 
 ```
@@ -132,6 +166,7 @@ smart-qc-dashboard/
 ├── utils/                  # 비즈니스 로직 · ML 래퍼
 ├── components/             # 사이드바 공통 컴포넌트
 ├── scripts/                # 환경 검증 스크립트
+├── tests/                  # pytest 테스트 (unit / integration / e2e)
 │
 ├── experiments/            # history.json (자동 생성)
 ├── models/                 # 학습된 모델 가중치 (gitignore)

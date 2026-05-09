@@ -1,8 +1,12 @@
-FROM nvcr.io/nvidia/cuda:12.4.1-cudnn9-runtime-ubuntu22.04
+FROM nvcr.io/nvidia/cuda:12.4.1-runtime-ubuntu22.04
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y python3.12 python3.12-venv python3.12-dev curl \
+RUN apt-get update && apt-get install -y software-properties-common \
+    && add-apt-repository ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y \
+       python3.12 python3.12-venv python3.12-dev curl \
+       libcudnn9-cuda-12 \
     && curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12 \
     && rm -rf /var/lib/apt/lists/*
 

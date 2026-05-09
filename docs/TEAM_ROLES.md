@@ -211,31 +211,31 @@
 
 | 일자 | 시간 블록 | 팀원 | 태스크명 | 참조 PRD (00 항상 포함) |
 |------|----------|------|---------|----------------------|
-| Day 1 | 오전 1h (09–10) | A | configs.yaml 스키마 설계 | 05_Data_Model_and_Storage_Strategy.md, 09_Infrastructure_and_Cloud.md |
-| Day 1 | 오전 1h (09–10) | B | session_state 키 명세 확정 | 05_Data_Model_and_Storage_Strategy.md, 07_Backend_Service_Design.md |
-| Day 1 | 오전 1h (09–10) | C | 프로젝트 구조·Git 세팅 | 04_System_Architecture.md, 09_Infrastructure_and_Cloud.md |
-| Day 1 | 오전 2h (10–12) | A | 탭1 구현 | 03_Functional_Requirements.md, 06_API_Specification.md |
-| Day 1 | 오전 2h (10–12) | B | 탭3 EfficientAD 파트 구현 | 03_Functional_Requirements.md, 08_AI_ML_Integration.md |
-| Day 1 | 오전 2h (10–12) | C | 탭3 PatchCore 파트 구현 | 03_Functional_Requirements.md, 08_AI_ML_Integration.md |
-| Day 1 | 오후 1h (13–14) | A | 탭1 보완 (Grayscale·포맷 필터링) | 03_Functional_Requirements.md, 06_API_Specification.md |
-| Day 1 | 오후 1h (13–14) | B | 탭3 EfficientAD 보완 (고급 설정·Threshold) | 03_Functional_Requirements.md, 08_AI_ML_Integration.md |
-| Day 1 | 오후 1h (13–14) | C | 탭3 PatchCore 보완 (고급 설정·Threshold) | 03_Functional_Requirements.md, 08_AI_ML_Integration.md |
-| Day 1 | 오후 3h (14–17) | A | 탭2 구현 | 03_Functional_Requirements.md, 07_Backend_Service_Design.md |
-| Day 1 | 오후 3h (14–17) | B | 탭4 EfficientAD 학습 루프 | 03_Functional_Requirements.md, 07_Backend_Service_Design.md, 08_AI_ML_Integration.md |
-| Day 1 | 오후 3h (14–17) | C | 탭4 PatchCore 학습 루프 | 03_Functional_Requirements.md, 07_Backend_Service_Design.md, 08_AI_ML_Integration.md |
+| Day 1 | 오전 1h (09–10) | A | configs.yaml 스키마 설계 | 04_System_Architecture.md, 05_Data_Model_and_Storage_Strategy.md, 09_Infrastructure_and_Cloud.md |
+| Day 1 | 오전 1h (09–10) | B | session_state 키 명세 확정 | 04_System_Architecture.md, 05_Data_Model_and_Storage_Strategy.md, 07_Backend_Service_Design.md |
+| Day 1 | 오전 1h (09–10) | C | 프로젝트 구조·Git 세팅 | 04_System_Architecture.md, 09_Infrastructure_and_Cloud.md, 10_Security_and_Compliance.md, 13_QA_and_Testing_Strategy.md, 14_Deployment_and_Release_Plan.md |
+| Day 1 | 오전 2h (10–12) | A | 탭1 구현 | 03_Functional_Requirements.md, 06_API_Specification.md, 10_Security_and_Compliance.md |
+| Day 1 | 오전 2h (10–12) | B | 탭3 EfficientAD 파트 구현 | 02_User_Personas_and_Use_Cases.md, 03_Functional_Requirements.md, 06_API_Specification.md, 08_AI_ML_Integration.md |
+| Day 1 | 오전 2h (10–12) | C | 탭3 PatchCore 파트 구현 | 02_User_Personas_and_Use_Cases.md, 03_Functional_Requirements.md, 06_API_Specification.md, 08_AI_ML_Integration.md |
+| Day 1 | 오후 1h (13–14) | A | 탭1 보완 (Grayscale·포맷 필터링) | 03_Functional_Requirements.md, 06_API_Specification.md, 10_Security_and_Compliance.md |
+| Day 1 | 오후 1h (13–14) | B | 탭3 EfficientAD 보완 (고급 설정·Threshold) | 02_User_Personas_and_Use_Cases.md, 03_Functional_Requirements.md, 06_API_Specification.md, 08_AI_ML_Integration.md |
+| Day 1 | 오후 1h (13–14) | C | 탭3 PatchCore 보완 (고급 설정·Threshold) | 02_User_Personas_and_Use_Cases.md, 03_Functional_Requirements.md, 06_API_Specification.md, 08_AI_ML_Integration.md |
+| Day 1 | 오후 3h (14–17) | A | 탭2 구현 | 02_User_Personas_and_Use_Cases.md, 03_Functional_Requirements.md, 06_API_Specification.md, 07_Backend_Service_Design.md, 08_AI_ML_Integration.md |
+| Day 1 | 오후 3h (14–17) | B | 탭4 EfficientAD 학습 루프 | 01_Product_Overview.md, 02_User_Personas_and_Use_Cases.md, 03_Functional_Requirements.md, 04_System_Architecture.md, 05_Data_Model_and_Storage_Strategy.md, 06_API_Specification.md, 07_Backend_Service_Design.md, 08_AI_ML_Integration.md, 11_Non_Functional_Requirements.md, 12_Observability_and_Operations.md |
+| Day 1 | 오후 3h (14–17) | C | 탭4 PatchCore 학습 루프 | 01_Product_Overview.md, 03_Functional_Requirements.md, 04_System_Architecture.md, 05_Data_Model_and_Storage_Strategy.md, 06_API_Specification.md, 07_Backend_Service_Design.md, 08_AI_ML_Integration.md, 11_Non_Functional_Requirements.md, 12_Observability_and_Operations.md |
 | Day 1 | 버퍼 (17–18) | A | 탭2 엣지케이스·리팩터링 | 03_Functional_Requirements.md |
-| Day 1 | 버퍼 (17–18) | B | 탭4 EfficientAD 중지 처리 | 07_Backend_Service_Design.md, 08_AI_ML_Integration.md |
-| Day 1 | 버퍼 (17–18) | C | 탭4 PatchCore 중지 처리 | 07_Backend_Service_Design.md, 08_AI_ML_Integration.md |
+| Day 1 | 버퍼 (17–18) | B | 탭4 EfficientAD 중지 처리 | 01_Product_Overview.md, 04_System_Architecture.md, 05_Data_Model_and_Storage_Strategy.md, 06_API_Specification.md, 07_Backend_Service_Design.md, 08_AI_ML_Integration.md, 12_Observability_and_Operations.md |
+| Day 1 | 버퍼 (17–18) | C | 탭4 PatchCore 중지 처리 | 01_Product_Overview.md, 04_System_Architecture.md, 05_Data_Model_and_Storage_Strategy.md, 06_API_Specification.md, 07_Backend_Service_Design.md, 08_AI_ML_Integration.md, 12_Observability_and_Operations.md |
 | Day 2 | 오전 1h (09–10) | A | 탭3·탭4 session_state 통합 지원 | 08_AI_ML_Integration.md |
 | Day 2 | 오전 1h (09–10) | B | 탭4 마무리 (history.json 저장 구조) | 05_Data_Model_and_Storage_Strategy.md, 08_AI_ML_Integration.md |
 | Day 2 | 오전 1h (09–10) | C | 탭4 단일 탭 병합 | 07_Backend_Service_Design.md, 08_AI_ML_Integration.md |
-| Day 2 | 오전 3h (10–13) | A | 탭6 구현 | 03_Functional_Requirements.md, 08_AI_ML_Integration.md |
-| Day 2 | 오전 3h (10–13) | B | 탭5 전반 (실험 목록·결과 상세) | 03_Functional_Requirements.md, 05_Data_Model_and_Storage_Strategy.md |
-| Day 2 | 오전 3h (10–13) | C | 탭5 후반 (비교 차트·모델 저장) | 03_Functional_Requirements.md, 05_Data_Model_and_Storage_Strategy.md |
-| Day 2 | 오후 1h (13–14) | A | 탭6 보완 (Score·FP/FN·다중 내보내기) | 03_Functional_Requirements.md |
+| Day 2 | 오전 3h (10–13) | A | 탭6 구현 | 03_Functional_Requirements.md, 04_System_Architecture.md, 05_Data_Model_and_Storage_Strategy.md, 06_API_Specification.md, 07_Backend_Service_Design.md, 08_AI_ML_Integration.md |
+| Day 2 | 오전 3h (10–13) | B | 탭5 전반 (실험 목록·결과 상세) | 02_User_Personas_and_Use_Cases.md, 03_Functional_Requirements.md, 05_Data_Model_and_Storage_Strategy.md, 11_Non_Functional_Requirements.md, 12_Observability_and_Operations.md |
+| Day 2 | 오전 3h (10–13) | C | 탭5 후반 (비교 차트·모델 저장) | 03_Functional_Requirements.md, 05_Data_Model_and_Storage_Strategy.md, 11_Non_Functional_Requirements.md |
+| Day 2 | 오후 1h (13–14) | A | 탭6 보완 (Score·FP/FN·다중 내보내기) | 03_Functional_Requirements.md, 07_Backend_Service_Design.md |
 | Day 2 | 오후 1h (13–14) | B | 탭5 UI 통합 | 03_Functional_Requirements.md |
-| Day 2 | 오후 1h (13–14) | C | Docker 구성 | 09_Infrastructure_and_Cloud.md, 14_Deployment_and_Release_Plan.md |
-| Day 2 | 오후 2h (14–16) | A·B·C | 통합 테스트 | 13_QA_and_Testing_Strategy.md |
+| Day 2 | 오후 1h (13–14) | C | Docker 구성 | 09_Infrastructure_and_Cloud.md, 10_Security_and_Compliance.md, 14_Deployment_and_Release_Plan.md |
+| Day 2 | 오후 2h (14–16) | A·B·C | 통합 테스트 | 01_Product_Overview.md, 04_System_Architecture.md, 08_AI_ML_Integration.md, 13_QA_and_Testing_Strategy.md |
 | Day 2 | 버퍼 (16–18) | A | 버그 수정·한국어 UI | 03_Functional_Requirements.md |
 | Day 2 | 버퍼 (16–18) | B | 버그 수정·재현성·로그 확인 | 11_Non_Functional_Requirements.md, 12_Observability_and_Operations.md |
 | Day 2 | 버퍼 (16–18) | C | 버그 수정·성능 측정 | 11_Non_Functional_Requirements.md |

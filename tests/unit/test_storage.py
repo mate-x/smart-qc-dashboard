@@ -48,21 +48,37 @@ class TestLoadSaveHistory:
 
 
 class TestValidateImagenetPenaltyDir:
-    def test_passes_with_valid_dir(self, tmp_path, monkeypatch):
+    def test_returns_true_with_valid_dir(self, tmp_path, monkeypatch):
         penalty_dir = tmp_path / "imagenet_penalty"
         penalty_dir.mkdir()
         (penalty_dir / "sample.jpg").write_bytes(b"fake")
         monkeypatch.setattr(storage, "IMAGENET_PENALTY_DIR", penalty_dir)
-        validate_imagenet_penalty_dir()
+        ok, count = validate_imagenet_penalty_dir()
+        assert ok is True
+        assert count == 1
 
-    def test_raises_when_dir_missing(self, tmp_path, monkeypatch):
+    def test_returns_false_when_dir_missing(self, tmp_path, monkeypatch):
         monkeypatch.setattr(storage, "IMAGENET_PENALTY_DIR", tmp_path / "nonexistent")
-        with pytest.raises(ValueError, match="존재하지 않습니다"):
-            validate_imagenet_penalty_dir()
+        ok, count = validate_imagenet_penalty_dir()
+        assert ok is False
+        assert count == 0
 
-    def test_raises_when_dir_empty(self, tmp_path, monkeypatch):
+    def test_returns_false_when_dir_empty(self, tmp_path, monkeypatch):
         empty_dir = tmp_path / "empty"
         empty_dir.mkdir()
         monkeypatch.setattr(storage, "IMAGENET_PENALTY_DIR", empty_dir)
-        with pytest.raises(ValueError, match="이미지 파일이 없습니다"):
-            validate_imagenet_penalty_dir()
+        ok, count = validate_imagenet_penalty_dir()
+        assert ok is False
+        assert count == 0
+
+    def test_counts_only_supported_formats(self, tmp_path, monkeypatch):
+        penalty_dir = tmp_path / "imagenet_penalty"
+        penalty_dir.mkdir()
+        (penalty_dir / "a.jpg").write_bytes(b"fake")
+        (penalty_dir / "b.png").write_bytes(b"fake")
+        (penalty_dir / "c.tiff").write_bytes(b"fake")   # 미지원 포맷
+        (penalty_dir / "d.txt").write_bytes(b"fake")    # 미지원 포맷
+        monkeypatch.setattr(storage, "IMAGENET_PENALTY_DIR", penalty_dir)
+        ok, count = validate_imagenet_penalty_dir()
+        assert ok is True
+        assert count == 2

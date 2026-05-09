@@ -20,7 +20,8 @@ SESSION_STATE_SCHEMA: dict = {
     # 탭4 내부 상태 (접두사 _ = 탭4 전용)
     "_stop_event": None,            # threading.Event | None
     "_result_queue": None,          # queue.Queue | None
-    "_progress": None,              # dict | None  {"step", "total", "loss"}
+    "_worker": None,                # TrainingWorker | None  — 단일 워커 보장(07 PRD §8.2)
+    "_progress": None,              # dict | None  {"step", "total", "loss", "elapsed"}
     "_log_lines": [],               # list[str]  최대 100줄
     "_loss_history": [],            # list[dict]  {"step": int, "loss": float}
 

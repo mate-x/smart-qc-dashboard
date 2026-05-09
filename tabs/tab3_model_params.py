@@ -11,6 +11,7 @@ import streamlit as st
 
 from utils.config_manager import ConfigLoadError, load_config, save_config_section
 from utils.messages import MSG
+from utils.storage import validate_imagenet_penalty_dir
 
 
 # ─────────────────────────────────────────────
@@ -273,6 +274,17 @@ def _render_efficientad_params() -> dict:
                     key="ead_pen_bs",
                 )
             )
+
+        # §Z.1: imagenet_penalty_weight > 0 시 디렉터리 검증 피드백
+        if imagenet_pw > 0:
+            try:
+                validate_imagenet_penalty_dir()
+                st.caption("ImageNet 패널티 디렉터리: 이미지 확인됨")
+            except ValueError as e:
+                st.warning(
+                    f"{e} — imagenet_penalty_weight > 0이면 EfficientAD 학습이 실패합니다. "
+                    "이미지를 추가하거나 weight를 0으로 설정하세요."
+                )
 
     return build_efficientad_params(
         model_size=model_size,

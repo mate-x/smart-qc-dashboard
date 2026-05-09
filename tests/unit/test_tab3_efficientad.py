@@ -11,7 +11,9 @@ import pytest
 
 from tabs.tab3_model_params import (
     build_efficientad_params,
+    build_model_config,
     compute_st_loss_weight,
+    compute_threshold_ratio,
     _apply_efficientad_widgets,
 )
 
@@ -303,3 +305,136 @@ class TestApplyEfficientadWidgets:
         assert "ead_train_steps" in ss
         assert "ead_optimizer" not in ss
         assert "ead_lr" not in ss
+
+
+# ─────────────────────────────────────────────
+# build_model_config — EfficientAD params 사용 시 model_config 구조 검증
+# ─────────────────────────────────────────────
+
+class TestBuildModelConfigEfficientad:
+    """build_model_config — EfficientAD params 조합 시 00_Global_Context 1.7절 스키마 검증."""
+
+    _MODEL_CONFIG_KEYS = {
+        "model_type", "image_size", "batch_size", "random_seed",
+        "threshold_method", "threshold_value", "params",
+    }
+
+    def _make(self, **overrides) -> dict:
+        kwargs = dict(
+            model_type="efficientad",
+            image_size=256,
+            batch_size=16,
+            random_seed=42,
+            threshold_method="percentile",
+            threshold_value=95.0,
+            params=_default_ead_params(),
+        )
+        kwargs.update(overrides)
+        return build_model_config(**kwargs)
+
+    def test_required_keys(self):
+        cfg = self._make()
+        assert self._MODEL_CONFIG_KEYS == set(cfg.keys())
+
+    def test_model_type_is_efficientad(self):
+        cfg = self._make()
+        assert cfg["model_type"] == "efficientad"
+
+    def test_params_contains_efficientad_keys(self):
+        cfg = self._make()
+        assert EFFICIENTAD_REQUIRED_KEYS == set(cfg["params"].keys())
+
+    def test_image_size_is_int(self):
+        cfg = self._make(image_size=320)
+        assert isinstance(cfg["image_size"], int)
+        assert cfg["image_size"] == 320
+
+    def test_batch_size_is_int(self):
+        cfg = self._make(batch_size=32)
+        assert isinstance(cfg["batch_size"], int)
+        assert cfg["batch_size"] == 32
+
+    def test_random_seed_is_int(self):
+        cfg = self._make(random_seed=0)
+        assert isinstance(cfg["random_seed"], int)
+        assert cfg["random_seed"] == 0
+
+    @pytest.mark.parametrize("method", ["percentile", "absolute"])
+    def test_threshold_methods(self, method):
+        cfg = self._make(threshold_method=method)
+        assert cfg["threshold_method"] == method
+
+    def test_threshold_value_is_float(self):
+        cfg = self._make(threshold_value=90.0)
+        assert isinstance(cfg["threshold_value"], float)
+        assert cfg["threshold_value"] == pytest.approx(90.0)
+
+    def test_params_ae_st_sum_one(self):
+        """model_config 내 params ae+st 불변 조건 유지."""
+        cfg = self._make()
+        p = cfg["params"]
+        assert abs(p["ae_loss_weight"] + p["st_loss_weight"] - 1.0) < 1e-6
+
+    def test_params_is_dict(self):
+        cfg = self._make()
+        assert isinstance(cfg["params"], dict)
+
+    def test_prd_defaults_roundtrip(self):
+        """PRD 기본값으로 build_model_config → params 필드 일치."""
+        cfg = self._make()
+        p = cfg["params"]
+        assert p["model_size"] == "medium"
+        assert p["train_steps"] == 70_000
+        assert p["out_channels"] == 384
+        assert p["padding"] is False
+        assert p["ae_loss_weight"] == pytest.approx(0.5)
+        assert p["st_loss_weight"] == pytest.approx(0.5)
+
+
+# ─────────────────────────────────────────────
+# compute_threshold_ratio — FR-T3-10 검증
+# ─────────────────────────────────────────────
+
+class TestComputeThresholdRatio:
+    """compute_threshold_ratio — FR-T3-10 정상/결함 비율 계산 검증."""
+
+    def test_percentile_95(self):
+        normal, defect = compute_threshold_ratio("percentile", 95.0)
+        assert normal == pytest.approx(0.95)
+        assert defect == pytest.approx(0.05)
+
+    def test_percentile_0(self):
+        normal, defect = compute_threshold_ratio("percentile", 0.0)
+        assert normal == pytest.approx(0.0)
+        assert defect == pytest.approx(1.0)
+
+    def test_percentile_100(self):
+        normal, defect = compute_threshold_ratio("percentile", 100.0)
+        assert normal == pytest.approx(1.0)
+        assert defect == pytest.approx(0.0)
+
+    def test_percentile_sum_equals_one(self):
+        for pct in (10.0, 30.0, 50.0, 70.0, 90.0, 95.0, 99.0):
+            normal, defect = compute_threshold_ratio("percentile", pct)
+            assert abs(normal + defect - 1.0) < 1e-6, f"sum != 1.0 for pct={pct}"
+
+    def test_percentile_returns_floats(self):
+        normal, defect = compute_threshold_ratio("percentile", 80.0)
+        assert isinstance(normal, float)
+        assert isinstance(defect, float)
+
+    def test_absolute_returns_none_none(self):
+        normal, defect = compute_threshold_ratio("absolute", 0.5)
+        assert normal is None
+        assert defect is None
+
+    def test_absolute_any_value_returns_none(self):
+        for val in (0.0, 0.1, 0.5, 0.9, 1.0):
+            n, d = compute_threshold_ratio("absolute", val)
+            assert (n, d) == (None, None), f"expected (None, None) for val={val}"
+
+    def test_tc_fr_t3_10_percentile_50(self):
+        """PRD TC-FR-T3-10: percentile=50 → normal=0.5, defect=0.5."""
+        normal, defect = compute_threshold_ratio("percentile", 50.0)
+        assert normal == pytest.approx(0.5)
+        assert defect == pytest.approx(0.5)

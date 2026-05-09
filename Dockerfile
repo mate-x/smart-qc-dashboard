@@ -2,6 +2,9 @@ FROM nvcr.io/nvidia/cuda:12.4.1-runtime-ubuntu22.04
 
 WORKDIR /app
 
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Asia/Seoul
+
 RUN apt-get update && apt-get install -y software-properties-common \
     && add-apt-repository ppa:deadsnakes/ppa \
     && apt-get update && apt-get install -y \

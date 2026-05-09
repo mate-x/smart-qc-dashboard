@@ -39,8 +39,7 @@ conda create -n smart-qc python=3.12 -y
 conda activate smart-qc
 
 # CUDA 12.4 기준
-conda install pytorch torchvision torchaudio pytorch-cuda=12.4 \
-    -c pytorch -c nvidia -y
+conda install pytorch torchvision torchaudio pytorch-cuda=12.4 -c pytorch -c nvidia -y
 
 pip install -r requirements.txt
 ```

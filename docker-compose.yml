@@ -1,0 +1,22 @@
+version: "3.8"
+
+services:
+  smart-qc:
+    build: .
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./dataset:/app/dataset
+      - ./experiments:/app/experiments
+      - ./models:/app/models
+      - ./logs:/app/logs
+      - ./results:/app/results
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=0

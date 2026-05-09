@@ -219,3 +219,31 @@ __marimo__/
 
 # Claude
 .claude/
+
+# ── Smart QC Dashboard ─────────────────────────────────────────
+# 런타임 생성 데이터 (대용량 / 재생성 가능)
+models/*/
+!models/.gitkeep
+logs/*/
+!logs/.gitkeep
+results/*/
+!results/.gitkeep
+
+# 실험 히스토리는 추적 (영속 데이터)
+# experiments/history.json  ← 의도적으로 추적함
+
+# 데이터셋은 추적 안 함 (대용량)
+dataset/
+!dataset/imagenet_penalty/.gitkeep
+
+# PyTorch 모델 가중치
+*.pth
+*.pt
+*.ckpt
+
+# 임시 설정 파일
+configs.tmp
+
+# 환경 변수 (실제 .env)
+.env
+# ───────────────────────────────────────────────────────────────

@@ -13,6 +13,7 @@ from tabs.tab3_model_params import (
     build_model_config,
     build_patchcore_params,
     compute_st_loss_weight,
+    compute_threshold_ratio,
     _apply_patchcore_widgets,
 )
 
@@ -281,3 +282,52 @@ class TestApplyPatchcoreWidgets:
     def test_empty_params_no_error(self):
         """파라미터 없이 호출해도 예외 없음."""
         self._run({})
+
+
+# ─────────────────────────────────────────────
+# compute_threshold_ratio — FR-T3-10 정상/결함 비율 근사치
+# ─────────────────────────────────────────────
+
+class TestComputeThresholdRatio:
+    """FR-T3-10 (S): Threshold 기준 정상/결함 비율 실시간 표시 순수 함수 검증."""
+
+    def test_percentile_95_returns_0_95(self):
+        normal, defect = compute_threshold_ratio("percentile", 95.0)
+        assert normal == pytest.approx(0.95)
+        assert defect == pytest.approx(0.05)
+
+    def test_percentile_sum_equals_one(self):
+        for pct in (0.0, 10.0, 50.0, 90.0, 95.0, 100.0):
+            normal, defect = compute_threshold_ratio("percentile", pct)
+            assert normal is not None and defect is not None
+            assert abs(normal + defect - 1.0) < 1e-6, f"sum != 1.0 for pct={pct}"
+
+    def test_percentile_0_all_defect(self):
+        normal, defect = compute_threshold_ratio("percentile", 0.0)
+        assert normal == pytest.approx(0.0)
+        assert defect == pytest.approx(1.0)
+
+    def test_percentile_100_all_normal(self):
+        normal, defect = compute_threshold_ratio("percentile", 100.0)
+        assert normal == pytest.approx(1.0)
+        assert defect == pytest.approx(0.0)
+
+    def test_absolute_returns_none_none(self):
+        normal, defect = compute_threshold_ratio("absolute", 0.5)
+        assert normal is None
+        assert defect is None
+
+    def test_absolute_any_value_returns_none(self):
+        for val in (0.0, 0.1, 0.5, 0.9, 1.0):
+            normal, defect = compute_threshold_ratio("absolute", val)
+            assert (normal, defect) == (None, None)
+
+    def test_return_values_are_float(self):
+        normal, defect = compute_threshold_ratio("percentile", 80.0)
+        assert isinstance(normal, float)
+        assert isinstance(defect, float)
+
+    def test_rounded_to_6_decimals(self):
+        normal, defect = compute_threshold_ratio("percentile", 33.3)
+        assert normal == round(normal, 6)
+        assert defect == round(defect, 6)

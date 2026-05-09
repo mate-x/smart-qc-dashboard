@@ -154,6 +154,9 @@ def _render_body() -> None:
             st.slider("절대값", 0.0, 1.0, 0.5, 0.01, key="tab3_threshold_abs")
         )
 
+    # FR-T3-10 (S): 정상/결함 비율 실시간 표시
+    _render_threshold_ratio_preview(threshold_method, threshold_value)
+
     st.divider()
 
     # FR-T3-08 + (S) FR-T3-09 저장 버튼 영역
@@ -371,6 +374,29 @@ def _render_patchcore_params() -> dict:
 
 
 # ─────────────────────────────────────────────
+# FR-T3-10 (S): 정상/결함 비율 실시간 표시
+# ─────────────────────────────────────────────
+
+def _render_threshold_ratio_preview(threshold_method: str, threshold_value: float) -> None:
+    """dataset_meta가 존재할 때만 threshold 기준 비율 예상치를 표시한다."""
+    if st.session_state.get("dataset_meta") is None:
+        return
+
+    normal_ratio, defect_ratio = compute_threshold_ratio(threshold_method, threshold_value)
+    col1, col2 = st.columns(2)
+    with col1:
+        if normal_ratio is not None:
+            st.metric("예상 정상 판정 비율", f"{normal_ratio:.1%}")
+        else:
+            st.metric("예상 정상 판정 비율", "학습 후 확인 가능")
+    with col2:
+        if defect_ratio is not None:
+            st.metric("예상 결함 판정 비율", f"{defect_ratio:.1%}")
+        else:
+            st.metric("예상 결함 판정 비율", "학습 후 확인 가능")
+
+
+# ─────────────────────────────────────────────
 # 저장 버튼 영역  (FR-T3-08)
 # ─────────────────────────────────────────────
 
@@ -541,6 +567,23 @@ def _apply_efficientad_widgets(params: dict) -> None:
 # ─────────────────────────────────────────────
 # 순수 함수 (테스트 가능)
 # ─────────────────────────────────────────────
+
+def compute_threshold_ratio(
+    threshold_method: str,
+    threshold_value: float,
+) -> tuple[float | None, float | None]:
+    """
+    FR-T3-10: Threshold 기준 정상/결함 비율 근사치 계산.
+
+    percentile 방식: 정상 비율 = threshold_value / 100 (근사치)
+    absolute 방식: 계산 불가 → (None, None) 반환
+    """
+    if threshold_method == "percentile":
+        normal_ratio = round(threshold_value / 100.0, 6)
+        defect_ratio = round(1.0 - normal_ratio, 6)
+        return normal_ratio, defect_ratio
+    return None, None
+
 
 def compute_st_loss_weight(ae_loss_weight: float) -> float:
     """R-03: st_loss_weight = round(1.0 - ae_loss_weight, 6)."""

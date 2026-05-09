@@ -214,10 +214,10 @@
 | Day 1 | 오전 1h (09–10) | A | configs.yaml 스키마 설계 | 05_Data_Model_and_Storage_Strategy.md, 09_Infrastructure_and_Cloud.md |
 | Day 1 | 오전 1h (09–10) | B | session_state 키 명세 확정 | 05_Data_Model_and_Storage_Strategy.md, 07_Backend_Service_Design.md |
 | Day 1 | 오전 1h (09–10) | C | 프로젝트 구조·Git 세팅 | 04_System_Architecture.md, 09_Infrastructure_and_Cloud.md |
-| Day 1 | 오전 2h (10–12) | A | 탭1 구현 | 03_Functional_Requirements.md |
+| Day 1 | 오전 2h (10–12) | A | 탭1 구현 | 03_Functional_Requirements.md, 06_API_Specification.md |
 | Day 1 | 오전 2h (10–12) | B | 탭3 EfficientAD 파트 구현 | 03_Functional_Requirements.md, 08_AI_ML_Integration.md |
 | Day 1 | 오전 2h (10–12) | C | 탭3 PatchCore 파트 구현 | 03_Functional_Requirements.md, 08_AI_ML_Integration.md |
-| Day 1 | 오후 1h (13–14) | A | 탭1 보완 (Grayscale·포맷 필터링) | 03_Functional_Requirements.md |
+| Day 1 | 오후 1h (13–14) | A | 탭1 보완 (Grayscale·포맷 필터링) | 03_Functional_Requirements.md, 06_API_Specification.md |
 | Day 1 | 오후 1h (13–14) | B | 탭3 EfficientAD 보완 (고급 설정·Threshold) | 03_Functional_Requirements.md, 08_AI_ML_Integration.md |
 | Day 1 | 오후 1h (13–14) | C | 탭3 PatchCore 보완 (고급 설정·Threshold) | 03_Functional_Requirements.md, 08_AI_ML_Integration.md |
 | Day 1 | 오후 3h (14–17) | A | 탭2 구현 | 03_Functional_Requirements.md, 07_Backend_Service_Design.md |

@@ -2,11 +2,12 @@ FROM nvidia/cuda:12.4.1-cudnn9-runtime-ubuntu22.04
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y python3.12 python3.12-venv python3-pip \
+RUN apt-get update && apt-get install -y python3.12 python3.12-venv python3.12-dev curl \
+    && curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN python3.12 -m pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 

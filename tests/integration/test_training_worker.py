@@ -41,6 +41,19 @@ def _make_worker(tmp_path, stop_event=None, q=None, **overrides):
     return TrainingWorker(**defaults)
 
 
+def _drain_to_terminal(q: queue.Queue) -> dict:
+    """
+    Queue에서 "log" 메시지를 건너뛰고 첫 번째 종료 메시지를 반환.
+    TrainingWorker는 _run_impl() 시작 시 log 메시지를 먼저 emit하므로
+    단순 get_nowait()으로는 terminal 메시지를 바로 얻을 수 없다.
+    worker.join() 이후 호출 시 Queue에 모든 메시지가 쌓여 있다.
+    """
+    while True:
+        msg = q.get_nowait()
+        if msg["type"] in ("error", "stopped", "completed"):
+            return msg
+
+
 class TestWorkerStopBeforeStart:
     def test_pre_set_stop_event_emits_stopped(self, tmp_path):
         stop = threading.Event()
@@ -82,7 +95,7 @@ class TestWorkerErrorHandling:
         worker = _make_worker(tmp_path, q=q)
         worker.start()
         worker.join(timeout=5)
-        msg = q.get_nowait()
+        msg = _drain_to_terminal(q)
         assert msg["type"] == "error"
 
     def test_error_message_contains_traceback_string(self, tmp_path):
@@ -90,7 +103,7 @@ class TestWorkerErrorHandling:
         worker = _make_worker(tmp_path, q=q)
         worker.start()
         worker.join(timeout=5)
-        msg = q.get_nowait()
+        msg = _drain_to_terminal(q)
         assert msg["type"] == "error"
         assert isinstance(msg["traceback"], str)
         assert len(msg["traceback"]) > 0
@@ -100,7 +113,7 @@ class TestWorkerErrorHandling:
         worker = _make_worker(tmp_path, q=q)
         worker.start()
         worker.join(timeout=5)
-        msg = q.get_nowait()
+        msg = _drain_to_terminal(q)
         assert "exception" in msg
         assert isinstance(msg["exception"], Exception)
 
@@ -137,6 +150,6 @@ class TestWorkerStopDuringTraining:
         stop.set()
         worker.join(timeout=5)
         assert not worker.is_alive()
-        # 첫 메시지는 stopped 또는 error여야 함
-        msg = q.get_nowait()
+        # log 메시지를 건너뛰고 종료 메시지 확인
+        msg = _drain_to_terminal(q)
         assert msg["type"] in ("stopped", "error")

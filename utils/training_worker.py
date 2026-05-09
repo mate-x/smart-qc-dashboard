@@ -239,6 +239,9 @@ def _train_patchcore(
             _append_log(log_file, log_line)
             last_batch_idx = batch_idx + 1
 
+    if stop_event.is_set():
+        return False, 0.0, last_batch_idx
+
     if not all_features:
         return False, 0.0, 0
 

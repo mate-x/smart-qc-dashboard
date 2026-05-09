@@ -11,7 +11,7 @@ import streamlit as st
 
 from utils.cache_manager import set_anomaly_map_cache
 from utils.messages import MSG
-from utils.storage import save_completed_experiment
+from utils.storage import append_experiment, save_completed_experiment
 
 KST = timezone(timedelta(hours=9))
 _MAX_LOG_LINES = 100
@@ -292,8 +292,46 @@ def _handle_completed(msg: dict) -> None:
     st.session_state["_result_queue"]       = None
 
 
+def _build_stopped_record(exp_id: str) -> dict:
+    """PRD 07 §6.3 / 00_Global §1.1 R-05: status='중단' 레코드 구성."""
+    model_config         = st.session_state.get("model_config") or {}
+    preprocessing_config = st.session_state.get("preprocessing_config") or {}
+    dataset_path         = st.session_state.get("dataset_path") or ""
+    return {
+        "experiment_id":        exp_id,
+        "name":                 exp_id,
+        "status":               "중단",
+        "created_at":           datetime.now(KST).isoformat(),
+        "model_type":           model_config.get("model_type", ""),
+        "preprocessing_method": preprocessing_config.get("method", "none"),
+        "preprocessing_params": preprocessing_config.get("params"),
+        "model_params":         model_config.get("params", {}),
+        "threshold_method":     model_config.get("threshold_method", "percentile"),
+        "threshold_value":      model_config.get("threshold_value", 95.0),
+        "dataset_path":         dataset_path,
+        "image_size":           model_config.get("image_size", 256),
+        "metrics":              None,
+        "model_path":           None,
+        "configs_path":         None,
+        "duration_seconds":     None,
+    }
+
+
 def _handle_stopped(msg: dict) -> None:
-    step = msg.get("step", 0)
+    """PRD 06 §5.2 / 07 §6.2: stopped 메시지 처리 — 중단 레코드 저장."""
+    exp_id = st.session_state.get("current_exp_id", "")
+    step   = msg.get("step", 0)
+
+    if exp_id:
+        record = _build_stopped_record(exp_id)
+        try:
+            append_experiment(record)
+            experiments = st.session_state.get("experiments", {})
+            experiments[exp_id] = record
+            st.session_state["experiments"] = experiments
+        except Exception:
+            pass  # 중단 레코드 저장 실패는 치명적이지 않음
+
     st.session_state["current_run_status"] = "stopped"
     st.session_state["_stopped_step"]      = step
     st.session_state["_stop_event"]        = None

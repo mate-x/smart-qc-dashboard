@@ -2,8 +2,18 @@ from __future__ import annotations
 
 import queue
 import threading
-import time
 import traceback
+
+# 08_AI_ML_Integration.md 구현 시 실제 import로 교체
+try:
+    from anomalib.engine import Engine
+except ImportError:
+    Engine = None  # type: ignore[assignment,misc]
+
+
+def build_dataset(model_config: dict, preprocessing_config: dict, dataset_path: str):
+    """Placeholder — 08_AI_ML_Integration.md 구현 예정."""
+    raise NotImplementedError("build_dataset: 08_AI_ML_Integration.md 구현 예정")
 
 
 class TrainingWorker(threading.Thread):
@@ -20,24 +30,28 @@ class TrainingWorker(threading.Thread):
 
     def __init__(
         self,
+        experiment_id: str,
         model_config: dict,
         preprocessing_config: dict,
         dataset_path: str,
         device: str,
-        exp_id: str,
         stop_event: threading.Event,
         result_queue: queue.Queue,
     ) -> None:
         super().__init__(daemon=True)
+        self.experiment_id = experiment_id
         self.model_config = model_config
         self.preprocessing_config = preprocessing_config
         self.dataset_path = dataset_path
         self.device = device
-        self.exp_id = exp_id
         self.stop_event = stop_event
         self.result_queue = result_queue
 
     def run(self) -> None:
+        # stop_event 선행 확인 (시작 전 중단 요청)
+        if self.stop_event.is_set():
+            self.result_queue.put({"type": "stopped"})
+            return
         try:
             self._run_training()
         except Exception as e:

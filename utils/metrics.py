@@ -11,7 +11,7 @@ from sklearn.metrics import (
 )
 
 
-def compute_metrics(
+def compute_all_metrics(
     y_true: list[int],
     anomaly_scores: list[float],
     threshold: float,
@@ -46,6 +46,10 @@ def compute_metrics(
     }
 
 
+# 하위 호환 alias
+compute_metrics = compute_all_metrics
+
+
 def compute_roc_curve(
     y_true: list[int],
     anomaly_scores: list[float],
@@ -60,3 +64,30 @@ def compute_threshold_from_percentile(
     percentile: float,
 ) -> float:
     return float(np.percentile(normal_scores, percentile))
+
+
+def normalize_anomaly_scores(
+    scores: np.ndarray,
+    method: str = "minmax",
+) -> np.ndarray:
+    """Anomaly Score 배열 정규화. 모두 같은 값이면 0으로 처리 (division by zero 방지)."""
+    if method == "minmax":
+        min_val = scores.min()
+        max_val = scores.max()
+        if max_val == min_val:
+            return np.zeros_like(scores, dtype=np.float32)
+        return ((scores - min_val) / (max_val - min_val)).astype(np.float32)
+    raise ValueError(f"Unknown normalization method: {method}")
+
+
+def compute_threshold(
+    normal_scores: np.ndarray,
+    method: str,
+    value: float,
+) -> float:
+    """threshold_method에 따라 임계값 계산."""
+    if method == "percentile":
+        return float(np.percentile(normal_scores, value))
+    if method == "absolute":
+        return float(value)
+    raise ValueError(f"Unknown threshold method: {method}")

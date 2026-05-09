@@ -123,7 +123,13 @@ def apply_filter(
     if method == "none":
         return image
 
-    arr = np.array(image)
+    # Grayscale(L) 또는 RGBA 등 → RGB 변환 (FR-T2-07)
+    # apply_preprocessing 경로에서는 load_image가 먼저 변환하지만,
+    # 직접 호출 시에도 안전하게 동작하도록 방어적으로 처리.
+    if image.mode != "RGB":
+        image = image.convert("RGB")
+
+    arr = np.array(image)  # H x W x 3, uint8
 
     if method == "he":
         result = apply_he(arr)

@@ -107,10 +107,12 @@ Python 3.12 (확정 — 00절 §10.2 기준)
 
 | CUDA | cuDNN | PyTorch 버전 | 비고 |
 |------|-------|-------------|------|
-| **12.4** | **9.1** | ≥ 2.3.x | **확정 — 00절 §10.2 기준** |
+| **12.9** | **9.x** | ≥ 2.7.0 | **확정 — RTX 5060(sm_120/Blackwell) 최소 요구사항** |
 
-NVIDIA 드라이버 버전: CUDA 12.4 기준 **550.xx 이상**.  
-베이스 Docker 이미지: `nvcr.io/nvidia/cuda:12.4.1-runtime-ubuntu22.04` + `libcudnn9-cuda-12` (apt 설치, 00절 §10.2).
+NVIDIA 드라이버 버전: CUDA 12.9 기준 **577.xx 이상**.  
+베이스 Docker 이미지: `nvcr.io/nvidia/cuda:12.8.1-runtime-ubuntu22.04` + `libcudnn9-cuda-12` (apt 설치).
+
+> sm_120(Blackwell) GPU는 PyTorch 2.7.0 미만에서 "no kernel image" 오류 발생. `requirements.txt`의 `torch>=2.7.0` 제약이 이를 방지한다.
 
 > GPU 없는 환경에서는 CUDA 설치 불필요. `device_info.device == "cpu"` 자동 선택.
 
@@ -125,8 +127,8 @@ NVIDIA 드라이버 버전: CUDA 12.4 기준 **550.xx 이상**.
 conda create -n smart-qc python=3.12 -y
 conda activate smart-qc
 
-# 2. PyTorch 설치 (CUDA 12.4 기준 — 00절 §10.2)
-conda install pytorch torchvision torchaudio pytorch-cuda=12.4 \
+# 2. PyTorch 설치 (CUDA 12.8/12.9 기준 — sm_120(Blackwell) 지원)
+conda install pytorch torchvision torchaudio pytorch-cuda=12.8 \
     -c pytorch -c nvidia -y
 
 # CPU 전용:
@@ -147,8 +149,8 @@ python -m venv .venv
 # Linux / macOS
 source .venv/bin/activate
 
-# PyTorch 설치 (CUDA 12.4 — 00절 §10.2)
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+# PyTorch 설치 (CUDA 12.8/12.9 — sm_120(Blackwell) 지원)
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 
 # 나머지 의존성
 pip install -r requirements.txt

@@ -28,19 +28,19 @@ model:
   threshold_method: percentile
   threshold_value: 95.0
   params:
-    model_size: medium
-    out_channels: 384
-    padding: false
-    train_steps: 70000
-    learning_rate: 0.0001
-    weight_decay: 0.0001
+    model_size: small
+    train_steps: 1000
     optimizer: adam
-    scheduler: StepLR
-    lr_decay_epochs: 50000
-    lr_decay_factor: 0.1
-    st_loss_weight: 0.5
+    learning_rate: 0.1
+    weight_decay: 0.0001
+    out_channels: 256
+    padding: false
     ae_loss_weight: 0.5
-    autoencoder_lr: 0.0001
+    st_loss_weight: 0.5
+    autoencoder_lr: 0.1
     autoencoder_weight_decay: 1.0e-05
-    imagenet_penalty_weight: 1.0
+    lr_decay_epochs: 1000
+    lr_decay_factor: 0.1
+    scheduler: StepLR
+    imagenet_penalty_weight: 0.0
     penalty_batch_size: 8

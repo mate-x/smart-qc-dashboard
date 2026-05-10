@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import yaml
+
 import pytest
 import torch
 
@@ -85,3 +87,58 @@ class TestSaveExperimentCleanupOnFailure:
         with pytest.raises(RuntimeError):
             save_completed_experiment("exp_fail2", model, record)
         assert load_history() == []
+
+
+class TestSaveCompletedExperimentConfigSnapshot:
+    def test_explicit_config_params_take_priority_over_record_keys(self, tmp_path):
+        model = _fake_model()
+        explicit_preproc = {"resize": 256, "normalize": True}
+        explicit_model = {"model_size": "medium", "max_steps": 70000}
+        record = {
+            "name": "snap_test",
+            "created_at": "2026-01-01T00:00:00",
+            "preprocessing_config": {"resize": 128},  # should be overridden
+            "model_config": {"model_size": "small"},  # should be overridden
+        }
+        save_completed_experiment(
+            "exp_snap_001",
+            model,
+            record,
+            preprocessing_config=explicit_preproc,
+            model_config=explicit_model,
+        )
+        configs_path = tmp_path / "models" / "exp_snap_001" / "configs.yaml"
+        with open(configs_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        assert data["preprocessing"]["resize"] == 256
+        assert data["model"]["model_size"] == "medium"
+
+    def test_fallback_to_record_keys_when_params_omitted(self, tmp_path):
+        model = _fake_model()
+        record = {
+            "name": "snap_fallback",
+            "created_at": "2026-01-01T00:00:00",
+            "preprocessing_config": {"resize": 64},
+            "model_config": {"backbone": "wrn50"},
+        }
+        save_completed_experiment("exp_snap_002", model, record)
+        configs_path = tmp_path / "models" / "exp_snap_002" / "configs.yaml"
+        with open(configs_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        assert data["preprocessing"]["resize"] == 64
+        assert data["model"]["backbone"] == "wrn50"
+
+    def test_experiment_section_written_from_record(self, tmp_path):
+        model = _fake_model()
+        record = {
+            "name": "snap_meta",
+            "created_at": "2026-06-01T12:00:00",
+            "preprocessing_config": {},
+            "model_config": {},
+        }
+        save_completed_experiment("exp_snap_003", model, record)
+        configs_path = tmp_path / "models" / "exp_snap_003" / "configs.yaml"
+        with open(configs_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        assert data["experiment"]["name"] == "snap_meta"
+        assert data["experiment"]["created_at"] == "2026-06-01T12:00:00"

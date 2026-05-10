@@ -46,6 +46,16 @@ class TestLoadSaveHistory:
         assert records[0]["id"] == "a"
         assert records[1]["id"] == "b"
 
+    def test_append_raises_on_duplicate_experiment_id(self):
+        append_experiment({"experiment_id": "exp_dup_001", "name": "first"})
+        with pytest.raises(RuntimeError, match="ERR_DUPLICATE_EXPERIMENT_ID"):
+            append_experiment({"experiment_id": "exp_dup_001", "name": "duplicate"})
+
+    def test_append_no_experiment_id_does_not_raise(self):
+        append_experiment({"name": "no_id_1"})
+        append_experiment({"name": "no_id_2"})
+        assert len(load_history()) == 2
+
 
 class TestValidateImagenetPenaltyDir:
     def test_returns_true_with_valid_dir(self, tmp_path, monkeypatch):

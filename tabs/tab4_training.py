@@ -385,7 +385,8 @@ def _handle_completed(msg: dict) -> None:
     finally:
         _reset_run_state()
         del msg["model"]
-        torch.cuda.empty_cache()
+        if st.session_state.get("device_info", {}).get("device") == "cuda":
+            torch.cuda.empty_cache()
 
 
 def _handle_error(msg: dict) -> None:

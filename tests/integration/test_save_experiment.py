@@ -69,6 +69,69 @@ class TestSaveCompletedExperiment:
         assert "configs_path" in history[0]
 
 
+class TestSaveCompletedExperimentConfigSnapshot:
+    """configs.yaml 스냅샷 내용 검증 (PRD Z.5)."""
+
+    def test_explicit_config_params_take_priority_over_record_keys(self, tmp_path):
+        """preprocessing_config/model_config 명시 시 record 키보다 우선 적용."""
+        import yaml
+        model = _fake_model()
+        record = {
+            "name": "cfg_priority_test",
+            "created_at": "2026-01-01T00:00:00",
+            "preprocessing_config": {"method": "none_from_record"},
+            "model_config": {"model_type": "wrong_from_record"},
+        }
+        preproc = {"method": "clahe", "params": {"clip_limit": 2.0}}
+        mdl = {"model_type": "efficientad", "batch_size": 8, "image_size": 256}
+        save_completed_experiment(
+            "exp_cfgprio",
+            model,
+            record,
+            preprocessing_config=preproc,
+            model_config=mdl,
+        )
+        cfg_path = tmp_path / "models" / "exp_cfgprio" / "configs.yaml"
+        with open(cfg_path, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        assert data["preprocessing"]["method"] == "clahe"
+        assert data["model"]["model_type"] == "efficientad"
+
+    def test_fallback_to_record_keys_when_params_omitted(self, tmp_path):
+        """preprocessing_config/model_config 파라미터 미전달 시 record 키 사용."""
+        import yaml
+        model = _fake_model()
+        record = {
+            "name": "cfg_fallback_test",
+            "created_at": "2026-01-01T00:00:00",
+            "preprocessing_config": {"method": "he"},
+            "model_config": {"model_type": "patchcore"},
+        }
+        save_completed_experiment("exp_cfgfb", model, record)
+        cfg_path = tmp_path / "models" / "exp_cfgfb" / "configs.yaml"
+        with open(cfg_path, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        assert data["preprocessing"]["method"] == "he"
+        assert data["model"]["model_type"] == "patchcore"
+
+    def test_experiment_section_written_from_record(self, tmp_path):
+        """configs.yaml의 experiment 섹션에 name/created_at 기록."""
+        import yaml
+        model = _fake_model()
+        record = {
+            "name": "my_experiment",
+            "created_at": "2026-05-10T12:00:00+09:00",
+            "preprocessing_config": {},
+            "model_config": {},
+        }
+        save_completed_experiment("exp_expsec", model, record)
+        cfg_path = tmp_path / "models" / "exp_expsec" / "configs.yaml"
+        with open(cfg_path, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        assert data["experiment"]["name"] == "my_experiment"
+        assert data["experiment"]["created_at"] == "2026-05-10T12:00:00+09:00"
+
+
 class TestSaveExperimentCleanupOnFailure:
     def test_model_dir_removed_on_stage1_failure(self, tmp_path, monkeypatch):
         import torch
@@ -87,58 +150,3 @@ class TestSaveExperimentCleanupOnFailure:
         with pytest.raises(RuntimeError):
             save_completed_experiment("exp_fail2", model, record)
         assert load_history() == []
-
-
-class TestSaveCompletedExperimentConfigSnapshot:
-    def test_explicit_config_params_take_priority_over_record_keys(self, tmp_path):
-        model = _fake_model()
-        explicit_preproc = {"resize": 256, "normalize": True}
-        explicit_model = {"model_size": "medium", "max_steps": 70000}
-        record = {
-            "name": "snap_test",
-            "created_at": "2026-01-01T00:00:00",
-            "preprocessing_config": {"resize": 128},  # should be overridden
-            "model_config": {"model_size": "small"},  # should be overridden
-        }
-        save_completed_experiment(
-            "exp_snap_001",
-            model,
-            record,
-            preprocessing_config=explicit_preproc,
-            model_config=explicit_model,
-        )
-        configs_path = tmp_path / "models" / "exp_snap_001" / "configs.yaml"
-        with open(configs_path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-        assert data["preprocessing"]["resize"] == 256
-        assert data["model"]["model_size"] == "medium"
-
-    def test_fallback_to_record_keys_when_params_omitted(self, tmp_path):
-        model = _fake_model()
-        record = {
-            "name": "snap_fallback",
-            "created_at": "2026-01-01T00:00:00",
-            "preprocessing_config": {"resize": 64},
-            "model_config": {"backbone": "wrn50"},
-        }
-        save_completed_experiment("exp_snap_002", model, record)
-        configs_path = tmp_path / "models" / "exp_snap_002" / "configs.yaml"
-        with open(configs_path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-        assert data["preprocessing"]["resize"] == 64
-        assert data["model"]["backbone"] == "wrn50"
-
-    def test_experiment_section_written_from_record(self, tmp_path):
-        model = _fake_model()
-        record = {
-            "name": "snap_meta",
-            "created_at": "2026-06-01T12:00:00",
-            "preprocessing_config": {},
-            "model_config": {},
-        }
-        save_completed_experiment("exp_snap_003", model, record)
-        configs_path = tmp_path / "models" / "exp_snap_003" / "configs.yaml"
-        with open(configs_path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-        assert data["experiment"]["name"] == "snap_meta"
-        assert data["experiment"]["created_at"] == "2026-06-01T12:00:00"

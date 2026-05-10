@@ -98,8 +98,8 @@ def save_completed_experiment(
         shutil.rmtree(model_dir, ignore_errors=True)
         raise RuntimeError(f"ERR_MODEL_SAVE_FAILED (Stage1): {e}") from e
 
-    # Stage 2: configs.yaml 스냅샷 (R-ATOMIC-01, PRD Z.5)
-    # preprocessing_config/model_config 파라미터 우선, 없으면 record 키 fallback
+    # Stage 2: configs.yaml 스냅샷 (R-ATOMIC-01)
+    configs_path = model_dir / "configs.yaml"
     preproc_data = (
         preprocessing_config
         if preprocessing_config is not None
@@ -110,7 +110,6 @@ def save_completed_experiment(
         if model_config is not None
         else record.get("model_config", {})
     )
-    configs_path = model_dir / "configs.yaml"
     try:
         for section, data in [
             ("experiment", {"name": record.get("name", exp_id), "created_at": record.get("created_at", "")}),

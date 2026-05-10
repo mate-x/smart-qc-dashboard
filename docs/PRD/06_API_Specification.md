@@ -412,8 +412,8 @@ def _handle_completed(msg: CompletedMessage) -> None:
     2. experiment_record 구성
     3. save_completed_experiment() 호출 (3단계 저장)
     4. session_state.experiments 갱신
-    5. current_run_status = "idle"
-    6. st.success() 표시
+    5. session_state["_last_result"] 저장 (알림 지연 표시 — 07_Backend §6.4)
+    6. current_run_status = "idle"
     """
     exp_id: str = st.session_state["current_exp_id"]
     model_config: dict = st.session_state["model_config"]
@@ -437,13 +437,23 @@ def _handle_completed(msg: CompletedMessage) -> None:
         save_completed_experiment(exp_id, msg["model"], record)
         st.session_state["experiments"][exp_id] = record
         mins, secs = divmod(msg["duration_seconds"], 60)
-        st.success(f"학습이 완료되었습니다. 소요 시간: {mins}분 {secs}초")
+        auc = metrics.get("auc", 0.0)
+        st.session_state["_last_result"] = {
+            "level": "success",
+            "text": f"학습이 완료되었습니다. AUC: {auc:.4f} | 소요 시간: {mins}분 {secs}초",
+        }
     except RuntimeError as e:
         error_msg = str(e)
         if "ERR_HISTORY_WRITE_FAILED" in error_msg:
-            st.warning(f"모델 파일은 저장되었으나 히스토리 기록에 실패했습니다. {error_msg}")
+            st.session_state["_last_result"] = {
+                "level": "warning",
+                "text": f"모델 파일은 저장되었으나 히스토리 기록에 실패했습니다. {error_msg}",
+            }
         else:
-            st.error(f"모델 저장에 실패했습니다. 디스크 공간을 확인해 주세요. {error_msg}")
+            st.session_state["_last_result"] = {
+                "level": "error",
+                "text": f"모델 저장에 실패했습니다. 디스크 공간을 확인해 주세요. {error_msg}",
+            }
     finally:
         _reset_run_state()   # current_run_status = "idle"
         del msg["model"]     # GC 즉시 유도
@@ -452,11 +462,14 @@ def _handle_completed(msg: CompletedMessage) -> None:
 
 def _handle_error(msg: ErrorMessage) -> None:
     """
-    st.error() 표시.
+    session_state["_last_result"] 저장 (level="error").
     current_run_status = "idle".
     history.json에 기록하지 않음.
     """
-    st.error(f"학습 중 오류가 발생했습니다. 로그를 확인해 주세요.\n{msg['traceback'][:500]}")
+    st.session_state["_last_result"] = {
+        "level": "error",
+        "text": f"학습 중 오류가 발생했습니다.\n{msg['traceback']}",
+    }
     _reset_run_state()
 
 
@@ -464,7 +477,7 @@ def _handle_stopped(msg: StoppedMessage) -> None:
     """
     status="중단" 레코드 생성 후 history.json append.
     metrics, model_path, configs_path 모두 null.
-    st.warning() 표시.
+    session_state["_last_result"] 저장 (level="warning").
     current_run_status = "idle".
     """
     exp_id: str = st.session_state["current_exp_id"]
@@ -479,7 +492,11 @@ def _handle_stopped(msg: StoppedMessage) -> None:
         st.session_state["experiments"][exp_id] = record
     except RuntimeError:
         pass  # 중단 레코드 저장 실패는 치명적이지 않음
-    st.warning(MSG["TRAIN_STOPPED"])
+    step = msg.get("step", 0)
+    st.session_state["_last_result"] = {
+        "level": "warning",
+        "text": MSG["TRAIN_STOPPED"] + (f" ({step:,} step 완료 후 중단)" if step else ""),
+    }
     _reset_run_state()
 
 

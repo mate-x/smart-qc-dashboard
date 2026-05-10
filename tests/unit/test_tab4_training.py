@@ -192,14 +192,13 @@ class TestHandleStopped:
         assert record["metrics"] is None
 
     def test_st_warning_called_once(self):
-        """PRD 07 §6.2 step4: st.warning 1회 호출."""
-        _, _, mock_warn = self._run({"type": "stopped", "step": 50})
-        mock_warn.assert_called_once()
+        """PRD 07 §6.2 step4: _last_result level=warning 설정."""
+        ss, _, _ = self._run({"type": "stopped", "step": 50})
+        assert ss["_last_result"]["level"] == "warning"
 
     def test_warning_contains_train_stopped_message(self):
-        _, _, mock_warn = self._run({"type": "stopped", "step": 50})
-        warn_arg = mock_warn.call_args[0][0]
-        assert MSG["TRAIN_STOPPED"] in warn_arg
+        ss, _, _ = self._run({"type": "stopped", "step": 50})
+        assert MSG["TRAIN_STOPPED"] in ss["_last_result"]["text"]
 
     def test_status_reset_to_idle(self):
         """PRD 07 §6.2 step5: _reset_run_state() → current_run_status="idle"."""
@@ -219,14 +218,14 @@ class TestHandleStopped:
 
     def test_step_nonzero_appears_in_warning(self):
         """step≠0이면 경고 메시지에 step 수가 포함됨."""
-        _, _, mock_warn = self._run({"type": "stopped", "step": 500})
-        assert "500" in mock_warn.call_args[0][0]
+        ss, _, _ = self._run({"type": "stopped", "step": 500})
+        assert "500" in ss["_last_result"]["text"]
 
     def test_step_zero_no_step_suffix(self):
         """step=0이면 경고 메시지에 step 수 미포함."""
-        _, _, mock_warn = self._run({"type": "stopped", "step": 0})
+        ss, _, _ = self._run({"type": "stopped", "step": 0})
         # f"({step:,} step 완료 후 중단)" 패턴 없어야 함
-        assert " step " not in mock_warn.call_args[0][0]
+        assert " step " not in ss["_last_result"]["text"]
 
     def test_empty_exp_id_does_not_raise(self):
         """current_exp_id='' 상태에서도 예외 없이 reset 완료."""
@@ -579,14 +578,14 @@ class TestHandleCompleted:
     # ── step 7: st.success ────────────────────────────────────────────────────
 
     def test_st_success_called_on_normal_completion(self):
-        """PRD 07 §6.1 step7: 정상 완료 시 st.success() 호출."""
-        _, _, _, _, _, mock_success, *_ = self._run(self._make_msg())
-        mock_success.assert_called_once()
+        """PRD 07 §6.1 step7: _last_result level=success 설정."""
+        ss, *_ = self._run(self._make_msg())
+        assert ss["_last_result"]["level"] == "success"
 
     def test_success_message_contains_auc(self):
         """성공 메시지에 AUC 값 포함 (탭4 UI 알림 조건 — PRD 7.4절)."""
-        _, _, _, _, _, mock_success, *_ = self._run(self._make_msg())
-        assert "0.9500" in mock_success.call_args[0][0]
+        ss, *_ = self._run(self._make_msg())
+        assert "0.9500" in ss["_last_result"]["text"]
 
     # ── step 8: _reset_run_state (finally 보장) ───────────────────────────────
 
@@ -609,20 +608,20 @@ class TestHandleCompleted:
         assert ss["_result_queue"] is None
 
     def test_history_write_fail_shows_warning_not_error(self):
-        """ERR_HISTORY_WRITE_FAILED → st.warning (모델 저장 성공, 히스토리만 실패)."""
-        _, _, _, _, _, _, mock_warn, _ = self._run(
+        """ERR_HISTORY_WRITE_FAILED → _last_result level=warning."""
+        ss, *_ = self._run(
             self._make_msg(),
             raise_on_save=RuntimeError("ERR_HISTORY_WRITE_FAILED: details"),
         )
-        mock_warn.assert_called_once()
+        assert ss["_last_result"]["level"] == "warning"
 
     def test_other_runtime_error_shows_error(self):
-        """Stage1/2 실패 → st.error."""
-        _, _, _, _, _, _, _, mock_err = self._run(
+        """Stage1/2 실패 → _last_result level=error."""
+        ss, *_ = self._run(
             self._make_msg(),
             raise_on_save=RuntimeError("ERR_MODEL_SAVE_FAILED (Stage1): disk full"),
         )
-        mock_err.assert_called_once()
+        assert ss["_last_result"]["level"] == "error"
 
     # ── PRD 07 §9.2 GPU 메모리 해제 ──────────────────────────────────────────
 
@@ -676,22 +675,22 @@ class TestHandleError:
         return ss, mock_err
 
     def test_st_error_called_once(self):
-        """오류 수신 시 st.error() 1회 호출."""
-        _, mock_err = self._run({
+        """오류 수신 시 _last_result level=error 설정."""
+        ss, _ = self._run({
             "type": "error",
             "exception": RuntimeError("CUDA OOM"),
             "traceback": "Traceback ...\nRuntimeError: CUDA OOM",
         })
-        mock_err.assert_called_once()
+        assert ss["_last_result"]["level"] == "error"
 
     def test_error_message_contains_traceback(self):
         """오류 메시지에 traceback 일부 포함."""
-        _, mock_err = self._run({
+        ss, _ = self._run({
             "type": "error",
             "exception": RuntimeError("CUDA OOM"),
             "traceback": "Traceback ...\nRuntimeError: CUDA OOM",
         })
-        assert "CUDA OOM" in mock_err.call_args[0][0]
+        assert "CUDA OOM" in ss["_last_result"]["text"]
 
     def test_status_reset_to_idle(self):
         """오류 후 current_run_status="idle"."""

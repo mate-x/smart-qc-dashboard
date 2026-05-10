@@ -321,8 +321,8 @@ def _write_log(self, message: str) -> None:
 
 | 모델 | 보고 시점 | 이유 |
 |------|-----------|------|
-| **EfficientAD** | 매 500 step | A-08: UI 성능 vs 정보 밀도 균형 |
-| **PatchCore** | feature 추출 완료 (1회), coreset 구성 완료 (1회) | 학습이 단일 에포크이므로 스텝 개념 없음 |
+| **EfficientAD** | 매 100 step (첫 번째 step에서 즉시 1회) | UI 반응성 향상 — 초기 진행 확인 가능 |
+| **PatchCore** | 루프 진입 직전 1회(total 확정) + 배치마다 1회 | 학습이 단일 에포크이므로 스텝 개념 없음 |
 
 ### 5.2 PatchCore progress 메시지 예시
 
@@ -389,7 +389,10 @@ self._write_log(
   │
   ├─ 6. session_state["experiments"][exp_id] = record
   │
-  ├─ 7. st.success("학습이 완료되었습니다. 소요 시간: {분}분 {초}초")
+  ├─ 7. session_state["_last_result"] = {"level": "success", "text": "학습이 완료되었습니다. AUC: {auc:.4f} | 소요 시간: {분}분 {초}초"}
+  │       ※ st.success()를 직접 호출하지 않는다.
+  │         _reset_run_state() 직후 st.rerun()이 실행되어 현재 렌더 트리가 폐기되므로,
+  │         메시지를 session_state에 저장했다가 다음 rerun의 _show_last_result()에서 표시한다.
   │
   └─ 8. _reset_run_state()
          current_run_status = "idle"
@@ -410,12 +413,40 @@ self._write_log(
   │
   ├─ 3. session_state["experiments"][exp_id] = record
   │
-  ├─ 4. st.warning(MSG["TRAIN_STOPPED"])
+  ├─ 4. session_state["_last_result"] = {"level": "warning", "text": MSG["TRAIN_STOPPED"] + step_suffix}
+  │       ※ st.warning()을 직접 호출하지 않는다. (§6.1 step7 주석 참고)
   │
   └─ 5. _reset_run_state()
 ```
 
-### 6.3 _build_experiment_record() 구현
+### 6.3 오류 후처리 순서 (메인 스레드)
+
+```
+[error 메시지 수신]
+  │
+  ├─ 1. session_state["_last_result"] = {"level": "error", "text": traceback 포함 메시지}
+  │
+  └─ 2. _reset_run_state()
+```
+
+### 6.4 _show_last_result() — 알림 지연 표시
+
+```
+[다음 rerun — status="idle" 렌더 경로]
+  │
+  └─ _show_last_result()
+       result = session_state.pop("_last_result", None)
+       level == "success" → st.success(text)
+       level == "warning" → st.warning(text)
+       level == "error"   → st.error(text)
+```
+
+> **설계 의도**: 핸들러(`_handle_completed` 등)는 `st.rerun()` 직전에 실행된다.
+> Streamlit에서 `st.rerun()` 이후 이전 렌더 트리는 폐기되므로, 핸들러 내부에서
+> `st.success/warning/error`를 직접 호출해도 사용자에게 표시되지 않는다.
+> `_last_result`에 저장하면 다음 렌더 사이클까지 메시지가 보존된다.
+
+### 6.5 _build_experiment_record() 구현
 
 ```python
 # tabs/tab4_training.py

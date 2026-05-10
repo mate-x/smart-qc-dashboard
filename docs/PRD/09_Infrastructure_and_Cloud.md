@@ -338,7 +338,7 @@ dataset/
 - 디렉터리 존재 여부
 - 내부 이미지 파일 1개 이상 존재 여부
 
-조건 미충족 시 `ValueError`를 raise하고, EfficientAD 학습 시작이 차단된다.
+조건 미충족 시 `(False, 0)`을 반환하며, 탭4 `_handle_start_training()`에서 반환값을 확인하여 EfficientAD 학습 시작을 차단한다.
 
 ```bash
 # imagenet_penalty 디렉터리 최소 검증 (bash)
@@ -509,11 +509,11 @@ docker compose -f docker-compose.cpu.yml up
 # ImageNet penalty 이미지 존재 확인
 python -c "
 from utils.storage import validate_imagenet_penalty_dir
-try:
-    validate_imagenet_penalty_dir()
-    print('OK: ImageNet penalty dir is valid')
-except ValueError as e:
-    print(f'FAIL: {e}')
+ok, count = validate_imagenet_penalty_dir()
+if ok:
+    print(f'OK: ImageNet penalty dir is valid ({count}장)')
+else:
+    print('FAIL: ImageNet penalty dir missing or empty')
 "
 ```
 

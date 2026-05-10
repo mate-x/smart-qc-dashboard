@@ -1456,10 +1456,13 @@ from utils.storage import IMAGENET_PENALTY_DIR, validate_imagenet_penalty_dir
 
 # TrainingWorker.run() 진입 직후 precondition 체크 (07절 §B.3 step 2와 동일)
 if model_config["model_type"] == "efficientad":
-    validate_imagenet_penalty_dir()   # 실패 시 ValueError → error 메시지 큐 전송 후 종료
+    ok, _ = validate_imagenet_penalty_dir()
+    if not ok:
+        raise ValueError("ImageNet penalty 디렉터리에 이미지가 없습니다.")
+    # ValueError → run()의 except 블록이 error 메시지를 Queue에 전송 후 종료
     imagenet_path = IMAGENET_PENALTY_DIR
 
-# FakeData fallback 없음 — validate_imagenet_penalty_dir()가 경로 부재 시 raise
+# FakeData fallback 없음 — validate_imagenet_penalty_dir() 반환값으로 경로 부재 시 raise
 ```
 
 **근거**: 05절 §2.4에서 `IMAGENET_PENALTY_DIR = Path("./dataset/imagenet_penalty")`로 확정.

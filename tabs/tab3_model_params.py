@@ -11,6 +11,7 @@ import streamlit as st
 
 from utils.config_manager import ConfigLoadError, load_config, save_config_section
 from utils.messages import MSG
+from utils.storage import validate_imagenet_penalty_dir
 
 
 # ─────────────────────────────────────────────
@@ -274,24 +275,34 @@ def _render_efficientad_params() -> dict:
                 )
             )
 
-    return {
-        "model_size": model_size,
-        "train_steps": train_steps,
-        "optimizer": optimizer,
-        "learning_rate": learning_rate,
-        "weight_decay": weight_decay,
-        "out_channels": out_channels,
-        "padding": padding,
-        "ae_loss_weight": ae_loss_weight,
-        "st_loss_weight": st_loss_weight,
-        "autoencoder_lr": autoencoder_lr,
-        "autoencoder_weight_decay": autoencoder_wd,
-        "lr_decay_epochs": lr_decay_epochs,
-        "lr_decay_factor": lr_decay_factor,
-        "scheduler": scheduler,
-        "imagenet_penalty_weight": imagenet_pw,
-        "penalty_batch_size": penalty_bs,
-    }
+        # §Z.1: imagenet_penalty_weight > 0 시 디렉터리 검증 피드백
+        if imagenet_pw > 0:
+            try:
+                validate_imagenet_penalty_dir()
+                st.caption("ImageNet 패널티 디렉터리: 이미지 확인됨")
+            except ValueError as e:
+                st.warning(
+                    f"{e} — imagenet_penalty_weight > 0이면 EfficientAD 학습이 실패합니다. "
+                    "이미지를 추가하거나 weight를 0으로 설정하세요."
+                )
+
+    return build_efficientad_params(
+        model_size=model_size,
+        train_steps=train_steps,
+        optimizer=optimizer,
+        learning_rate=learning_rate,
+        weight_decay=weight_decay,
+        out_channels=out_channels,
+        padding=padding,
+        ae_loss_weight=ae_loss_weight,
+        autoencoder_lr=autoencoder_lr,
+        autoencoder_weight_decay=autoencoder_wd,
+        lr_decay_epochs=lr_decay_epochs,
+        lr_decay_factor=lr_decay_factor,
+        scheduler=scheduler,
+        imagenet_penalty_weight=imagenet_pw,
+        penalty_batch_size=penalty_bs,
+    )
 
 
 # ─────────────────────────────────────────────
@@ -588,6 +599,45 @@ def compute_threshold_ratio(
 def compute_st_loss_weight(ae_loss_weight: float) -> float:
     """R-03: st_loss_weight = round(1.0 - ae_loss_weight, 6)."""
     return round(1.0 - ae_loss_weight, 6)
+
+
+def build_efficientad_params(
+    model_size: str,
+    train_steps: int,
+    optimizer: str,
+    learning_rate: float,
+    weight_decay: float,
+    out_channels: int,
+    padding: bool,
+    ae_loss_weight: float,
+    autoencoder_lr: float,
+    autoencoder_weight_decay: float,
+    lr_decay_epochs: int,
+    lr_decay_factor: float,
+    scheduler: str,
+    imagenet_penalty_weight: float,
+    penalty_batch_size: int,
+) -> dict:
+    """00_Global_Context 1.4절 EfficientAD model_params 오브젝트 생성."""
+    st_loss_weight = compute_st_loss_weight(ae_loss_weight)
+    return {
+        "model_size": model_size,
+        "train_steps": int(train_steps),
+        "optimizer": optimizer,
+        "learning_rate": float(learning_rate),
+        "weight_decay": float(weight_decay),
+        "out_channels": int(out_channels),
+        "padding": bool(padding),
+        "ae_loss_weight": float(ae_loss_weight),
+        "st_loss_weight": st_loss_weight,
+        "autoencoder_lr": float(autoencoder_lr),
+        "autoencoder_weight_decay": float(autoencoder_weight_decay),
+        "lr_decay_epochs": int(lr_decay_epochs),
+        "lr_decay_factor": float(lr_decay_factor),
+        "scheduler": scheduler,
+        "imagenet_penalty_weight": float(imagenet_penalty_weight),
+        "penalty_batch_size": int(penalty_batch_size),
+    }
 
 
 def build_patchcore_params(

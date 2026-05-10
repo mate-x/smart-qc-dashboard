@@ -135,7 +135,9 @@ class TrainingWorker(threading.Thread):
         # 3. EfficientAD — imagenet penalty 사전 검증 (Z.1)
         if model_type == "efficientad":
             from utils.storage import validate_imagenet_penalty_dir
-            validate_imagenet_penalty_dir()  # ValueError → error 메시지로 전파
+            ok, _ = validate_imagenet_penalty_dir()
+            if not ok:
+                raise ValueError("ImageNet penalty 디렉터리에 이미지가 없습니다.")
 
         # 4. DataLoader 구성
         from utils.mvtec_dataset import build_dataloaders

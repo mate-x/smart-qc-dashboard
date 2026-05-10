@@ -34,7 +34,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install pytest pytest-cov
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-          pip install opencv-python-headless Pillow numpy scikit-learn PyYAML pyyaml streamlit
+          pip install opencv-python-headless Pillow numpy scikit-learn PyYAML pyyaml streamlit plotly
 
       - name: Run unit tests (fast, no ML)
         run: |

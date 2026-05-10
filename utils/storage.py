@@ -46,6 +46,11 @@ def save_history(records: list[dict]) -> None:
 
 def append_experiment(record: dict) -> None:
     records = load_history()
+    exp_id = record.get("experiment_id")
+    if exp_id:
+        for r in records:
+            if r.get("experiment_id") == exp_id:
+                raise RuntimeError(f"ERR_DUPLICATE_EXPERIMENT_ID: {exp_id}")
     records.append(record)
     save_history(records)
 
@@ -69,6 +74,8 @@ def save_completed_experiment(
     exp_id: str,
     model: object,
     record: dict,
+    preprocessing_config: dict | None = None,
+    model_config: dict | None = None,
 ) -> None:
     """
     3단계 원자성 저장 프로토콜 (05_Data_Model §6).
@@ -90,7 +97,18 @@ def save_completed_experiment(
         shutil.rmtree(model_dir, ignore_errors=True)
         raise RuntimeError(f"ERR_MODEL_SAVE_FAILED (Stage1): {e}") from e
 
-    # Stage 2: configs.yaml 스냅샷 (R-ATOMIC-01)
+    # Stage 2: configs.yaml 스냅샷 (R-ATOMIC-01, PRD Z.5)
+    # preprocessing_config/model_config 파라미터 우선, 없으면 record 키 fallback
+    preproc_data = (
+        preprocessing_config
+        if preprocessing_config is not None
+        else record.get("preprocessing_config", {})
+    )
+    model_data = (
+        model_config
+        if model_config is not None
+        else record.get("model_config", {})
+    )
     configs_path = model_dir / "configs.yaml"
     try:
         configs_data = {
@@ -98,8 +116,8 @@ def save_completed_experiment(
                 "name": record.get("name", exp_id),
                 "created_at": record.get("created_at", ""),
             },
-            "preprocessing": record.get("preprocessing_config", {}),
-            "model": record.get("model_config", {}),
+            "preprocessing": preproc_data,
+            "model": model_data,
         }
         tmp = configs_path.with_suffix(".tmp")
         with open(tmp, "w", encoding="utf-8") as f:

@@ -321,8 +321,8 @@ def _write_log(self, message: str) -> None:
 
 | 모델 | 보고 시점 | 이유 |
 |------|-----------|------|
-| **EfficientAD** | 매 500 step | A-08: UI 성능 vs 정보 밀도 균형 |
-| **PatchCore** | feature 추출 완료 (1회), coreset 구성 완료 (1회) | 학습이 단일 에포크이므로 스텝 개념 없음 |
+| **EfficientAD** | 매 100 step (첫 번째 step에서 즉시 1회) | UI 반응성 향상 — 초기 진행 확인 가능 |
+| **PatchCore** | 루프 진입 직전 1회(total 확정) + 배치마다 1회 | 학습이 단일 에포크이므로 스텝 개념 없음 |
 
 ### 5.2 PatchCore progress 메시지 예시
 

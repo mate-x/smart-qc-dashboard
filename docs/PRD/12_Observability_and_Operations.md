@@ -265,7 +265,7 @@ def _delete_experiment(experiment_id: str) -> None:
 | 폴더 구조 오류 | `st.error()` | `MSG["INVALID_FOLDER"]` |
 | Grayscale 감지 | `st.info()` | `MSG["GRAYSCALE_DETECT"]` |
 | 디스크 공간 부족 | `st.warning()` | `f"디스크 여유 공간이 {free_mb:.0f} MB로 부족합니다. 500 MB 이상 확보 후 저장해 주세요."` |
-| ImageNet penalty 디렉터리 없음 | `st.error()` | `"EfficientAD 학습에 필요한 ImageNet penalty 데이터가 없습니다. ./dataset/imagenet_penalty/ 를 확인해 주세요."` |
+| ImageNet penalty 디렉터리 없음 | `st.error()` (탭4 시작 버튼 클릭 시) 또는 Queue `error` 메시지 (TrainingWorker 내부 검증 실패 시) | `"EfficientAD 학습에 필요한 ImageNet penalty 데이터가 없습니다. ./dataset/imagenet_penalty/ 를 확인해 주세요."` |
 | 데이터셋 없음 | `st.warning()` | `MSG["NO_DATASET"]` |
 | 전처리 설정 없음 | `st.warning()` | `MSG["NO_PREPROCESSING"]` |
 | 모델 설정 없음 | `st.warning()` | `MSG["NO_MODEL_CONFIG"]` |

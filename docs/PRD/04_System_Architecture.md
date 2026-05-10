@@ -578,7 +578,7 @@ app.py
 | **R-THREAD-02** | 메인 스레드와 백그라운드 스레드의 유일한 통신 수단은 `result_queue`(Queue)와 `stop_event`(Event)이다. |
 | **R-THREAD-03** | `worker.daemon = True`로 설정하여 Streamlit 프로세스 종료 시 워커 스레드도 함께 종료된다. |
 | **R-THREAD-04** | `result_queue.get_nowait()`를 사용한다. `get(block=True)`는 메인 스레드를 블로킹하므로 금지. |
-| **R-THREAD-05** | 메인 스레드는 `time.sleep(1.0)` 후 `st.rerun()`으로 1초마다 UI를 갱신한다. sleep 시간은 1.0초 고정. |
+| **R-THREAD-05** | 메인 스레드는 `time.sleep(0.3)` 후 `st.rerun()`으로 UI를 갱신한다. sleep 시간은 0.3초 고정. |
 
 #### B.5.3 session_state 학습 관련 키
 
@@ -588,9 +588,10 @@ session_state.current_run_status = "running"
 session_state.current_exp_id = exp_id
 session_state._stop_event = stop_event        # threading.Event
 session_state._result_queue = result_queue    # queue.Queue
-session_state._progress = {"step": 0, "total": total_steps, "loss": None}
+session_state._progress = {"step": 0, "total": total_steps, "loss": None, "elapsed": 0.0}
 session_state._log_lines = []                 # list[str], 최대 100줄
 session_state._loss_history = []              # list[dict] {"step":int, "loss":float}
+session_state._training_start_time = time.time()  # elapsed 실시간 계산용
 
 # 학습 완료/중단 후 초기화
 session_state.current_run_status = "idle"

@@ -60,10 +60,27 @@ def render() -> None:
 
     if status == "running":
         _render_running_ui()
-        _drain_queue()
-        _schedule_rerun()
+        finished = _drain_queue()
+        if not finished:
+            time.sleep(0.3)
+            st.rerun()
     else:
+        _show_last_result()
         _render_idle_ui()
+
+
+def _show_last_result() -> None:
+    """직전 학습 결과 메시지를 idle UI 위에 표시 (1회만)."""
+    result = st.session_state.pop("_last_result", None)
+    if not result:
+        return
+    level, text = result.get("level", "info"), result.get("text", "")
+    if level == "success":
+        st.success(text)
+    elif level == "warning":
+        st.warning(text)
+    elif level == "error":
+        st.error(text)
 
 
 # ── Guard ──────────────────────────────────────────────────────────────────────
@@ -145,7 +162,9 @@ def _render_running_ui() -> None:
     step = progress.get("step", 0)
     total = progress.get("total", 1)
     loss = progress.get("loss")
-    elapsed = progress.get("elapsed", 0.0)
+
+    start_t = st.session_state.get("_training_start_time") or time.time()
+    elapsed = time.time() - start_t  # 항상 실시간 벽시계 기준
 
     pct = step / total if total > 0 else 0.0
     label = f"Step {step:,} / {total:,} ({pct*100:.1f}%)"
@@ -244,6 +263,7 @@ def _handle_start_training(experiment_name: str) -> None:
     }
     st.session_state["_log_lines"] = []
     st.session_state["_loss_history"] = []
+    st.session_state["_training_start_time"] = time.time()
 
     st.rerun()
 
@@ -256,11 +276,11 @@ def _get_total_steps(model_config: dict) -> int:
 
 # ── Queue 드레인 ───────────────────────────────────────────────────────────────
 
-def _drain_queue() -> None:
-    """Queue에 쌓인 메시지를 모두 소비. 종료 메시지 수신 즉시 드레인 중단."""
+def _drain_queue() -> bool:
+    """Queue에 쌓인 메시지를 모두 소비. 종료 메시지 수신 시 True 반환."""
     q: queue.Queue | None = st.session_state.get("_result_queue")
     if q is None:
-        return
+        return False
 
     while True:
         try:
@@ -276,19 +296,14 @@ def _drain_queue() -> None:
             _handle_log(msg)
         elif msg_type == "completed":
             _handle_completed(msg)
-            break
+            return True
         elif msg_type == "error":
             _handle_error(msg)
-            break
+            return True
         elif msg_type == "stopped":
             _handle_stopped(msg)
-            break
-
-
-def _schedule_rerun() -> None:
-    """1초 대기 후 st.rerun() 호출 (R-THREAD-05: 1.0초 고정)."""
-    time.sleep(1.0)
-    st.rerun()
+            return True
+    return False
 
 
 # ── 메시지 핸들러 ──────────────────────────────────────────────────────────────
@@ -374,16 +389,23 @@ def _handle_completed(msg: dict) -> None:
         secs = msg.get("duration_seconds", 0)
         mins, sec = divmod(secs, 60)
         auc = metrics.get("auc", 0.0)
-        st.success(
-            f"학습이 완료되었습니다. AUC: {auc:.4f} | 소요 시간: {mins}분 {sec}초"
-        )
+        st.session_state["_last_result"] = {
+            "level": "success",
+            "text": f"학습이 완료되었습니다. AUC: {auc:.4f} | 소요 시간: {mins}분 {sec}초",
+        }
 
     except RuntimeError as e:
         err_str = str(e)
         if "ERR_HISTORY_WRITE_FAILED" in err_str:
-            st.warning(f"모델 파일은 저장되었으나 히스토리 기록에 실패했습니다. {err_str}")
+            st.session_state["_last_result"] = {
+                "level": "warning",
+                "text": f"모델 파일은 저장되었으나 히스토리 기록에 실패했습니다. {err_str}",
+            }
         else:
-            st.error(f"모델 저장에 실패했습니다. 디스크 공간을 확인해 주세요. {err_str}")
+            st.session_state["_last_result"] = {
+                "level": "error",
+                "text": f"모델 저장에 실패했습니다. 디스크 공간을 확인해 주세요. {err_str}",
+            }
     finally:
         _reset_run_state()
         del msg["model"]
@@ -393,7 +415,10 @@ def _handle_completed(msg: dict) -> None:
 
 def _handle_error(msg: dict) -> None:
     tb = msg.get("traceback", "")
-    st.error(f"학습 중 오류가 발생했습니다.\n{tb[:500]}")
+    st.session_state["_last_result"] = {
+        "level": "error",
+        "text": f"학습 중 오류가 발생했습니다.\n{tb}",
+    }
     _reset_run_state()
 
 
@@ -417,10 +442,10 @@ def _handle_stopped(msg: dict) -> None:
         except RuntimeError:
             pass
 
-    st.warning(
-        MSG["TRAIN_STOPPED"]
-        + (f" ({step:,} step 완료 후 중단)" if step else "")
-    )
+    st.session_state["_last_result"] = {
+        "level": "warning",
+        "text": MSG["TRAIN_STOPPED"] + (f" ({step:,} step 완료 후 중단)" if step else ""),
+    }
     _reset_run_state()
 
 

@@ -122,6 +122,23 @@ class TrainingWorker(threading.Thread):
 
         device = torch.device(self.device)
 
+        # 1-b. GPU 커널 호환성 사전 검사 (RTX 5060 / sm_120 등 신형 GPU 대응)
+        if self.device.startswith("cuda") and torch.cuda.is_available():
+            try:
+                _probe = torch.zeros(1, device=device)
+                del _probe
+            except RuntimeError as exc:
+                if "no kernel image" in str(exc).lower():
+                    cap = torch.cuda.get_device_capability()
+                    sm = f"sm_{cap[0]}{cap[1]}"
+                    raise RuntimeError(
+                        f"GPU({sm})가 현재 PyTorch {torch.__version__}와 호환되지 않습니다. "
+                        f"PyTorch 2.7.0 이상으로 업그레이드하세요.\n"
+                        f"pip install torch torchvision torchaudio "
+                        f"--index-url https://download.pytorch.org/whl/cu128"
+                    ) from exc
+                raise
+
         # 2. 시작 로그
         self._write_log(f"[시작] 실험: {self.experiment_id}")
         self._write_log(
@@ -143,12 +160,17 @@ class TrainingWorker(threading.Thread):
                     raise ValueError("ImageNet penalty 디렉터리에 이미지가 없습니다.")
 
         # 4. DataLoader 구성
+        self._write_log("[초기화] 데이터셋 로딩 중...")
         from utils.mvtec_dataset import build_dataloaders
         train_loader, test_loader = build_dataloaders(
             dataset_path=self.dataset_path,
             preprocessing_config=self.preprocessing_config,
             batch_size=self.model_config.get("batch_size", 16),
             random_seed=seed,
+        )
+        self._write_log(
+            f"[초기화] 데이터셋 로딩 완료 — "
+            f"train {len(train_loader.dataset)}장 / test {len(test_loader.dataset)}장"
         )
 
         # 5. 모델 생성 + 학습
@@ -159,6 +181,7 @@ class TrainingWorker(threading.Thread):
         )
 
         if model_type == "efficientad":
+            self._write_log("[초기화] EfficientAD 모델 생성 중... (사전학습 가중치 로딩 포함, 수십 초 소요)")
             model = _create_efficientad_model(self.model_config)
             if penalty_weight > 0:
                 penalty_loader = build_imagenet_penalty_loader(
@@ -174,6 +197,7 @@ class TrainingWorker(threading.Thread):
             )
 
         elif model_type == "patchcore":
+            self._write_log("[초기화] PatchCore 모델 생성 중...")
             model = _create_patchcore_model(self.model_config)
             self._write_log("[초기화] PatchCore 모델 준비 완료")
             completed, last_step = self._train_patchcore(model, train_loader, device)
@@ -229,10 +253,11 @@ class TrainingWorker(threading.Thread):
 
         params = self.model_config["params"]
         total_steps = params.get("train_steps", 70000)
-        report_every = 500
+        report_every = 100
 
         model = model.to(device)
         model.train()
+        self._write_log("[학습] EfficientAD GPU 전송 완료. 학습 루프 시작...")
 
         # anomalib 버전별로 student/autoencoder 위치가 다름
         # 2.4.x: model.model.student / model.model.ae
@@ -299,7 +324,7 @@ class TrainingWorker(threading.Thread):
 
             step += 1
 
-            if step % report_every == 0 or step == total_steps:
+            if step == 1 or step % report_every == 0 or step == total_steps:
                 elapsed = time.time() - self._start_time
                 self.result_queue.put({
                     "type":    "progress",
@@ -339,6 +364,15 @@ class TrainingWorker(threading.Thread):
 
         batch_size = train_loader.batch_size or 1
         total_batches = min(len(train_loader), max_train // max(batch_size, 1) + 1)
+
+        self._write_log(
+            f"[학습] PatchCore 특징 추출 시작 — 총 {total_batches}배치"
+        )
+        self.result_queue.put({
+            "type": "progress", "step": 0,
+            "total": total_batches, "loss": 0.0,
+            "elapsed": round(time.time() - self._start_time, 1),
+        })
 
         if torch_model is not None:
             # anomalib 2.4.x: training mode에서 torch_model(images) → embedding_store 축적

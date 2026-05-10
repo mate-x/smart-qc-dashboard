@@ -69,10 +69,7 @@ def render() -> None:
 # ── Guard ──────────────────────────────────────────────────────────────────────
 
 def _guard() -> bool:
-    """
-    3개 선행 조건 확인. 미아 스레드(orphan thread) 감지 포함.
-    """
-    # 미아 스레드 감지 (새로고침 후 재진입 시)
+    """3개 선행 조건 확인. 미아 스레드(orphan thread) 감지 포함."""
     worker = st.session_state.get("_worker")
     if worker is not None and worker.is_alive():
         q = st.session_state.get("_result_queue")
@@ -188,14 +185,12 @@ def _handle_start_training(experiment_name: str) -> None:
     dataset_path: str = st.session_state["dataset_path"]
     device_info: dict = st.session_state.get("device_info") or {"device": "cpu"}
 
-    # 디스크 여유 공간 확인
     try:
         check_disk_before_save(model_config["model_type"])
     except RuntimeError as e:
         st.error(str(e))
         st.stop()
 
-    # EfficientAD: ImageNet penalty 디렉터리 검증
     if model_config.get("model_type") == "efficientad":
         try:
             validate_imagenet_penalty_dir()
@@ -206,25 +201,21 @@ def _handle_start_training(experiment_name: str) -> None:
             )
             st.stop()
 
-    # experiment_id 및 메타데이터 생성
     exp_id = generate_experiment_id(model_config["model_type"])
     created_at = generate_created_at()
 
     if not experiment_name.strip():
         experiment_name = f"{model_config['model_type'].upper()} {exp_id[-4:]}"
 
-    # configs.yaml experiment 섹션 저장
     save_config_section(
         section="experiment",
         data={"name": experiment_name, "created_at": created_at},
         path="./configs.yaml",
     )
 
-    # 동시성 객체 생성
     stop_event = threading.Event()
     result_queue: queue.Queue = queue.Queue()
 
-    # TrainingWorker 생성 및 시작
     worker = TrainingWorker(
         experiment_id=exp_id,
         model_config=model_config,
@@ -237,7 +228,6 @@ def _handle_start_training(experiment_name: str) -> None:
     worker.daemon = True
     worker.start()
 
-    # session_state 갱신 (메인 스레드 전용 — ADR-04)
     st.session_state["current_run_status"] = "running"
     st.session_state["current_exp_id"] = exp_id
     st.session_state["_stop_event"] = stop_event
@@ -335,7 +325,6 @@ def _handle_completed(msg: dict) -> None:
     y_true = msg["y_true"]
     anomaly_scores = msg["anomaly_scores"]
 
-    # Threshold 계산 (정상 이미지 기준)
     normal_scores = [s for s, lbl in zip(anomaly_scores, y_true) if lbl == 0]
     if normal_scores:
         threshold = compute_threshold(
@@ -362,7 +351,6 @@ def _handle_completed(msg: dict) -> None:
             st.session_state["experiments"] = {}
         st.session_state["experiments"][exp_id] = record
 
-        # anomaly_map 캐시 저장 (Z.6)
         anomaly_maps_dict: dict = msg.get("anomaly_maps", {})
         image_paths: list[str] = msg.get("image_paths", [])
         if image_paths and anomaly_maps_dict:

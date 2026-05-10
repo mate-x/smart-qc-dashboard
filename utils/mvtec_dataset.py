@@ -70,7 +70,7 @@ class MVTecDataset(Dataset):
 
         _, image_tensor = apply_preprocessing(item["path"], self.preprocessing_config)
 
-        image_size = self.preprocessing_config["image_size"]
+        image_size = self.preprocessing_config.get("image_size", 256)
         if item["mask_path"] and Path(item["mask_path"]).exists():
             mask = Image.open(item["mask_path"]).convert("L")
             mask = mask.resize((image_size, image_size), Image.NEAREST)

@@ -57,7 +57,7 @@ class TrainingWorker(threading.Thread):
         model_config: dict,
         preprocessing_config: dict,
         dataset_path: str,
-        device: str,
+        device: str,                 # Z.2: device_info dict 아님, 문자열 직접 전달
         stop_event: threading.Event,
         result_queue: queue.Queue,
     ) -> None:
@@ -65,10 +65,10 @@ class TrainingWorker(threading.Thread):
         self.experiment_id = experiment_id
         self.model_config = model_config
         self.preprocessing_config = preprocessing_config
-        self.dataset_path = dataset_path
-        self.device = device
-        self.stop_event = stop_event
-        self.result_queue = result_queue
+        self.dataset_path         = dataset_path
+        self.device               = device
+        self.stop_event           = stop_event
+        self.result_queue         = result_queue
 
         self._model = None
         self._start_time: float = 0.0
@@ -76,7 +76,6 @@ class TrainingWorker(threading.Thread):
         self._last_step: int = 0
 
     def run(self) -> None:
-        # stop_event 선행 확인 (시작 전 중단 요청)
         if self.stop_event.is_set():
             self.result_queue.put({"type": "stopped", "step": 0})
             return
@@ -89,7 +88,7 @@ class TrainingWorker(threading.Thread):
             self._run_impl()
         except Exception as e:
             self.result_queue.put({
-                "type": "error",
+                "type":      "error",
                 "exception": e,
                 "traceback": traceback.format_exc(),
             })
@@ -355,7 +354,6 @@ class TrainingWorker(threading.Thread):
 
         elapsed_total = time.time() - self._start_time
         self._write_log(f"[완료] 메모리 뱅크 구성 완료 | 경과: {elapsed_total:.1f}s")
-        # coreset 완료 = 학습 완료 (step=1)
         self.result_queue.put({
             "type":    "progress",
             "step":    1,

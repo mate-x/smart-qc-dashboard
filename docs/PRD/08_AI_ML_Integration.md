@@ -1096,23 +1096,19 @@ def load_model_for_inference(
 
 
 def run_inference(
-    model,
-    image_path: str,
-    preprocessing_config: dict,
+    model: object,
+    image_tensor: torch.Tensor,  # (1, C, H, W) — 이미 전처리된 텐서
 ) -> np.ndarray:
     """
     단일 이미지 추론. Anomaly Map (H, W) float32 반환.
-    학습과 동일한 preprocessing_config 사용 (DA-05 준수).
+    DA-05 준수: 호출 측에서 apply_preprocessing() 적용 후 전달 (07.§7.3 패턴).
     """
-    _, image_tensor = apply_preprocessing(image_path, preprocessing_config)
-    image_tensor = image_tensor.unsqueeze(0)   # (1, C, H, W)
     device = next(model.parameters()).device
+    if image_tensor.dim() == 3:
+        image_tensor = image_tensor.unsqueeze(0)
     image_tensor = image_tensor.to(device)
-
     with torch.no_grad():
-        anomaly_map = _get_anomaly_map(model, image_tensor)
-
-    return anomaly_map   # (H, W) float32
+        return _get_anomaly_map(model, image_tensor)
 ```
 
 ---
@@ -1274,7 +1270,9 @@ if cached_maps and image_path in cached_maps:
 else:
     # 캐시 미스: 모델 재로드 후 추론 (가정 A-05)
     model = load_model_for_inference(model_path, model_config, device)
-    anomaly_map = run_inference(model, image_path, preprocessing_config)
+    _, tensor = apply_preprocessing(image_path, preprocessing_config)
+    tensor = tensor.unsqueeze(0)
+    anomaly_map = run_inference(model, tensor)
 ```
 
 ---

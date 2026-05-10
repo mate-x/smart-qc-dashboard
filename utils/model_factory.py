@@ -39,7 +39,7 @@ def build_imagenet_penalty_loader(
 ) -> "torch.utils.data.DataLoader":
     """
     ImageNet penalty 배치용 DataLoader.
-    IMAGENET_PENALTY_DIR 존재 시 실제 이미지 사용, 없으면 FakeData.
+    IMAGENET_PENALTY_DIR 존재 시 실제 이미지 사용.
     Z.1 정오표: FakeData fallback 없음 — validate_imagenet_penalty_dir()가 선행 보장.
     """
     from utils.storage import IMAGENET_PENALTY_DIR
@@ -187,7 +187,7 @@ def _get_anomaly_map(
 ) -> np.ndarray:
     """
     단일 이미지 추론 → Anomaly Map (H, W) float32 반환.
-    EfficientAd / Patchcore 공통 경로 시도 후 Patchcore fallback.
+    EfficientAd / Patchcore 공통 경로 시도 후 Patchcore KNN fallback.
     """
     if hasattr(model, "anomaly_map_generator") or hasattr(model, "forward"):
         try:
@@ -206,9 +206,12 @@ def _get_anomaly_map(
     # Patchcore KNN fallback
     if hasattr(model, "memory_bank"):
         features = _extract_patchcore_features(model, image)
+        mem = model.memory_bank
+        if mem.device != features.device:
+            mem = mem.to(features.device)
         dists = torch.cdist(
             features.unsqueeze(0),
-            model.memory_bank.unsqueeze(0),
+            mem.unsqueeze(0),
             p=2,
         ).squeeze(0)
         k = min(
@@ -292,12 +295,12 @@ def load_model_for_inference(
 
 def run_inference(
     model: object,
-    image_tensor: torch.Tensor,
+    image_tensor: torch.Tensor,  # (1, C, H, W) — 이미 전처리된 텐서
 ) -> np.ndarray:
     """단일 이미지 추론. Anomaly Map (H, W) float32 반환."""
-    device = next(iter(model.parameters())).device
-    tensor = image_tensor.to(device)
-    if tensor.dim() == 3:
-        tensor = tensor.unsqueeze(0)
+    device = next(model.parameters()).device
+    if image_tensor.dim() == 3:
+        image_tensor = image_tensor.unsqueeze(0)
+    image_tensor = image_tensor.to(device)
     with torch.no_grad():
-        return _get_anomaly_map(model, tensor)
+        return _get_anomaly_map(model, image_tensor)

@@ -130,18 +130,27 @@ def _build_table_df(sorted_exps: list[dict]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+_BACKBONE_ABBREV = {
+    "wide_resnet50_2": "wrn50",
+    "resnet50": "r50",
+    "resnet18": "r18",
+}
+
+
 def _param_summary(r: dict) -> str:
     model_type = r.get("model_type", "")
-    cfg = r.get("model_config") or {}
-    if "EfficientAD" in model_type:
-        size = cfg.get("model_size", "?")
-        steps = cfg.get("max_steps", "?")
-        opt = cfg.get("optimizer", "?")
-        return f"{size}/{steps}/{opt}"
-    if "PatchCore" in model_type:
-        backbone = cfg.get("backbone", "?")
-        ratio = cfg.get("coreset_sampling_ratio", "?")
-        return f"{backbone}/{ratio}"
+    params = r.get("model_params") or {}
+    if model_type == "efficientad":
+        size = params.get("model_size", "?")
+        steps = params.get("train_steps", "?")
+        opt = params.get("optimizer", "?")
+        steps_str = f"{steps // 1000}k" if isinstance(steps, int) else str(steps)
+        return f"{size}/{steps_str}/{opt}"
+    if model_type == "patchcore":
+        backbone = params.get("backbone", "?")
+        ratio = params.get("coreset_sampling_ratio", "?")
+        backbone_abbr = _BACKBONE_ABBREV.get(backbone, backbone)
+        return f"{backbone_abbr}/{ratio}"
     return ""
 
 
@@ -196,7 +205,11 @@ def _render_detail(record: dict) -> None:
     with col2:
         st.plotly_chart(_roc_curve_fig(metrics), use_container_width=True)
     with col3:
-        st.plotly_chart(_score_dist_fig(metrics), use_container_width=True)
+        threshold_value = record.get("threshold_value")
+        st.plotly_chart(
+            _score_dist_fig(metrics, threshold_value=threshold_value),
+            use_container_width=True,
+        )
 
 
 def _confusion_matrix_fig(metrics: dict) -> go.Figure:
@@ -252,10 +265,10 @@ def _roc_curve_fig(metrics: dict) -> go.Figure:
     return fig
 
 
-def _score_dist_fig(metrics: dict) -> go.Figure:
+def _score_dist_fig(metrics: dict, threshold_value: float | None = None) -> go.Figure:
     scores = metrics.get("anomaly_scores") or []
     labels = metrics.get("image_labels") or []
-    threshold = metrics.get("threshold")
+    threshold = threshold_value
 
     fig = go.Figure()
     if scores and labels:

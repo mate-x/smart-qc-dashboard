@@ -28,3 +28,10 @@ def set_anomaly_map_cache(exp_id: str, data: dict) -> None:
 def get_anomaly_map_cache(exp_id: str) -> dict | None:
     """캐시 항목 반환. 없으면 None."""
     return st.session_state.get(f"{_KEY_PREFIX}{exp_id}")
+
+
+def invalidate_anomaly_map_cache(experiment_id: str) -> None:
+    """특정 실험의 캐시 제거. 키 없으면 no-op. 실험 삭제 직후 호출."""
+    key = f"{_KEY_PREFIX}{experiment_id}"
+    if key in st.session_state:
+        del st.session_state[key]

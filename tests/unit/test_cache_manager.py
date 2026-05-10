@@ -9,6 +9,7 @@ import utils.cache_manager as cm
 from utils.cache_manager import (
     MAX_ANOMALY_MAP_CACHE,
     get_anomaly_map_cache,
+    invalidate_anomaly_map_cache,
     set_anomaly_map_cache,
 )
 
@@ -58,3 +59,22 @@ class TestLruEviction:
             set_anomaly_map_cache(f"slot{i}", {"v": i})
         cached_keys = [k for k in fake_session_state if k.startswith(cm._KEY_PREFIX)]
         assert len(cached_keys) == MAX_ANOMALY_MAP_CACHE
+
+
+class TestInvalidateAnomalyMapCache:
+    def test_removes_existing_entry(self, fake_session_state):
+        set_anomaly_map_cache("exp_del", {"map": [1]})
+        assert get_anomaly_map_cache("exp_del") is not None
+        invalidate_anomaly_map_cache("exp_del")
+        assert get_anomaly_map_cache("exp_del") is None
+
+    def test_noop_when_key_absent(self, fake_session_state):
+        """존재하지 않는 키 제거 시도 — 예외 없이 no-op."""
+        invalidate_anomaly_map_cache("nonexistent_exp")  # should not raise
+
+    def test_only_removes_target(self, fake_session_state):
+        set_anomaly_map_cache("keep_me", {"x": 1})
+        set_anomaly_map_cache("remove_me", {"x": 2})
+        invalidate_anomaly_map_cache("remove_me")
+        assert get_anomaly_map_cache("keep_me") is not None
+        assert get_anomaly_map_cache("remove_me") is None

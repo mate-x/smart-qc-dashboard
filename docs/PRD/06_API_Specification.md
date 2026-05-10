@@ -230,10 +230,12 @@ class LogMessage(TypedDict):
 
 class CompletedMessage(TypedDict):
     type: Literal["completed"]
-    y_true: list[int]           # 테스트 이미지 정답 레이블 (0=정상, 1=결함)
-    anomaly_scores: list[float] # 테스트 이미지별 anomaly score
-    model: object               # 학습 완료된 EfficientAd | Patchcore 인스턴스
-    duration_seconds: int       # 학습 소요 시간 (초, int 변환)
+    y_true: list[int]                      # 테스트 이미지 정답 레이블 (0=정상, 1=결함)
+    anomaly_scores: list[float]            # 테스트 이미지별 anomaly score
+    anomaly_maps: dict[str, np.ndarray]    # image_path → anomaly map (H, W), float32
+    image_paths: list[str]                 # 테스트 이미지 경로 목록 (anomaly_maps 키 순서)
+    model: object                          # 학습 완료된 EfficientAd | Patchcore 인스턴스
+    duration_seconds: int                  # 학습 소요 시간 (초, int 변환)
 
 class ErrorMessage(TypedDict):
     type: Literal["error"]

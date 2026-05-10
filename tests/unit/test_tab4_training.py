@@ -1,12 +1,14 @@
 """
-탭4 중지 처리 단위 테스트
+탭4 단위 테스트
 
 PRD 참조:
   06_API_Specification.md §5.2  (_handle_stopped, _drain_queue, _reset_run_state)
   06_API_Specification.md §6    (stop_event 경쟁 조건 처리 규칙 R-RACE-01/02)
+  07_Backend_Service_Design.md §6.1 (완료 후처리 순서)
   07_Backend_Service_Design.md §6.2 (중단 후처리 순서)
   07_Backend_Service_Design.md §2.1 (experiment_id R-NAMING-03)
   07_Backend_Service_Design.md §8.1 (R-UI-02 학습 시작 버튼 idle 전용)
+  07_Backend_Service_Design.md §9.2 (GPU 메모리 해제 조건)
 """
 from __future__ import annotations
 
@@ -15,6 +17,7 @@ import re
 import threading
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 
 import tabs.tab4_training as t4
@@ -458,3 +461,257 @@ class TestGenerateExperimentId:
         """10회 호출 중 최소 절반 이상 고유 (uuid4 덕분에 거의 항상)."""
         ids = [t4.generate_experiment_id("efficientad") for _ in range(10)]
         assert len(set(ids)) >= 5
+
+
+# ── TestHandleCompleted ────────────────────────────────────────────────────────
+
+class TestHandleCompleted:
+    """_handle_completed() — PRD 07 §6.1 완료 후처리 6단계 검증."""
+
+    _METRICS = {
+        "auc": 0.95,
+        "accuracy": 0.9,
+        "precision": 0.9,
+        "recall": 0.9,
+        "f1_score": 0.9,
+        "f2_score": 0.9,
+        "confusion_matrix": {"tp": 9, "fp": 1, "tn": 9, "fn": 1},
+        "anomaly_scores": [0.1, 0.2, 0.8, 0.9],
+        "image_labels": [0, 0, 1, 1],
+    }
+
+    def _make_msg(self, with_anomaly_maps: bool = True) -> dict:
+        msg: dict = {
+            "type": "completed",
+            "y_true": [0, 0, 1, 1],
+            "anomaly_scores": [0.1, 0.2, 0.8, 0.9],
+            "duration_seconds": 60,
+            "model": MagicMock(),
+        }
+        if with_anomaly_maps:
+            img_path = "/data/test/crack/000.png"
+            msg["anomaly_maps"] = {img_path: np.zeros((64, 64), dtype=np.float32)}
+            msg["image_paths"] = [img_path]
+        else:
+            msg["anomaly_maps"] = {}
+            msg["image_paths"] = []
+        return msg
+
+    def _run(self, msg: dict, ss: dict | None = None, raise_on_save: Exception | None = None):
+        ss = ss or _make_ss()
+        save_side = raise_on_save
+        with _SessionCtx(ss), \
+             patch("tabs.tab4_training.load_config", return_value=_EXP_CFG_MOCK), \
+             patch("tabs.tab4_training.compute_threshold", return_value=0.5) as mock_thresh, \
+             patch("tabs.tab4_training.compute_metrics", return_value=self._METRICS) as mock_metrics, \
+             patch("tabs.tab4_training.check_disk_before_save"), \
+             patch("tabs.tab4_training.save_completed_experiment",
+                   side_effect=save_side) as mock_save, \
+             patch("tabs.tab4_training.set_anomaly_map_cache") as mock_cache, \
+             patch.object(t4.st, "success") as mock_success, \
+             patch.object(t4.st, "warning") as mock_warn, \
+             patch.object(t4.st, "error") as mock_err:
+            t4._handle_completed(msg)
+        return ss, mock_thresh, mock_metrics, mock_save, mock_cache, mock_success, mock_warn, mock_err
+
+    # ── step 1/2: threshold + metrics ─────────────────────────────────────────
+
+    def test_compute_threshold_called(self):
+        """PRD 07 §6.1 step1: compute_threshold() 호출."""
+        _, mock_thresh, *_ = self._run(self._make_msg())
+        mock_thresh.assert_called_once()
+
+    def test_compute_metrics_called(self):
+        """PRD 07 §6.1 step2: compute_metrics() 호출."""
+        _, _, mock_metrics, *_ = self._run(self._make_msg())
+        mock_metrics.assert_called_once()
+
+    def test_normal_scores_filtered_for_threshold(self):
+        """threshold 계산에 label=0 이미지 score만 전달되는지 확인."""
+        _, mock_thresh, *_ = self._run(self._make_msg())
+        args = mock_thresh.call_args[0]
+        normal_scores_arg = args[0]
+        # y_true=[0,0,1,1], anomaly_scores=[0.1,0.2,0.8,0.9] → 정상=[0.1,0.2]
+        assert len(normal_scores_arg) == 2
+
+    # ── step 5: save ───────────────────────────────────────────────────────────
+
+    def test_save_completed_experiment_called(self):
+        """PRD 07 §6.1 step5: save_completed_experiment() 호출."""
+        _, _, _, mock_save, *_ = self._run(self._make_msg())
+        mock_save.assert_called_once()
+
+    def test_save_called_with_correct_exp_id(self):
+        _, _, _, mock_save, *_ = self._run(self._make_msg())
+        call_args = mock_save.call_args[0]
+        assert call_args[0] == EXP_ID
+
+    # ── step 6: session_state 갱신 ────────────────────────────────────────────
+
+    def test_session_state_experiments_updated(self):
+        """PRD 07 §6.1 step6: session_state["experiments"][exp_id] = record."""
+        ss, *_ = self._run(self._make_msg())
+        assert EXP_ID in ss["experiments"]
+
+    def test_experiment_record_status_completed(self):
+        ss, *_ = self._run(self._make_msg())
+        assert ss["experiments"][EXP_ID]["status"] == "completed"
+
+    # ── anomaly_map 캐시 ───────────────────────────────────────────────────────
+
+    def test_cache_set_when_maps_present(self):
+        """anomaly_maps + image_paths 있으면 set_anomaly_map_cache 호출."""
+        _, _, _, _, mock_cache, *_ = self._run(self._make_msg(with_anomaly_maps=True))
+        mock_cache.assert_called_once()
+
+    def test_cache_not_set_when_maps_absent(self):
+        """anomaly_maps 없으면 set_anomaly_map_cache 미호출."""
+        _, _, _, _, mock_cache, *_ = self._run(self._make_msg(with_anomaly_maps=False))
+        mock_cache.assert_not_called()
+
+    def test_cache_call_includes_image_paths(self):
+        """캐시 데이터에 image_paths 포함."""
+        _, _, _, _, mock_cache, *_ = self._run(self._make_msg(with_anomaly_maps=True))
+        cache_data = mock_cache.call_args[0][1]
+        assert "image_paths" in cache_data
+        assert len(cache_data["image_paths"]) == 1
+
+    # ── step 7: st.success ────────────────────────────────────────────────────
+
+    def test_st_success_called_on_normal_completion(self):
+        """PRD 07 §6.1 step7: 정상 완료 시 st.success() 호출."""
+        _, _, _, _, _, mock_success, *_ = self._run(self._make_msg())
+        mock_success.assert_called_once()
+
+    def test_success_message_contains_auc(self):
+        """성공 메시지에 AUC 값 포함 (탭4 UI 알림 조건 — PRD 7.4절)."""
+        _, _, _, _, _, mock_success, *_ = self._run(self._make_msg())
+        assert "0.9500" in mock_success.call_args[0][0]
+
+    # ── step 8: _reset_run_state (finally 보장) ───────────────────────────────
+
+    def test_status_reset_to_idle_on_success(self):
+        """PRD 07 §6.1 step8: 정상 완료 후 current_run_status="idle"."""
+        ss, *_ = self._run(self._make_msg())
+        assert ss["current_run_status"] == "idle"
+
+    def test_status_reset_to_idle_even_on_save_error(self):
+        """RuntimeError 발생해도 finally 블록에서 _reset_run_state() 실행."""
+        ss, *_ = self._run(
+            self._make_msg(),
+            raise_on_save=RuntimeError("ERR_MODEL_SAVE_FAILED (Stage1): disk full"),
+        )
+        assert ss["current_run_status"] == "idle"
+
+    def test_result_queue_none_after_completed(self):
+        """R-RACE-02: _reset_run_state() 이후 _result_queue=None."""
+        ss, *_ = self._run(self._make_msg())
+        assert ss["_result_queue"] is None
+
+    def test_history_write_fail_shows_warning_not_error(self):
+        """ERR_HISTORY_WRITE_FAILED → st.warning (모델 저장 성공, 히스토리만 실패)."""
+        _, _, _, _, _, _, mock_warn, _ = self._run(
+            self._make_msg(),
+            raise_on_save=RuntimeError("ERR_HISTORY_WRITE_FAILED: details"),
+        )
+        mock_warn.assert_called_once()
+
+    def test_other_runtime_error_shows_error(self):
+        """Stage1/2 실패 → st.error."""
+        _, _, _, _, _, _, _, mock_err = self._run(
+            self._make_msg(),
+            raise_on_save=RuntimeError("ERR_MODEL_SAVE_FAILED (Stage1): disk full"),
+        )
+        mock_err.assert_called_once()
+
+    # ── PRD 07 §9.2 GPU 메모리 해제 ──────────────────────────────────────────
+
+    def test_cuda_empty_cache_called_only_for_cuda_device(self):
+        """device=="cuda"인 경우만 torch.cuda.empty_cache() 호출."""
+        ss = _make_ss()
+        ss["device_info"] = {"device": "cuda"}
+        with patch("tabs.tab4_training.torch") as mock_torch, \
+             _SessionCtx(ss), \
+             patch("tabs.tab4_training.load_config", return_value=_EXP_CFG_MOCK), \
+             patch("tabs.tab4_training.compute_threshold", return_value=0.5), \
+             patch("tabs.tab4_training.compute_metrics", return_value=self._METRICS), \
+             patch("tabs.tab4_training.check_disk_before_save"), \
+             patch("tabs.tab4_training.save_completed_experiment"), \
+             patch("tabs.tab4_training.set_anomaly_map_cache"), \
+             patch.object(t4.st, "success"), \
+             patch.object(t4.st, "warning"), \
+             patch.object(t4.st, "error"):
+            t4._handle_completed(self._make_msg())
+        mock_torch.cuda.empty_cache.assert_called_once()
+
+    def test_cuda_empty_cache_not_called_for_cpu_device(self):
+        """device=="cpu"이면 torch.cuda.empty_cache() 미호출."""
+        ss = _make_ss()
+        ss["device_info"] = {"device": "cpu"}
+        with patch("tabs.tab4_training.torch") as mock_torch, \
+             _SessionCtx(ss), \
+             patch("tabs.tab4_training.load_config", return_value=_EXP_CFG_MOCK), \
+             patch("tabs.tab4_training.compute_threshold", return_value=0.5), \
+             patch("tabs.tab4_training.compute_metrics", return_value=self._METRICS), \
+             patch("tabs.tab4_training.check_disk_before_save"), \
+             patch("tabs.tab4_training.save_completed_experiment"), \
+             patch("tabs.tab4_training.set_anomaly_map_cache"), \
+             patch.object(t4.st, "success"), \
+             patch.object(t4.st, "warning"), \
+             patch.object(t4.st, "error"):
+            t4._handle_completed(self._make_msg())
+        mock_torch.cuda.empty_cache.assert_not_called()
+
+
+# ── TestHandleError ───────────────────────────────────────────────────────────
+
+class TestHandleError:
+    """_handle_error() — 오류 핸들러 검증."""
+
+    def _run(self, msg: dict, ss: dict | None = None):
+        ss = ss or _make_ss()
+        with _SessionCtx(ss), \
+             patch.object(t4.st, "error") as mock_err:
+            t4._handle_error(msg)
+        return ss, mock_err
+
+    def test_st_error_called_once(self):
+        """오류 수신 시 st.error() 1회 호출."""
+        _, mock_err = self._run({
+            "type": "error",
+            "exception": RuntimeError("CUDA OOM"),
+            "traceback": "Traceback ...\nRuntimeError: CUDA OOM",
+        })
+        mock_err.assert_called_once()
+
+    def test_error_message_contains_traceback(self):
+        """오류 메시지에 traceback 일부 포함."""
+        _, mock_err = self._run({
+            "type": "error",
+            "exception": RuntimeError("CUDA OOM"),
+            "traceback": "Traceback ...\nRuntimeError: CUDA OOM",
+        })
+        assert "CUDA OOM" in mock_err.call_args[0][0]
+
+    def test_status_reset_to_idle(self):
+        """오류 후 current_run_status="idle"."""
+        ss, _ = self._run({
+            "type": "error",
+            "exception": ValueError("bad model"),
+            "traceback": "ValueError: bad model",
+        })
+        assert ss["current_run_status"] == "idle"
+
+    def test_result_queue_none_after_error(self):
+        """R-RACE-02: 오류 후 _result_queue=None."""
+        ss, _ = self._run({
+            "type": "error",
+            "exception": Exception("fail"),
+            "traceback": "Exception: fail",
+        })
+        assert ss["_result_queue"] is None
+
+    def test_empty_traceback_does_not_raise(self):
+        """traceback 없는 메시지도 처리 가능."""
+        ss, _ = self._run({"type": "error", "exception": Exception("x"), "traceback": ""})
+        assert ss["current_run_status"] == "idle"

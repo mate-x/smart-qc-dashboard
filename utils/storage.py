@@ -7,7 +7,8 @@ import shutil
 from pathlib import Path
 
 import torch
-import yaml
+
+from utils.config_manager import save_config_section
 
 HISTORY_FILE = Path("./experiments/history.json")
 MODELS_DIR = Path("./models")
@@ -99,29 +100,23 @@ def save_completed_experiment(
 
     # Stage 2: configs.yaml 스냅샷 (R-ATOMIC-01)
     configs_path = model_dir / "configs.yaml"
+    preproc_data = (
+        preprocessing_config
+        if preprocessing_config is not None
+        else record.get("preprocessing_config", {})
+    )
+    model_data = (
+        model_config
+        if model_config is not None
+        else record.get("model_config", {})
+    )
     try:
-        preproc_data = (
-            preprocessing_config
-            if preprocessing_config is not None
-            else record.get("preprocessing_config", {})
-        )
-        model_data = (
-            model_config
-            if model_config is not None
-            else record.get("model_config", {})
-        )
-        configs_data = {
-            "experiment": {
-                "name": record.get("name", exp_id),
-                "created_at": record.get("created_at", ""),
-            },
-            "preprocessing": preproc_data,
-            "model": model_data,
-        }
-        tmp = configs_path.with_suffix(".tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            yaml.dump(configs_data, f, allow_unicode=True, default_flow_style=False)
-        tmp.replace(configs_path)
+        for section, data in [
+            ("experiment", {"name": record.get("name", exp_id), "created_at": record.get("created_at", "")}),
+            ("preprocessing", preproc_data),
+            ("model", model_data),
+        ]:
+            save_config_section(section, data, path=configs_path)
     except Exception as e:
         shutil.rmtree(model_dir, ignore_errors=True)
         raise RuntimeError(f"ERR_MODEL_SAVE_FAILED (Stage2): {e}") from e

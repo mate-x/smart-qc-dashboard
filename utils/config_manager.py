@@ -7,6 +7,14 @@ import yaml
 
 _logger = logging.getLogger(__name__)
 
+_SECTION_ORDER = ("experiment", "preprocessing", "model")
+
+
+def _ordered_config(config: dict) -> dict:
+    ordered = {k: config[k] for k in _SECTION_ORDER if k in config}
+    ordered.update({k: v for k, v in config.items() if k not in ordered})
+    return ordered
+
 
 class ConfigLoadError(Exception):
     """YAML 파일 파싱 실패 시 발생하는 예외."""
@@ -58,7 +66,7 @@ def save_config_section(
     tmp = p.with_suffix(".tmp")
     try:
         with open(tmp, "w", encoding="utf-8") as f:
-            yaml.dump(config, f, allow_unicode=True, default_flow_style=False)
+            yaml.dump(_ordered_config(config), f, allow_unicode=True, default_flow_style=False, sort_keys=False)
         tmp.replace(p)
     except IOError as e:
         if tmp.exists():
@@ -95,7 +103,7 @@ def save_experiment_snapshot(
     tmp = snapshot_path.with_suffix(".tmp")
     try:
         with open(tmp, "w", encoding="utf-8") as f:
-            yaml.dump(config, f, allow_unicode=True, default_flow_style=False)
+            yaml.dump(_ordered_config(config), f, allow_unicode=True, default_flow_style=False, sort_keys=False)
         tmp.replace(snapshot_path)
     except IOError as e:
         if tmp.exists():

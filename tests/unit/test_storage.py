@@ -46,6 +46,18 @@ class TestLoadSaveHistory:
         assert records[0]["id"] == "a"
         assert records[1]["id"] == "b"
 
+    def test_append_raises_on_duplicate_experiment_id(self):
+        """PRD §3.5 중복 ID 금지 — 동일 experiment_id 재삽입 시 RuntimeError."""
+        append_experiment({"experiment_id": "exp_dup_001", "name": "first"})
+        with pytest.raises(RuntimeError, match="ERR_DUPLICATE_EXPERIMENT_ID"):
+            append_experiment({"experiment_id": "exp_dup_001", "name": "duplicate"})
+
+    def test_append_no_experiment_id_does_not_raise(self):
+        """experiment_id 키 없는 레코드는 중복 검사 건너뜀."""
+        append_experiment({"name": "no_id_1"})
+        append_experiment({"name": "no_id_2"})  # 예외 없이 추가돼야 함
+        assert len(load_history()) == 2
+
 
 class TestValidateImagenetPenaltyDir:
     def test_returns_true_with_valid_dir(self, tmp_path, monkeypatch):

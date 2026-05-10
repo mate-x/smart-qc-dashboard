@@ -347,7 +347,13 @@ def _handle_completed(msg: dict) -> None:
 
     try:
         check_disk_before_save(model_config["model_type"])
-        save_completed_experiment(exp_id, msg["model"], record)
+        save_completed_experiment(
+            exp_id,
+            msg["model"],
+            record,
+            preprocessing_config=st.session_state.get("preprocessing_config"),
+            model_config=model_config,
+        )
         if "experiments" not in st.session_state:
             st.session_state["experiments"] = {}
         st.session_state["experiments"][exp_id] = record

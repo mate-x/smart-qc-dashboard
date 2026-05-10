@@ -192,15 +192,17 @@ def _handle_start_training(experiment_name: str) -> None:
         st.stop()
 
     if model_config.get("model_type") == "efficientad":
-        ok, count = validate_imagenet_penalty_dir()
-        if not ok:
-            st.error(
-                f"EfficientAD 학습에 필요한 ImageNet penalty 데이터가 없습니다. "
-                f"`{IMAGENET_PENALTY_DIR}` 경로에 이미지를 추가해 주세요."
-            )
-            st.stop()
-        elif count < 1000:
-            st.warning(f"ImageNet penalty 이미지가 {count}장입니다. 1,000장 이상 권장합니다.")
+        penalty_weight = model_config.get("params", {}).get("imagenet_penalty_weight", 1.0)
+        if penalty_weight > 0:
+            ok, count = validate_imagenet_penalty_dir()
+            if not ok:
+                st.error(
+                    f"EfficientAD 학습에 필요한 ImageNet penalty 데이터가 없습니다. "
+                    f"`{IMAGENET_PENALTY_DIR}` 경로에 이미지를 추가해 주세요."
+                )
+                st.stop()
+            elif count < 1000:
+                st.warning(f"ImageNet penalty 이미지가 {count}장입니다. 1,000장 이상 권장합니다.")
 
     exp_id = generate_experiment_id(model_config["model_type"])
     created_at = generate_created_at()

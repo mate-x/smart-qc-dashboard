@@ -92,7 +92,7 @@ class TrainingWorker(threading.Thread):
                 "exception": e,
                 "traceback": traceback.format_exc(),
             })
-            self._write_log(f"[오류] {traceback.format_exc()[:500]}")
+            self._write_log(f"[오류] {traceback.format_exc()}")
         finally:
             if self._log_writer:
                 try:
@@ -133,11 +133,14 @@ class TrainingWorker(threading.Thread):
         model_type = self.model_config.get("model_type", "")
 
         # 3. EfficientAD — imagenet penalty 사전 검증 (Z.1)
+        # imagenet_penalty_weight == 0이면 penalty 미사용 → 디렉터리 불필요
         if model_type == "efficientad":
-            from utils.storage import validate_imagenet_penalty_dir
-            ok, _ = validate_imagenet_penalty_dir()
-            if not ok:
-                raise ValueError("ImageNet penalty 디렉터리에 이미지가 없습니다.")
+            penalty_weight = self.model_config.get("params", {}).get("imagenet_penalty_weight", 1.0)
+            if penalty_weight > 0:
+                from utils.storage import validate_imagenet_penalty_dir
+                ok, _ = validate_imagenet_penalty_dir()
+                if not ok:
+                    raise ValueError("ImageNet penalty 디렉터리에 이미지가 없습니다.")
 
         # 4. DataLoader 구성
         from utils.mvtec_dataset import build_dataloaders
@@ -157,11 +160,14 @@ class TrainingWorker(threading.Thread):
 
         if model_type == "efficientad":
             model = _create_efficientad_model(self.model_config)
-            penalty_loader = build_imagenet_penalty_loader(
-                batch_size=self.model_config["params"].get("penalty_batch_size", 8),
-                image_size=self.model_config.get("image_size", 256),
-                device=self.device,
-            )
+            if penalty_weight > 0:
+                penalty_loader = build_imagenet_penalty_loader(
+                    batch_size=self.model_config["params"].get("penalty_batch_size", 8),
+                    image_size=self.model_config.get("image_size", 256),
+                    device=self.device,
+                )
+            else:
+                penalty_loader = None
             self._write_log("[초기화] EfficientAD 모델 준비 완료")
             completed, last_step = self._train_efficientad(
                 model, train_loader, penalty_loader, device
@@ -212,7 +218,7 @@ class TrainingWorker(threading.Thread):
         self,
         model: object,
         train_loader: DataLoader,
-        penalty_loader: DataLoader,
+        penalty_loader: "DataLoader | None",
         device: torch.device,
     ) -> tuple[bool, int]:
         """
@@ -228,9 +234,25 @@ class TrainingWorker(threading.Thread):
         model = model.to(device)
         model.train()
 
-        optimizer_st = self._build_optimizer(model.student, params)
+        # anomalib 버전별로 student/autoencoder 위치가 다름
+        # 2.4.x: model.model.student / model.model.ae
+        # 구버전: model.student / model.autoencoder
+        _inner = getattr(model, "model", model)
+        student = getattr(model, "student", getattr(_inner, "student", None))
+        autoencoder = (
+            getattr(model, "autoencoder", None) or getattr(model, "ae", None)
+            or getattr(_inner, "autoencoder", None) or getattr(_inner, "ae", None)
+        )
+
+        if student is None or autoencoder is None:
+            raise AttributeError(
+                f"EfficientAd 모델에서 student/autoencoder를 찾을 수 없습니다. "
+                f"model 속성: {[a for a in dir(model) if not a.startswith('_')]}"
+            )
+
+        optimizer_st = self._build_optimizer(student, params)
         optimizer_ae = self._build_optimizer(
-            model.autoencoder,
+            autoencoder,
             {
                 **params,
                 "learning_rate": params.get("autoencoder_lr", params.get("learning_rate", 1e-4)),
@@ -241,7 +263,7 @@ class TrainingWorker(threading.Thread):
         scheduler_ae = self._build_scheduler(optimizer_ae, params, total_steps)
 
         train_iter = self._infinite_loader(train_loader)
-        penalty_iter = self._infinite_loader(penalty_loader)
+        penalty_iter = self._infinite_loader(penalty_loader) if penalty_loader is not None else None
 
         step = 0
         last_loss = 0.0
@@ -251,14 +273,17 @@ class TrainingWorker(threading.Thread):
                 return False, step
 
             batch = next(train_iter)
-            penalty_batch = next(penalty_iter)
-
             images = batch["image"].to(device)
-            # FakeData / ImageFolder 모두 (img, label) 튜플 반환
-            if isinstance(penalty_batch, (list, tuple)):
-                penalty = penalty_batch[0].to(device)
+
+            if penalty_iter is not None:
+                penalty_batch = next(penalty_iter)
+                # FakeData / ImageFolder 모두 (img, label) 튜플 반환
+                if isinstance(penalty_batch, (list, tuple)):
+                    penalty = penalty_batch[0].to(device)
+                else:
+                    penalty = penalty_batch["image"].to(device)
             else:
-                penalty = penalty_batch["image"].to(device)
+                penalty = torch.zeros_like(images)
 
             loss_dict = _efficientad_training_step(model, images, penalty)
             total_loss = loss_dict["loss_total"]
@@ -300,55 +325,81 @@ class TrainingWorker(threading.Thread):
         device: torch.device,
     ) -> tuple[bool, int]:
         """
-        PatchCore는 단일 에포크 특징 추출 후 메모리 뱅크 구성.
-        반환: (completed: bool, 0)
-        """
-        from utils.model_factory import _extract_patchcore_features
+        PatchCore 학습: 단일 에포크 특징 추출 후 coreset 메모리 뱅크 구성.
 
+        anomalib 2.4.x: PatchcoreModel.forward(training=True)가 embedding_store에 자동 축적,
+                         model.fit()으로 coreset 구성.
+        구버전 fallback: _extract_patchcore_features로 수동 추출 후 memory_bank 직접 설정.
+        """
         params = self.model_config.get("params", {})
         max_train = params.get("max_train", 1000)
 
         model = model.to(device)
-        model.eval()
+        torch_model = getattr(model, "model", None)
 
         batch_size = train_loader.batch_size or 1
         total_batches = min(len(train_loader), max_train // max(batch_size, 1) + 1)
-        all_features: list[torch.Tensor] = []
 
-        with torch.no_grad():
-            for batch_idx, batch in enumerate(train_loader):
-                if self.stop_event.is_set():
-                    return False, batch_idx
+        if torch_model is not None:
+            # anomalib 2.4.x: training mode에서 torch_model(images) → embedding_store 축적
+            model.train()
+            with torch.no_grad():
+                for batch_idx, batch in enumerate(train_loader):
+                    if self.stop_event.is_set():
+                        return False, batch_idx
+                    if batch_idx >= total_batches:
+                        break
+                    images = batch["image"].to(device)
+                    torch_model(images)
+                    elapsed = time.time() - self._start_time
+                    self.result_queue.put({
+                        "type":    "progress",
+                        "step":    batch_idx + 1,
+                        "total":   total_batches,
+                        "loss":    0.0,
+                        "elapsed": round(elapsed, 1),
+                    })
+                    self._write_log(
+                        f"[배치 {batch_idx+1}/{total_batches}] 특징 추출 중 | "
+                        f"경과: {elapsed:.1f}s"
+                    )
+            self._write_log("[PatchCore] 특징 추출 완료. Coreset 구성 중...")
+            model.eval()
+            model.fit()  # embedding_store → coreset subsample → memory_bank
 
-                if batch_idx >= total_batches:
-                    break
-
-                images = batch["image"].to(device)
-                features = _extract_patchcore_features(model, images)
-                all_features.append(features.cpu())
-
-                elapsed = time.time() - self._start_time
-                self.result_queue.put({
-                    "type":    "progress",
-                    "step":    batch_idx + 1,
-                    "total":   total_batches,
-                    "loss":    0.0,
-                    "elapsed": round(elapsed, 1),
-                })
-                self._write_log(
-                    f"[배치 {batch_idx+1}/{total_batches}] 특징 추출 중 | "
-                    f"경과: {elapsed:.1f}s"
-                )
-
-        if not all_features:
-            raise ValueError("특징 추출된 배치가 없습니다. 데이터셋을 확인해 주세요.")
-
-        feature_stack = torch.cat(all_features, dim=0)
-        self._write_log("[PatchCore] 특징 추출 완료. Coreset 구성 중...")
-
-        if hasattr(model, "fit"):
-            model.fit(feature_stack)
         else:
+            # Fallback: 구버전 anomalib — 수동 feature 추출
+            from utils.model_factory import _extract_patchcore_features
+
+            model.eval()
+            all_features: list[torch.Tensor] = []
+            with torch.no_grad():
+                for batch_idx, batch in enumerate(train_loader):
+                    if self.stop_event.is_set():
+                        return False, batch_idx
+                    if batch_idx >= total_batches:
+                        break
+                    images = batch["image"].to(device)
+                    features = _extract_patchcore_features(model, images)
+                    all_features.append(features.cpu())
+                    elapsed = time.time() - self._start_time
+                    self.result_queue.put({
+                        "type":    "progress",
+                        "step":    batch_idx + 1,
+                        "total":   total_batches,
+                        "loss":    0.0,
+                        "elapsed": round(elapsed, 1),
+                    })
+                    self._write_log(
+                        f"[배치 {batch_idx+1}/{total_batches}] 특징 추출 중 | "
+                        f"경과: {elapsed:.1f}s"
+                    )
+
+            if not all_features:
+                raise ValueError("특징 추출된 배치가 없습니다. 데이터셋을 확인해 주세요.")
+
+            feature_stack = torch.cat(all_features, dim=0)
+            self._write_log("[PatchCore] 특징 추출 완료. Coreset 구성 중...")
             coreset_ratio = params.get("coreset_sampling_ratio", 0.1)
             coreset_size = max(1, int(len(feature_stack) * coreset_ratio))
             indices = torch.randperm(len(feature_stack))[:coreset_size]

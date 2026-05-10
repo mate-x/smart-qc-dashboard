@@ -64,7 +64,13 @@ def build_imagenet_penalty_loader(
 # ── EfficientAD model creation ─────────────────────────────────────────────────
 
 def _create_efficientad_model(model_config: dict) -> "EfficientAd":
-    """PRD 08 B.4.1 매핑 테이블 기준 EfficientAd 생성."""
+    """PRD 08 B.4.1 매핑 테이블 기준 EfficientAd 생성.
+
+    anomalib 버전별로 EfficientAd.__init__ 시그니처가 다르므로
+    inspect로 실제 수용 파라미터만 골라서 전달한다.
+    """
+    import inspect
+
     if EfficientAd is None:
         raise ImportError(
             "anomalib이 설치되지 않았습니다. EfficientAD 모델을 생성할 수 없습니다."
@@ -73,17 +79,23 @@ def _create_efficientad_model(model_config: dict) -> "EfficientAd":
     model_size_key = params.get("model_size", "medium")
     model_size_enum = SIZE_MAP.get(model_size_key, SIZE_MAP.get("medium"))
 
-    return EfficientAd(
-        teacher_out_channels=params.get("out_channels", 384),
-        model_size=model_size_enum,
-        lr=params.get("learning_rate", 1e-4),
-        weight_decay=params.get("weight_decay", 1e-4),
-        padding=params.get("padding", False),
-        map_combination_alpha=params.get("ae_loss_weight", 0.5),
-        autoencoder_lr=params.get("autoencoder_lr", params.get("learning_rate", 1e-4)),
-        autoencoder_weight_decay=params.get("autoencoder_weight_decay", 1e-5),
-        penalized_normalized=(params.get("imagenet_penalty_weight", 1.0) > 0),
-    )
+    # 버전에 따라 지원 여부가 다른 파라미터를 후보로 정의
+    candidates = {
+        "teacher_out_channels": params.get("out_channels", 384),
+        "model_size":           model_size_enum,
+        "lr":                   params.get("learning_rate", 1e-4),
+        "weight_decay":         params.get("weight_decay", 1e-4),
+        "padding":              params.get("padding", False),
+        "map_combination_alpha": params.get("ae_loss_weight", 0.5),
+        "autoencoder_lr":       params.get("autoencoder_lr", params.get("learning_rate", 1e-4)),
+        "autoencoder_weight_decay": params.get("autoencoder_weight_decay", 1e-5),
+        "penalized_normalized": (params.get("imagenet_penalty_weight", 1.0) > 0),
+    }
+
+    valid_params = set(inspect.signature(EfficientAd.__init__).parameters) - {"self"}
+    kwargs = {k: v for k, v in candidates.items() if k in valid_params}
+
+    return EfficientAd(**kwargs)
 
 
 # ── PatchCore model creation ───────────────────────────────────────────────────
@@ -110,7 +122,14 @@ def _create_patchcore_model(model_config: dict) -> "Patchcore":
         state_dict = torch.load(params["pretrained_path"], map_location="cpu")
         if "model" in state_dict:
             state_dict = state_dict["model"]
-        model.backbone.load_state_dict(state_dict, strict=False)
+        # anomalib 2.4.x: 실제 backbone은 model.model.feature_extractor.feature_extractor
+        torch_model = getattr(model, "model", None)
+        fe_outer = getattr(torch_model, "feature_extractor", None) if torch_model else None
+        fe_inner = getattr(fe_outer, "feature_extractor", None)
+        target = fe_inner or fe_outer or getattr(model, "backbone", None)
+        if target is None:
+            raise AttributeError("PatchCore backbone을 찾을 수 없어 pretrained 가중치를 로드할 수 없습니다.")
+        target.load_state_dict(state_dict, strict=False)
 
     return model
 
@@ -121,26 +140,59 @@ def _extract_patchcore_features(
     model: "Patchcore",
     images: torch.Tensor,
 ) -> torch.Tensor:
-    """layer2, layer3 특징 추출 후 (B*H'*W', C2+C3) 반환."""
-    features: dict[str, torch.Tensor] = {}
+    """layer2, layer3 특징 추출 후 (B*H'*W', C2+C3) 반환.
+
+    anomalib 2.4.x: model.model.feature_extractor(images) → {"layer2": ..., "layer3": ...} dict 직접 반환.
+    구버전 anomalib: hook 방식 fallback.
+    """
+    torch_model = getattr(model, "model", None)
+    fe = getattr(torch_model, "feature_extractor", None) if torch_model is not None else None
+
+    if fe is not None:
+        # anomalib 2.4.x — TimmFeatureExtractor.forward() 가 dict 반환
+        with torch.no_grad():
+            feat_dict = fe(images)
+        if isinstance(feat_dict, dict) and len(feat_dict) >= 1:
+            layer_names = sorted(feat_dict.keys())
+            f2 = feat_dict[layer_names[0]]
+            f3 = feat_dict[layer_names[-1]]
+            f3_up = nn.functional.interpolate(
+                f3, size=f2.shape[-2:], mode="bilinear", align_corners=False
+            )
+            combined = torch.cat([f2, f3_up], dim=1)
+            B, C, H, W = combined.shape
+            return combined.permute(0, 2, 3, 1).reshape(B * H * W, C)
+
+    # Fallback: hook 방식 (구버전 anomalib)
+    backbone = (
+        getattr(model, "backbone", None)
+        or getattr(getattr(model, "feature_extractor", None), "feature_extractor", None)
+    )
+    if backbone is None or not hasattr(backbone, "layer2"):
+        raise AttributeError(
+            f"PatchCore backbone에서 layer2/layer3를 찾을 수 없습니다. "
+            f"model 속성: {[a for a in dir(model) if not a.startswith('_')]}"
+        )
+
+    feat_hooks: dict[str, torch.Tensor] = {}
     hooks = []
 
     def _make_hook(name: str):
         def hook(module, input, output):
-            features[name] = output
+            feat_hooks[name] = output
         return hook
 
-    hooks.append(model.backbone.layer2.register_forward_hook(_make_hook("layer2")))
-    hooks.append(model.backbone.layer3.register_forward_hook(_make_hook("layer3")))
+    hooks.append(backbone.layer2.register_forward_hook(_make_hook("layer2")))
+    hooks.append(backbone.layer3.register_forward_hook(_make_hook("layer3")))
 
     with torch.no_grad():
-        _ = model.backbone(images)
+        _ = backbone(images)
 
     for h in hooks:
         h.remove()
 
-    f2 = features["layer2"]
-    f3 = features["layer3"]
+    f2 = feat_hooks["layer2"]
+    f3 = feat_hooks["layer3"]
     f3_up = nn.functional.interpolate(
         f3, size=f2.shape[-2:], mode="bilinear", align_corners=False
     )
@@ -155,28 +207,60 @@ def _efficientad_training_step(
     penalty_images: torch.Tensor,
 ) -> dict:
     """
-    EfficientAd.training_step() 시도 후 실패 시 수동 fallback.
-    반환: {"loss_total": Tensor} 포함 dict.
+    3단계 순서로 loss 계산 시도. 반환: {"loss_total": Tensor} 포함 dict.
+
+    Path 1: model.training_step() — 2.4.x는 Batch 타입을 요구하므로 dict 전달 시 실패,
+             except로 잡고 다음 경로로 진행.
+    Path 2: EfficientAdModel.forward(batch, batch_imagenet) — anomalib 2.4.x 전용.
+    Path 3: 컴포넌트별 수동 forward — 구버전 anomalib fallback.
     """
+    _inner = getattr(model, "model", model)
+
+    # Path 1: training_step (E-2: 반환 키 "loss" → "loss_total" 정규화)
     if hasattr(model, "training_step"):
-        batch = {"image": images, "penalty_images": penalty_images}
         try:
-            loss = model.training_step(batch, batch_idx=0)
+            loss = model.training_step({"image": images, "penalty_images": penalty_images}, batch_idx=0)
             if isinstance(loss, dict):
+                if "loss_total" not in loss and "loss" in loss:
+                    loss["loss_total"] = loss["loss"]
                 return loss
             return {"loss_total": loss}
         except Exception:
             pass
 
-    # Fallback: manual student-teacher loss
+    # Path 2: EfficientAdModel.forward(batch, batch_imagenet) — anomalib 2.4.x (E-3)
+    if hasattr(_inner, "compute_losses"):
+        try:
+            result = _inner(batch=images, batch_imagenet=penalty_images)
+            if isinstance(result, tuple) and len(result) == 3:
+                loss_st, loss_ae, loss_stae = result
+                total = loss_st + loss_ae + loss_stae
+                return {"loss_st": loss_st, "loss_ae": loss_ae, "loss_total": total}
+        except Exception:
+            pass
+
+    # Path 3: 컴포넌트별 수동 forward — 구버전 anomalib (E-1: ae alias 추가)
+    teacher = getattr(model, "teacher", getattr(_inner, "teacher", None))
+    student = getattr(model, "student", getattr(_inner, "student", None))
+    autoencoder = (
+        getattr(model, "autoencoder", None) or getattr(model, "ae", None)
+        or getattr(_inner, "autoencoder", None) or getattr(_inner, "ae", None)
+    )
+
+    if teacher is None or student is None or autoencoder is None:
+        raise AttributeError(
+            f"EfficientAd: teacher/student/autoencoder를 찾을 수 없습니다. "
+            f"model 속성: {[a for a in dir(model) if not a.startswith('_')]}"
+        )
+
     with torch.no_grad():
-        teacher_out = model.teacher(images)
-    student_out = model.student(images)
-    ae_out = model.autoencoder(images)
+        teacher_out = teacher(images)
+    student_out = student(images)
+    ae_out = autoencoder(images)
 
     loss_st = torch.mean((teacher_out - student_out) ** 2)
     loss_ae = torch.mean((images - ae_out) ** 2)
-    alpha = getattr(model, "map_combination_alpha", 0.5)
+    alpha = getattr(model, "map_combination_alpha", getattr(_inner, "map_combination_alpha", 0.5))
     loss_total = alpha * loss_ae + (1.0 - alpha) * loss_st
     return {"loss_st": loss_st, "loss_ae": loss_ae, "loss_total": loss_total}
 
@@ -187,11 +271,18 @@ def _get_anomaly_map(
 ) -> np.ndarray:
     """
     단일 이미지 추론 → Anomaly Map (H, W) float32 반환.
-    EfficientAd / Patchcore 공통 경로 시도 후 Patchcore KNN fallback.
+
+    anomalib 2.4.x: model.model(image) → InferenceBatch(anomaly_map=...) 반환.
+    model(image) 보다 model.model(image)를 먼저 시도해 LightningModule forward 미정의 문제를 회피.
     """
-    if hasattr(model, "anomaly_map_generator") or hasattr(model, "forward"):
+    torch_model = getattr(model, "model", None)
+
+    # model.model → model 순서로 시도 (2.4.x는 torch_model이 더 안정적)
+    for m in ([torch_model, model] if torch_model is not None else [model]):
+        if m is None:
+            continue
         try:
-            output = model(image)
+            output = m(image)
             if isinstance(output, dict) and "anomaly_map" in output:
                 amap = output["anomaly_map"]
             elif hasattr(output, "anomaly_map"):
@@ -201,23 +292,20 @@ def _get_anomaly_map(
             if isinstance(amap, torch.Tensor):
                 return amap.squeeze().cpu().numpy().astype(np.float32)
         except Exception:
-            pass
+            continue
 
-    # Patchcore KNN fallback
-    if hasattr(model, "memory_bank"):
+    # Patchcore KNN fallback — model 또는 model.model에서 memory_bank 탐색
+    mem_holder = (
+        model if hasattr(model, "memory_bank")
+        else (torch_model if (torch_model is not None and hasattr(torch_model, "memory_bank")) else None)
+    )
+    if mem_holder is not None:
         features = _extract_patchcore_features(model, image)
-        mem = model.memory_bank
+        mem = mem_holder.memory_bank
         if mem.device != features.device:
             mem = mem.to(features.device)
-        dists = torch.cdist(
-            features.unsqueeze(0),
-            mem.unsqueeze(0),
-            p=2,
-        ).squeeze(0)
-        k = min(
-            getattr(model, "num_neighbors", 9),
-            dists.shape[1],
-        )
+        dists = torch.cdist(features.unsqueeze(0), mem.unsqueeze(0), p=2).squeeze(0)
+        k = min(getattr(mem_holder, "num_neighbors", 9), dists.shape[1])
         patch_scores, _ = torch.topk(dists, k, dim=1, largest=False)
         patch_scores = patch_scores.mean(dim=1)
         spatial_size = int(patch_scores.shape[0] ** 0.5)

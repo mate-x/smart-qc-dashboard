@@ -225,19 +225,23 @@ class TestValidateImagenetPenaltyDir:
         d.mkdir()
         (d / "sample.JPEG").write_bytes(b"fake")
         monkeypatch.setattr("utils.storage.IMAGENET_PENALTY_DIR", d)
-        validate_imagenet_penalty_dir()  # 예외 없어야 함
+        ok, count = validate_imagenet_penalty_dir()
+        assert ok is True
+        assert count == 1
 
-    def test_missing_dir_raises(self, tmp_path, monkeypatch):
+    def test_missing_dir_returns_false(self, tmp_path, monkeypatch):
         monkeypatch.setattr("utils.storage.IMAGENET_PENALTY_DIR", tmp_path / "nonexistent")
-        with pytest.raises(ValueError, match="존재하지 않습니다"):
-            validate_imagenet_penalty_dir()
+        ok, count = validate_imagenet_penalty_dir()
+        assert ok is False
+        assert count == 0
 
-    def test_empty_dir_raises(self, tmp_path, monkeypatch):
+    def test_empty_dir_returns_false(self, tmp_path, monkeypatch):
         d = tmp_path / "imagenet_penalty"
         d.mkdir()
         monkeypatch.setattr("utils.storage.IMAGENET_PENALTY_DIR", d)
-        with pytest.raises(ValueError, match="이미지 파일"):
-            validate_imagenet_penalty_dir()
+        ok, count = validate_imagenet_penalty_dir()
+        assert ok is False
+        assert count == 0
 ```
 
 ---

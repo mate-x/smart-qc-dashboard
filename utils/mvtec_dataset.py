@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from typing import Literal
 
@@ -13,17 +12,13 @@ from utils.image_utils import apply_preprocessing
 
 SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".bmp"}
 
-# Windows에서 DataLoader num_workers > 0 은 spawn 방식으로 동작하여
-# Streamlit 백그라운드 스레드와 충돌할 수 있으므로 0으로 고정
-_NUM_WORKERS = 0 if sys.platform == "win32" else 4
-
 
 class MVTecDataset(Dataset):
     """
-    MVTec AD 폴더 구조 기반 Dataset.
+    MVTec AD 폴더 구조를 읽어 (image_tensor, label, mask_tensor, image_path) 반환.
 
     split == "train" : train/good/ 이미지만 로드, label=0, mask=None
-    split == "test"  : test/{class}/ 이미지 전체 로드
+    split == "test"  : test/{class}/ 이미지 전체 로드,
                        class == "good" → label=0
                        class != "good" → label=1
                        gt mask: ground_truth/{class}/{filename} (없으면 zeros)
@@ -72,6 +67,7 @@ class MVTecDataset(Dataset):
 
     def __getitem__(self, idx: int) -> dict:
         item = self.items[idx]
+
         _, image_tensor = apply_preprocessing(item["path"], self.preprocessing_config)
 
         image_size = self.preprocessing_config.get("image_size", 256)
@@ -104,27 +100,26 @@ def build_dataloaders(
     test_loader:  shuffle=False, batch_size=1
     """
     train_ds = MVTecDataset(dataset_path, "train", preprocessing_config)
-    test_ds  = MVTecDataset(dataset_path, "test",  preprocessing_config)
+    test_ds = MVTecDataset(dataset_path, "test", preprocessing_config)
 
     g = torch.Generator()
     g.manual_seed(random_seed)
 
+    num_workers = 0  # Windows 환경 호환성
     train_loader = DataLoader(
         train_ds,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=_NUM_WORKERS,
-        pin_memory=True,
+        num_workers=num_workers,
+        pin_memory=False,
         drop_last=True,
         generator=g,
-        persistent_workers=(_NUM_WORKERS > 0),
     )
     test_loader = DataLoader(
         test_ds,
         batch_size=1,
         shuffle=False,
-        num_workers=_NUM_WORKERS,
-        pin_memory=True,
-        persistent_workers=(_NUM_WORKERS > 0),
+        num_workers=num_workers,
+        pin_memory=False,
     )
     return train_loader, test_loader

@@ -5,195 +5,256 @@ import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
+import numpy as np
+import pandas as pd
+import plotly.express as px
 import streamlit as st
+import torch
 
 from utils.cache_manager import set_anomaly_map_cache
+from utils.config_manager import load_config, save_config_section
 from utils.messages import MSG
-from utils.storage import append_experiment, save_completed_experiment
+from utils.metrics import compute_metrics, compute_threshold
+from utils.storage import (
+    append_experiment,
+    check_disk_before_save,
+    save_completed_experiment,
+    validate_imagenet_penalty_dir,
+    IMAGENET_PENALTY_DIR,
+)
+from utils.training_worker import TrainingWorker
 
 KST = timezone(timedelta(hours=9))
-_MAX_LOG_LINES = 100
 
 
-# ──────────────────────────────────────────────────────────────
-# 진입점
-# ──────────────────────────────────────────────────────────────
+# ── ID / 타임스탬프 생성 ───────────────────────────────────────────────────────
+
+def generate_experiment_id(model_type: str) -> str:
+    """R-NAMING-03: {model_type}_{YYYYMMDD}_{HHMMSS}_{4자리_소문자_16진수}"""
+    now = datetime.now(tz=KST)
+    return (
+        f"{model_type}_{now.strftime('%Y%m%d')}_{now.strftime('%H%M%S')}"
+        f"_{uuid.uuid4().hex[:4]}"
+    )
+
+
+def generate_created_at() -> str:
+    return datetime.now(tz=KST).isoformat()
+
+
+# ── 탭 진입점 ─────────────────────────────────────────────────────────────────
 
 def render() -> None:
     st.header("탭4. 학습 시작 + 학습 로그")
+
     if not _guard():
         return
-    _render_ui()
-    _handle_events()
+
+    status = st.session_state.get("current_run_status", "idle")
+
+    st.info(
+        "학습 중 새로고침 시 학습 상태를 확인할 수 없습니다.",
+        icon="⚠️",
+    )
+
+    if status == "running":
+        _render_running_ui()
+        _drain_queue()
+        _schedule_rerun()
+    else:
+        _render_idle_ui()
 
 
-# ──────────────────────────────────────────────────────────────
-# 진입 조건 검사
-# ──────────────────────────────────────────────────────────────
+# ── Guard ──────────────────────────────────────────────────────────────────────
 
 def _guard() -> bool:
+    """3개 선행 조건 확인. 미아 스레드(orphan thread) 감지 포함."""
+    worker = st.session_state.get("_worker")
+    if worker is not None and worker.is_alive():
+        q = st.session_state.get("_result_queue")
+        if q is None:
+            _reset_run_state()
+            st.info(
+                "새로고침으로 인해 학습 상태를 확인할 수 없습니다. "
+                "새로 학습을 시작하거나 탭5에서 히스토리를 확인하세요."
+            )
+
+    missing = False
     if st.session_state.get("dataset_path") is None:
         st.warning(MSG["NO_DATASET"])
-        return False
+        missing = True
     if st.session_state.get("preprocessing_config") is None:
         st.warning(MSG["NO_PREPROCESSING"])
-        return False
+        missing = True
     if st.session_state.get("model_config") is None:
         st.warning(MSG["NO_MODEL_CONFIG"])
-        return False
-    return True
+        missing = True
+    return not missing
 
 
-# ──────────────────────────────────────────────────────────────
-# UI 렌더링 (상태별 분기)
-# ──────────────────────────────────────────────────────────────
+# ── Idle UI ────────────────────────────────────────────────────────────────────
 
-def _render_ui() -> None:
-    status = st.session_state.get("current_run_status", "idle")
-    if status == "running":
-        _render_running()
-    elif status == "completed":
-        _render_completed()
-    elif status == "stopped":
-        _render_stopped()
-    elif status == "error":
-        _render_error()
-    else:
-        _render_idle()
+def _render_idle_ui() -> None:
+    """current_run_status == "idle" 상태 UI."""
+    _render_pretrain_summary()
 
+    experiment_name = st.text_input(
+        "실험명 (비워두면 자동 생성)",
+        max_chars=64,
+        placeholder="예: EfficientAD CLAHE clip2.0 실험",
+        key="tab4_experiment_name",
+    )
 
-def _render_idle() -> None:
-    st.info("학습 중 새로고침 시 학습 상태를 확인할 수 없습니다.", icon="⚠️")
-
-    model_config = st.session_state.get("model_config", {})
-    model_type   = model_config.get("model_type", "?")
-    dataset_path = st.session_state.get("dataset_path", "?")
-
-    st.write(f"**모델 타입**: `{model_type}`")
-    st.write(f"**데이터셋**: `{dataset_path}`")
-
-    if st.button("▶ 학습 시작", type="primary", key="btn_start"):
-        _handle_start_training()
-        st.rerun()
+    if st.button("학습 시작", type="primary"):
+        _handle_start_training(experiment_name)
 
 
-def _render_running() -> None:
-    exp_id = st.session_state.get("current_exp_id", "?")
-    st.info("학습 중 새로고침 시 학습 상태를 확인할 수 없습니다.", icon="⚠️")
-
-    col1, col2 = st.columns([4, 1])
-    with col1:
-        st.write(f"**실험 ID**: `{exp_id}`")
-    with col2:
-        if st.button("■ 중단", type="secondary", key="btn_stop"):
-            _handle_stop_training()
-
-    progress_data = st.session_state.get("_progress")
-    if progress_data:
-        step    = progress_data.get("step", 0)
-        total   = progress_data.get("total", 1)
-        loss    = progress_data.get("loss", 0.0)
-        elapsed = progress_data.get("elapsed", 0.0)
-        pct     = step / max(total, 1)
-        st.progress(
-            pct,
-            text=f"배치 {step}/{total} | Loss: {loss:.4f} | 경과: {elapsed:.1f}s",
-        )
-    else:
-        st.progress(0.0, text="초기화 중...")
-
-    log_lines = st.session_state.get("_log_lines", [])
-    if log_lines:
-        st.text_area(
-            "학습 로그 (최근 30줄)",
-            value="\n".join(log_lines[-30:]),
-            height=200,
-            disabled=True,
-            key="log_area_running",
-        )
-
-
-def _render_completed() -> None:
-    exp_id = st.session_state.get("current_exp_id", "?")
-    st.success(f"학습 완료: `{exp_id}`")
-
-    experiments = st.session_state.get("experiments", {})
-    record      = experiments.get(exp_id, {})
-    metrics     = record.get("metrics", {})
-
-    if metrics:
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("AUC",      f"{metrics.get('auc', 0):.4f}")
-        c2.metric("F1-Score", f"{metrics.get('f1_score', 0):.4f}")
-        c3.metric("Recall",   f"{metrics.get('recall', 0):.4f}")
-        c4.metric("정확도",    f"{metrics.get('accuracy', 0):.4f}")
-
-        st.write(f"소요 시간: **{record.get('duration_seconds', 0)}초** | "
-                 f"Threshold: **{record.get('threshold', 0):.4f}**")
-
-    log_lines = st.session_state.get("_log_lines", [])
-    if log_lines:
-        with st.expander("학습 로그 전체 보기"):
-            st.text("\n".join(log_lines))
-
-    if st.button("▶ 새 학습 시작", key="btn_new_run"):
-        st.session_state["current_run_status"] = "idle"
-        st.rerun()
-
-
-def _render_stopped() -> None:
-    st.warning(MSG["TRAIN_STOPPED"])
-    step = st.session_state.get("_stopped_step", 0)
-    st.write(f"중단 시점 배치: **{step}**")
-
-    log_lines = st.session_state.get("_log_lines", [])
-    if log_lines:
-        with st.expander("로그 보기"):
-            st.text("\n".join(log_lines))
-
-    if st.button("▶ 새 학습 시작", key="btn_restart_stopped"):
-        st.session_state["current_run_status"] = "idle"
-        st.rerun()
-
-
-def _render_error() -> None:
-    error_info = st.session_state.get("_last_error") or {}
-    st.error(f"학습 오류: {error_info.get('exception', '알 수 없는 오류')}")
-    tb = error_info.get("traceback", "")
-    if tb:
-        with st.expander("오류 상세 (traceback)"):
-            st.code(tb)
-
-    if st.button("▶ 새 학습 시작", key="btn_restart_error"):
-        st.session_state["current_run_status"] = "idle"
-        st.session_state["_last_error"] = None
-        st.rerun()
-
-
-# ──────────────────────────────────────────────────────────────
-# 이벤트 핸들러 (폴링 루프)
-# ──────────────────────────────────────────────────────────────
-
-def _handle_events() -> None:
-    """
-    running 상태에서만 큐를 드레인하고 1초 뒤 rerun (R-THREAD-05).
-    상태가 바뀌었으면 즉시 rerun.
-    """
-    if st.session_state.get("current_run_status") != "running":
+def _render_pretrain_summary() -> None:
+    """학습 전 설정 요약 표시."""
+    model_config: dict | None = st.session_state.get("model_config")
+    preprocessing_config: dict | None = st.session_state.get("preprocessing_config")
+    if not model_config or not preprocessing_config:
         return
 
-    _drain_queue()
+    with st.expander("현재 학습 설정 요약", expanded=False):
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown(f"**모델**: {model_config.get('model_type', '?').upper()}")
+            st.markdown(f"**이미지 크기**: {model_config.get('image_size', '?')}")
+            st.markdown(f"**배치 크기**: {model_config.get('batch_size', '?')}")
+            st.markdown(f"**랜덤 시드**: {model_config.get('random_seed', '?')}")
+        with col2:
+            st.markdown(f"**전처리**: {preprocessing_config.get('method', 'none')}")
+            st.markdown(
+                f"**Threshold 방식**: "
+                f"{model_config.get('threshold_method', '?')} "
+                f"({model_config.get('threshold_value', '?')})"
+            )
+            device_info = st.session_state.get("device_info") or {}
+            st.markdown(f"**디바이스**: {device_info.get('device', 'cpu').upper()}")
 
-    new_status = st.session_state.get("current_run_status")
-    if new_status == "running":
-        time.sleep(1.0)
+
+# ── Running UI ─────────────────────────────────────────────────────────────────
+
+def _render_running_ui() -> None:
+    """current_run_status == "running" 상태 UI."""
+    st.info("🔄 학습이 진행 중입니다. 탭을 전환해도 학습은 계속됩니다.")
+
+    progress = st.session_state.get("_progress") or {}
+    step = progress.get("step", 0)
+    total = progress.get("total", 1)
+    loss = progress.get("loss")
+    elapsed = progress.get("elapsed", 0.0)
+
+    pct = step / total if total > 0 else 0.0
+    label = f"Step {step:,} / {total:,} ({pct*100:.1f}%)"
+    if loss is not None:
+        label += f" | Loss: {loss:.4f}"
+    label += f" | 경과: {elapsed:.0f}s"
+    st.progress(pct, text=label)
+
+    loss_history = st.session_state.get("_loss_history") or []
+    if loss_history:
+        df = pd.DataFrame(loss_history)
+        fig = px.line(df, x="step", y="loss", title="학습 Loss 곡선")
+        fig.update_layout(height=250, margin=dict(t=30, b=10))
+        st.plotly_chart(fig, use_container_width=True)
+
+    log_lines = st.session_state.get("_log_lines") or []
+    log_text = "\n".join(log_lines[-50:])
+    st.text_area("학습 로그", value=log_text, height=200, disabled=True, key="tab4_log_area")
+
+    if st.button("학습 중지", type="secondary"):
+        stop_event: threading.Event | None = st.session_state.get("_stop_event")
+        if stop_event:
+            stop_event.set()
+        st.info("중지 신호를 전송했습니다. 현재 스텝 완료 후 중단됩니다.")
+
+
+# ── 학습 시작 핸들러 ──────────────────────────────────────────────────────────
+
+def _handle_start_training(experiment_name: str) -> None:
+    """[학습 시작] 버튼 클릭 시 호출."""
+    if st.session_state.get("current_run_status") != "idle":
+        st.warning("이미 학습이 진행 중입니다.")
+        st.stop()
+
+    model_config: dict = st.session_state["model_config"]
+    preprocessing_config: dict = st.session_state["preprocessing_config"]
+    dataset_path: str = st.session_state["dataset_path"]
+    device_info: dict = st.session_state.get("device_info") or {"device": "cpu"}
+
+    try:
+        check_disk_before_save(model_config["model_type"])
+    except RuntimeError as e:
+        st.error(str(e))
+        st.stop()
+
+    if model_config.get("model_type") == "efficientad":
+        try:
+            validate_imagenet_penalty_dir()
+        except ValueError as e:
+            st.error(
+                f"EfficientAD 학습에 필요한 ImageNet penalty 데이터가 없습니다. "
+                f"`{IMAGENET_PENALTY_DIR}` 경로에 이미지를 추가해 주세요. ({e})"
+            )
+            st.stop()
+
+    exp_id = generate_experiment_id(model_config["model_type"])
+    created_at = generate_created_at()
+
+    if not experiment_name.strip():
+        experiment_name = f"{model_config['model_type'].upper()} {exp_id[-4:]}"
+
+    save_config_section(
+        section="experiment",
+        data={"name": experiment_name, "created_at": created_at},
+        path="./configs.yaml",
+    )
+
+    stop_event = threading.Event()
+    result_queue: queue.Queue = queue.Queue()
+
+    worker = TrainingWorker(
+        experiment_id=exp_id,
+        model_config=model_config,
+        preprocessing_config=preprocessing_config,
+        dataset_path=dataset_path,
+        device=device_info.get("device", "cpu"),
+        stop_event=stop_event,
+        result_queue=result_queue,
+    )
+    worker.daemon = True
+    worker.start()
+
+    st.session_state["current_run_status"] = "running"
+    st.session_state["current_exp_id"] = exp_id
+    st.session_state["_stop_event"] = stop_event
+    st.session_state["_result_queue"] = result_queue
+    st.session_state["_worker"] = worker
+    st.session_state["_progress"] = {
+        "step": 0,
+        "total": _get_total_steps(model_config),
+        "loss": None,
+        "elapsed": 0.0,
+    }
+    st.session_state["_log_lines"] = []
+    st.session_state["_loss_history"] = []
+
     st.rerun()
 
 
+def _get_total_steps(model_config: dict) -> int:
+    if model_config.get("model_type") == "efficientad":
+        return model_config["params"].get("train_steps", 70000)
+    return 1  # PatchCore
+
+
+# ── Queue 드레인 ───────────────────────────────────────────────────────────────
+
 def _drain_queue() -> None:
-    """큐에서 꺼낼 수 있는 메시지를 전부 처리한다."""
+    """Queue에 쌓인 메시지를 모두 소비. 종료 메시지 수신 즉시 드레인 중단."""
     q: queue.Queue | None = st.session_state.get("_result_queue")
     if q is None:
         return
@@ -207,102 +268,182 @@ def _drain_queue() -> None:
         msg_type = msg.get("type")
 
         if msg_type == "progress":
-            st.session_state["_progress"] = {
-                "step":    msg["step"],
-                "total":   msg["total"],
-                "loss":    msg.get("loss", 0.0),
-                "elapsed": msg.get("elapsed", 0.0),
-            }
-            # loss_history: EfficientAD 차트용 (PatchCore는 loss=0.0이므로 무시)
-            if msg.get("loss", 0.0) > 0.0:
-                history = st.session_state.get("_loss_history", [])
-                history.append({"step": msg["step"], "loss": msg["loss"]})
-                st.session_state["_loss_history"] = history
-
+            _handle_progress(msg)
         elif msg_type == "log":
-            lines = st.session_state.get("_log_lines", [])
-            lines.append(msg["message"])
-            if len(lines) > _MAX_LOG_LINES:
-                lines = lines[-_MAX_LOG_LINES:]
-            st.session_state["_log_lines"] = lines
-
+            _handle_log(msg)
         elif msg_type == "completed":
             _handle_completed(msg)
-            break   # 이후 메시지는 다음 rerun에서 없을 것이므로 종료
-
+            break
+        elif msg_type == "error":
+            _handle_error(msg)
+            break
         elif msg_type == "stopped":
             _handle_stopped(msg)
             break
 
-        elif msg_type == "error":
-            _handle_error(msg)
-            break
+
+def _schedule_rerun() -> None:
+    """1초 대기 후 st.rerun() 호출 (R-THREAD-05: 1.0초 고정)."""
+    time.sleep(1.0)
+    st.rerun()
 
 
-# ──────────────────────────────────────────────────────────────
-# 터미널 메시지 핸들러
-# ──────────────────────────────────────────────────────────────
+# ── 메시지 핸들러 ──────────────────────────────────────────────────────────────
+
+def _handle_progress(msg: dict) -> None:
+    st.session_state["_progress"] = {
+        "step":    msg["step"],
+        "total":   msg["total"],
+        "loss":    msg["loss"],
+        "elapsed": msg["elapsed"],
+    }
+    loss_history: list = st.session_state["_loss_history"]
+    loss_history.append({"step": msg["step"], "loss": msg["loss"]})
+
+
+def _handle_log(msg: dict) -> None:
+    ts = datetime.now(tz=KST).strftime("%H:%M:%S")
+    line = f"[{ts}] {msg['message']}"
+    lines: list = st.session_state["_log_lines"]
+    lines.append(line)
+    if len(lines) > 100:
+        st.session_state["_log_lines"] = lines[-100:]
+
 
 def _handle_completed(msg: dict) -> None:
     """
-    completed 메시지 처리:
-      1. save_completed_experiment (3단계 저장 프로토콜)
-      2. set_anomaly_map_cache (Z.6)
-      3. session_state 업데이트
+    1. compute_threshold + compute_metrics
+    2. experiment_record 구성
+    3. save_completed_experiment (3단계 저장)
+    4. session_state.experiments 갱신
+    5. anomaly_map 캐시 저장
+    6. st.success()
     """
-    exp_id               = st.session_state.get("current_exp_id", "")
-    model_config         = st.session_state.get("model_config", {})
-    preprocessing_config = st.session_state.get("preprocessing_config", {})
-    dataset_path         = st.session_state.get("dataset_path", "")
+    exp_id: str = st.session_state["current_exp_id"]
+    model_config: dict = st.session_state["model_config"]
 
-    record = {
-        "experiment_id":       exp_id,
-        "name":                exp_id,
-        "model_type":          model_config.get("model_type", ""),
-        "created_at":          datetime.now(KST).isoformat(),
-        "dataset_path":        dataset_path,
-        "model_config":        model_config,
-        "preprocessing_config": preprocessing_config,
-        "threshold":           msg.get("threshold", 0.0),
-        "metrics":             msg.get("metrics", {}),
-        "duration_seconds":    msg.get("duration_seconds", 0),
-        "status":              "completed",
-    }
+    y_true = msg["y_true"]
+    anomaly_scores = msg["anomaly_scores"]
 
-    # Stage 1~3: 모델 저장 → configs.yaml → history.json
-    try:
-        save_completed_experiment(exp_id, msg["model"], record)
-    except Exception as exc:
-        st.error(f"모델 저장 실패: {exc}")
+    normal_scores = [s for s, lbl in zip(anomaly_scores, y_true) if lbl == 0]
+    if normal_scores:
+        threshold = compute_threshold(
+            np.array(normal_scores, dtype=np.float32),
+            model_config.get("threshold_method", "percentile"),
+            float(model_config.get("threshold_value", 95.0)),
+        )
+    else:
+        threshold = float(model_config.get("threshold_value", 0.5))
 
-    # Anomaly Map LRU 캐시 (Z.6)
-    set_anomaly_map_cache(
+    metrics = compute_metrics(y_true, anomaly_scores, threshold)
+
+    record = _build_experiment_record(
         exp_id=exp_id,
-        data={
-            "anomaly_maps": msg.get("anomaly_maps", {}),
-            "image_paths":  msg.get("image_paths", []),
-        },
+        status="completed",
+        metrics=metrics,
+        duration_seconds=msg.get("duration_seconds"),
     )
 
-    experiments            = st.session_state.get("experiments", {})
-    experiments[exp_id]    = record
-    st.session_state["experiments"]         = experiments
-    st.session_state["current_run_status"]  = "completed"
-    st.session_state["_stop_event"]         = None
-    st.session_state["_result_queue"]       = None
+    try:
+        check_disk_before_save(model_config["model_type"])
+        save_completed_experiment(exp_id, msg["model"], record)
+        if "experiments" not in st.session_state:
+            st.session_state["experiments"] = {}
+        st.session_state["experiments"][exp_id] = record
+
+        anomaly_maps_dict: dict = msg.get("anomaly_maps", {})
+        image_paths: list[str] = msg.get("image_paths", [])
+        if image_paths and anomaly_maps_dict:
+            maps_array = np.stack(
+                [anomaly_maps_dict[p] for p in image_paths], axis=0
+            )
+            set_anomaly_map_cache(
+                exp_id,
+                {"anomaly_maps": maps_array, "image_paths": image_paths},
+            )
+
+        secs = msg.get("duration_seconds", 0)
+        mins, sec = divmod(secs, 60)
+        auc = metrics.get("auc", 0.0)
+        st.success(
+            f"학습이 완료되었습니다. AUC: {auc:.4f} | 소요 시간: {mins}분 {sec}초"
+        )
+
+    except RuntimeError as e:
+        err_str = str(e)
+        if "ERR_HISTORY_WRITE_FAILED" in err_str:
+            st.warning(f"모델 파일은 저장되었으나 히스토리 기록에 실패했습니다. {err_str}")
+        else:
+            st.error(f"모델 저장에 실패했습니다. 디스크 공간을 확인해 주세요. {err_str}")
+    finally:
+        _reset_run_state()
+        del msg["model"]
+        torch.cuda.empty_cache()
 
 
-def _build_stopped_record(exp_id: str) -> dict:
-    """PRD 07 §6.3 / 00_Global §1.1 R-05: status='중단' 레코드 구성."""
-    model_config         = st.session_state.get("model_config") or {}
-    preprocessing_config = st.session_state.get("preprocessing_config") or {}
-    dataset_path         = st.session_state.get("dataset_path") or ""
-    return {
+def _handle_error(msg: dict) -> None:
+    tb = msg.get("traceback", "")
+    st.error(f"학습 중 오류가 발생했습니다.\n{tb[:500]}")
+    _reset_run_state()
+
+
+def _handle_stopped(msg: dict) -> None:
+    """status="중단" 레코드 생성 후 history.json append."""
+    exp_id: str = st.session_state.get("current_exp_id", "")
+    step = msg.get("step", 0)
+
+    if exp_id:
+        record = _build_experiment_record(
+            exp_id=exp_id,
+            status="중단",
+            metrics=None,
+            duration_seconds=None,
+        )
+        try:
+            append_experiment(record)
+            if "experiments" not in st.session_state:
+                st.session_state["experiments"] = {}
+            st.session_state["experiments"][exp_id] = record
+        except RuntimeError:
+            pass
+
+    st.warning(
+        MSG["TRAIN_STOPPED"]
+        + (f" ({step:,} step 완료 후 중단)" if step else "")
+    )
+    _reset_run_state()
+
+
+def _reset_run_state() -> None:
+    """학습 종료 후 내부 상태 초기화."""
+    st.session_state["current_run_status"] = "idle"
+    st.session_state["current_exp_id"] = None
+    st.session_state["_stop_event"] = None
+    st.session_state["_result_queue"] = None
+    st.session_state["_worker"] = None
+
+
+# ── 실험 레코드 구성 ───────────────────────────────────────────────────────────
+
+def _build_experiment_record(
+    exp_id: str,
+    status: str,
+    metrics: dict | None,
+    duration_seconds: int | None,
+) -> dict:
+    """00_Global §1.1 experiment 스키마에 맞는 레코드 생성."""
+    model_config: dict = st.session_state["model_config"]
+    preprocessing_config: dict = st.session_state["preprocessing_config"]
+    dataset_path: str = st.session_state["dataset_path"]
+
+    exp_cfg = load_config("./configs.yaml").get("experiment", {})
+
+    record: dict = {
         "experiment_id":        exp_id,
-        "name":                 exp_id,
-        "status":               "중단",
-        "created_at":           datetime.now(KST).isoformat(),
-        "model_type":           model_config.get("model_type", ""),
+        "name":                 exp_cfg.get("name", exp_id),
+        "status":               status,
+        "created_at":           exp_cfg.get("created_at", generate_created_at()),
+        "model_type":           model_config["model_type"],
         "preprocessing_method": preprocessing_config.get("method", "none"),
         "preprocessing_params": preprocessing_config.get("params"),
         "model_params":         model_config.get("params", {}),
@@ -310,95 +451,15 @@ def _build_stopped_record(exp_id: str) -> dict:
         "threshold_value":      model_config.get("threshold_value", 95.0),
         "dataset_path":         dataset_path,
         "image_size":           model_config.get("image_size", 256),
-        "metrics":              None,
+        "duration_seconds":     duration_seconds,
+        "metrics":              metrics,
         "model_path":           None,
         "configs_path":         None,
-        "duration_seconds":     None,
     }
 
+    if status == "중단":
+        record["metrics"] = None
+        record["model_path"] = None
+        record["configs_path"] = None
 
-def _handle_stopped(msg: dict) -> None:
-    """PRD 06 §5.2 / 07 §6.2: stopped 메시지 처리 — 중단 레코드 저장."""
-    exp_id = st.session_state.get("current_exp_id", "")
-    step   = msg.get("step", 0)
-
-    if exp_id:
-        record = _build_stopped_record(exp_id)
-        try:
-            append_experiment(record)
-            experiments = st.session_state.get("experiments", {})
-            experiments[exp_id] = record
-            st.session_state["experiments"] = experiments
-        except Exception:
-            pass  # 중단 레코드 저장 실패는 치명적이지 않음
-
-    st.session_state["current_run_status"] = "stopped"
-    st.session_state["_stopped_step"]      = step
-    st.session_state["_stop_event"]        = None
-    st.session_state["_result_queue"]      = None
-
-
-def _handle_error(msg: dict) -> None:
-    st.session_state["_last_error"] = {
-        "exception": str(msg.get("exception", "알 수 없는 오류")),
-        "traceback": msg.get("traceback", ""),
-    }
-    st.session_state["current_run_status"] = "error"
-    st.session_state["_stop_event"]        = None
-    st.session_state["_result_queue"]      = None
-
-
-# ──────────────────────────────────────────────────────────────
-# 학습 시작 / 중단
-# ──────────────────────────────────────────────────────────────
-
-def _handle_start_training() -> None:
-    from utils.model_factory import create_trainer
-
-    model_config         = st.session_state.get("model_config", {})
-    preprocessing_config = st.session_state.get("preprocessing_config", {})
-    dataset_path         = st.session_state.get("dataset_path", "")
-    device_info          = st.session_state.get("device_info") or {}
-    device               = device_info.get("device", "cpu") if isinstance(device_info, dict) else "cpu"
-
-    exp_id      = _generate_exp_id(model_config.get("model_type", "model"))
-    stop_event  = threading.Event()
-    result_queue = queue.Queue()
-
-    worker = create_trainer(
-        model_config=model_config,
-        preprocessing_config=preprocessing_config,
-        dataset_path=dataset_path,
-        device=device,
-        experiment_id=exp_id,
-        stop_event=stop_event,
-        result_queue=result_queue,
-    )
-    worker.start()
-
-    st.session_state["current_run_status"] = "running"
-    st.session_state["current_exp_id"]     = exp_id
-    st.session_state["_stop_event"]        = stop_event
-    st.session_state["_result_queue"]      = result_queue
-    st.session_state["_progress"]          = None
-    st.session_state["_log_lines"]         = []
-    st.session_state["_loss_history"]      = []
-
-
-def _handle_stop_training() -> None:
-    stop_event: threading.Event | None = st.session_state.get("_stop_event")
-    if stop_event is not None:
-        stop_event.set()
-
-
-# ──────────────────────────────────────────────────────────────
-# 헬퍼
-# ──────────────────────────────────────────────────────────────
-
-def _generate_exp_id(model_type: str) -> str:
-    """R-NAMING-03: {model_type}_{YYYYMMDD}_{HHMMSS}_{4자리 uuid4 hex}"""
-    now      = datetime.now(KST)
-    date_str = now.strftime("%Y%m%d")
-    time_str = now.strftime("%H%M%S")
-    uid      = uuid.uuid4().hex[:4]
-    return f"{model_type}_{date_str}_{time_str}_{uid}"
+    return record

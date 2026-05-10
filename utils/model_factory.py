@@ -9,24 +9,226 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-try:
-    from anomalib.models.image.patchcore.lightning_model import Patchcore
-except ImportError:
-    Patchcore = None  # type: ignore[assignment,misc]
-
+# Anomalib import — ImportError 시 None으로 처리
 try:
     from anomalib.models.image.efficient_ad.lightning_model import (
         EfficientAd,
         EfficientAdModelSize,
     )
+    SIZE_MAP = {
+        "small":  EfficientAdModelSize.S,
+        "medium": EfficientAdModelSize.M,
+    }
 except ImportError:
-    EfficientAd = None         # type: ignore[assignment,misc]
+    EfficientAd = None           # type: ignore[assignment,misc]
     EfficientAdModelSize = None  # type: ignore[assignment,misc]
+    SIZE_MAP = {}
+
+try:
+    from anomalib.models.image.patchcore.lightning_model import Patchcore
+except ImportError:
+    Patchcore = None  # type: ignore[assignment,misc]
 
 
-# ──────────────────────────────────────────────────────────────
-# 공개 팩토리 API
-# ──────────────────────────────────────────────────────────────
+# ── ImageNet Penalty DataLoader ────────────────────────────────────────────────
+
+def build_imagenet_penalty_loader(
+    batch_size: int,
+    image_size: int,
+    device: str,
+) -> "torch.utils.data.DataLoader":
+    """
+    ImageNet penalty 배치용 DataLoader.
+    IMAGENET_PENALTY_DIR 존재 시 실제 이미지 사용.
+    Z.1 정오표: FakeData fallback 없음 — validate_imagenet_penalty_dir()가 선행 보장.
+    """
+    from utils.storage import IMAGENET_PENALTY_DIR
+    from torchvision import datasets, transforms
+    from torch.utils.data import DataLoader
+
+    transform = transforms.Compose([
+        transforms.Resize((image_size, image_size)),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+    ])
+    ds = datasets.ImageFolder(str(IMAGENET_PENALTY_DIR), transform=transform)
+    return DataLoader(
+        ds,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=0,
+        drop_last=True,
+    )
+
+
+# ── EfficientAD model creation ─────────────────────────────────────────────────
+
+def _create_efficientad_model(model_config: dict) -> "EfficientAd":
+    """PRD 08 B.4.1 매핑 테이블 기준 EfficientAd 생성."""
+    if EfficientAd is None:
+        raise ImportError(
+            "anomalib이 설치되지 않았습니다. EfficientAD 모델을 생성할 수 없습니다."
+        )
+    params = model_config["params"]
+    model_size_key = params.get("model_size", "medium")
+    model_size_enum = SIZE_MAP.get(model_size_key, SIZE_MAP.get("medium"))
+
+    return EfficientAd(
+        teacher_out_channels=params.get("out_channels", 384),
+        model_size=model_size_enum,
+        lr=params.get("learning_rate", 1e-4),
+        weight_decay=params.get("weight_decay", 1e-4),
+        padding=params.get("padding", False),
+        map_combination_alpha=params.get("ae_loss_weight", 0.5),
+        autoencoder_lr=params.get("autoencoder_lr", params.get("learning_rate", 1e-4)),
+        autoencoder_weight_decay=params.get("autoencoder_weight_decay", 1e-5),
+        penalized_normalized=(params.get("imagenet_penalty_weight", 1.0) > 0),
+    )
+
+
+# ── PatchCore model creation ───────────────────────────────────────────────────
+
+def _create_patchcore_model(model_config: dict) -> "Patchcore":
+    """PRD 08 B.5.1 매핑 테이블 기준 Patchcore 생성."""
+    if Patchcore is None:
+        raise ImportError(
+            "anomalib이 설치되지 않았습니다. PatchCore 모델을 생성할 수 없습니다."
+        )
+    params = model_config["params"]
+    pre_trained = (params.get("pretrained_source", "torchvision") == "torchvision")
+    num_neighbors = params.get("knn", params.get("neighbourhood_kernel_size", 3))
+
+    model = Patchcore(
+        backbone=params.get("backbone", "wide_resnet50_2"),
+        layers=["layer2", "layer3"],
+        pre_trained=pre_trained,
+        coreset_sampling_ratio=params.get("coreset_sampling_ratio", 0.1),
+        num_neighbors=num_neighbors,
+    )
+
+    if not pre_trained and params.get("pretrained_path"):
+        state_dict = torch.load(params["pretrained_path"], map_location="cpu")
+        if "model" in state_dict:
+            state_dict = state_dict["model"]
+        model.backbone.load_state_dict(state_dict, strict=False)
+
+    return model
+
+
+# ── Anomaly map helpers ────────────────────────────────────────────────────────
+
+def _extract_patchcore_features(
+    model: "Patchcore",
+    images: torch.Tensor,
+) -> torch.Tensor:
+    """layer2, layer3 특징 추출 후 (B*H'*W', C2+C3) 반환."""
+    features: dict[str, torch.Tensor] = {}
+    hooks = []
+
+    def _make_hook(name: str):
+        def hook(module, input, output):
+            features[name] = output
+        return hook
+
+    hooks.append(model.backbone.layer2.register_forward_hook(_make_hook("layer2")))
+    hooks.append(model.backbone.layer3.register_forward_hook(_make_hook("layer3")))
+
+    with torch.no_grad():
+        _ = model.backbone(images)
+
+    for h in hooks:
+        h.remove()
+
+    f2 = features["layer2"]
+    f3 = features["layer3"]
+    f3_up = nn.functional.interpolate(
+        f3, size=f2.shape[-2:], mode="bilinear", align_corners=False
+    )
+    combined = torch.cat([f2, f3_up], dim=1)
+    B, C, H, W = combined.shape
+    return combined.permute(0, 2, 3, 1).reshape(B * H * W, C)
+
+
+def _efficientad_training_step(
+    model: "EfficientAd",
+    images: torch.Tensor,
+    penalty_images: torch.Tensor,
+) -> dict:
+    """
+    EfficientAd.training_step() 시도 후 실패 시 수동 fallback.
+    반환: {"loss_total": Tensor} 포함 dict.
+    """
+    if hasattr(model, "training_step"):
+        batch = {"image": images, "penalty_images": penalty_images}
+        try:
+            loss = model.training_step(batch, batch_idx=0)
+            if isinstance(loss, dict):
+                return loss
+            return {"loss_total": loss}
+        except Exception:
+            pass
+
+    # Fallback: manual student-teacher loss
+    with torch.no_grad():
+        teacher_out = model.teacher(images)
+    student_out = model.student(images)
+    ae_out = model.autoencoder(images)
+
+    loss_st = torch.mean((teacher_out - student_out) ** 2)
+    loss_ae = torch.mean((images - ae_out) ** 2)
+    alpha = getattr(model, "map_combination_alpha", 0.5)
+    loss_total = alpha * loss_ae + (1.0 - alpha) * loss_st
+    return {"loss_st": loss_st, "loss_ae": loss_ae, "loss_total": loss_total}
+
+
+def _get_anomaly_map(
+    model: object,
+    image: torch.Tensor,
+) -> np.ndarray:
+    """
+    단일 이미지 추론 → Anomaly Map (H, W) float32 반환.
+    EfficientAd / Patchcore 공통 경로 시도 후 Patchcore KNN fallback.
+    """
+    if hasattr(model, "anomaly_map_generator") or hasattr(model, "forward"):
+        try:
+            output = model(image)
+            if isinstance(output, dict) and "anomaly_map" in output:
+                amap = output["anomaly_map"]
+            elif hasattr(output, "anomaly_map"):
+                amap = output.anomaly_map
+            else:
+                amap = output
+            if isinstance(amap, torch.Tensor):
+                return amap.squeeze().cpu().numpy().astype(np.float32)
+        except Exception:
+            pass
+
+    # Patchcore KNN fallback
+    if hasattr(model, "memory_bank"):
+        features = _extract_patchcore_features(model, image)
+        mem = model.memory_bank
+        if mem.device != features.device:
+            mem = mem.to(features.device)
+        dists = torch.cdist(
+            features.unsqueeze(0),
+            mem.unsqueeze(0),
+            p=2,
+        ).squeeze(0)
+        k = min(
+            getattr(model, "num_neighbors", 9),
+            dists.shape[1],
+        )
+        patch_scores, _ = torch.topk(dists, k, dim=1, largest=False)
+        patch_scores = patch_scores.mean(dim=1)
+        spatial_size = int(patch_scores.shape[0] ** 0.5)
+        patch_map = patch_scores.reshape(spatial_size, spatial_size).cpu().numpy()
+        H = W = image.shape[-1]
+        return cv2.resize(patch_map, (W, H), interpolation=cv2.INTER_LINEAR).astype(np.float32)
+
+    raise NotImplementedError(f"알 수 없는 모델 구조: {type(model)}")
+
+
+# ── Public factory functions ───────────────────────────────────────────────────
 
 def create_trainer(
     model_config: dict,
@@ -37,6 +239,7 @@ def create_trainer(
     stop_event: threading.Event,
     result_queue: queue.Queue,
 ) -> "TrainingWorker":
+    """TrainingWorker 생성 후 반환. 실행은 호출자가 worker.start()로 수행."""
     from utils.training_worker import TrainingWorker
 
     return TrainingWorker(
@@ -51,199 +254,53 @@ def create_trainer(
 
 
 def load_model_for_inference(
-    exp_id: str,             # Z.7: 로그 컨텍스트용 추가 파라미터
+    exp_id: str,
     model_path: str,
     model_config: dict,
     device: str,
 ) -> object:
     """
-    저장된 state_dict 로드 후 추론용 모델 반환.
-    model_config.model_type에 따라 Patchcore 또는 EfficientAd 초기화.
+    저장된 model_state_dict.pth 로드 후 추론 가능한 모델 반환 (eval 모드).
+
+    Raises:
+        RuntimeError: pth 파일 없거나 state_dict 불일치 시
     """
     pth_path = Path(model_path) / "model_state_dict.pth"
     if not pth_path.exists():
-        raise FileNotFoundError(
-            f"[{exp_id}] 모델 파일이 없습니다: {pth_path}"
+        raise RuntimeError(
+            f"ERR_MODEL_FILE_NOT_FOUND: {pth_path} — "
+            "모델 파일이 존재하지 않습니다."
         )
 
-    state_dict = torch.load(str(pth_path), map_location=device)
-    model_type = model_config.get("model_type", "")
-
-    if model_type == "patchcore":
-        model = _create_patchcore_model(model_config)
-    elif model_type == "efficientad":
+    model_type = model_config["model_type"]
+    if model_type == "efficientad":
         model = _create_efficientad_model(model_config)
+    elif model_type == "patchcore":
+        model = _create_patchcore_model(model_config)
     else:
-        raise ValueError(f"[{exp_id}] 지원하지 않는 모델 타입: {model_type}")
+        raise RuntimeError(f"알 수 없는 model_type: {model_type}")
 
-    model.load_state_dict(state_dict, strict=False)
-    model = model.to(device)
+    try:
+        state_dict = torch.load(str(pth_path), map_location=device)
+        model.load_state_dict(state_dict, strict=False)
+    except RuntimeError as e:
+        raise RuntimeError(
+            f"ERR_MODEL_LOAD_FAILED: state_dict 불일치. {e}"
+        ) from e
+
+    model.to(device)
     model.eval()
     return model
 
 
 def run_inference(
     model: object,
-    image_path: str,
-    preprocessing_config: dict,
+    image_tensor: torch.Tensor,  # (1, C, H, W) — 이미 전처리된 텐서
 ) -> np.ndarray:
-    """
-    단일 이미지 추론. Anomaly Map (H, W) float32 반환.
-    학습과 동일한 preprocessing_config 사용 (DA-05).
-    """
-    from utils.image_utils import apply_preprocessing
-
-    _, image_tensor = apply_preprocessing(image_path, preprocessing_config)
-    image_tensor = image_tensor.unsqueeze(0)   # (1, C, H, W)
+    """단일 이미지 추론. Anomaly Map (H, W) float32 반환."""
     device = next(model.parameters()).device
+    if image_tensor.dim() == 3:
+        image_tensor = image_tensor.unsqueeze(0)
     image_tensor = image_tensor.to(device)
-
     with torch.no_grad():
-        anomaly_map = _get_anomaly_map(model, image_tensor)
-
-    return anomaly_map
-
-
-# ──────────────────────────────────────────────────────────────
-# PatchCore 모델 생성 (PRD 08 B.5.1)
-# ──────────────────────────────────────────────────────────────
-
-def _create_patchcore_model(model_config: dict) -> "Patchcore":
-    if Patchcore is None:
-        raise ImportError("anomalib 패키지가 설치되지 않았습니다.")
-
-    params = model_config.get("params", {})
-    pre_trained = (params.get("pretrained_source", "torchvision") == "torchvision")
-
-    # knn 파라미터: knn 우선, 없으면 neighbourhood_kernel_size
-    num_neighbors = params.get("knn") or params.get("neighbourhood_kernel_size", 9)
-
-    model = Patchcore(
-        backbone=params.get("backbone", "wide_resnet50_2"),
-        layers=["layer2", "layer3"],          # E.2: layer2+layer3 고정
-        pre_trained=pre_trained,
-        coreset_sampling_ratio=params.get("coreset_sampling_ratio", 0.1),
-        num_neighbors=int(num_neighbors),
-    )
-
-    # 로컬 가중치 로드 (pretrained_source == "local")
-    if not pre_trained and params.get("pretrained_path"):
-        state_dict = torch.load(params["pretrained_path"], map_location="cpu")
-        if "model" in state_dict:
-            state_dict = state_dict["model"]
-        model.backbone.load_state_dict(state_dict, strict=False)
-
-    return model
-
-
-# ──────────────────────────────────────────────────────────────
-# EfficientAD 모델 생성 (PRD 08 B.4.1) — stub
-# ──────────────────────────────────────────────────────────────
-
-def _create_efficientad_model(model_config: dict) -> "EfficientAd":
-    if EfficientAd is None or EfficientAdModelSize is None:
-        raise ImportError("anomalib 패키지가 설치되지 않았습니다.")
-
-    params  = model_config.get("params", {})
-    SIZE_MAP = {
-        "small":  EfficientAdModelSize.S,
-        "medium": EfficientAdModelSize.M,
-    }
-    return EfficientAd(
-        teacher_out_channels=params.get("out_channels", 384),
-        model_size=SIZE_MAP.get(params.get("model_size", "small"), EfficientAdModelSize.S),
-        lr=params.get("learning_rate", 1e-4),
-        weight_decay=params.get("weight_decay", 1e-5),
-        padding=params.get("padding", False),
-        map_combination_alpha=params.get("ae_loss_weight", 0.5),
-    )
-
-
-# ──────────────────────────────────────────────────────────────
-# 공유 추론 헬퍼 (training_worker.py에서도 import)
-# ──────────────────────────────────────────────────────────────
-
-def _extract_patchcore_features(
-    model: "Patchcore",
-    images: torch.Tensor,   # (B, C, H, W)
-) -> torch.Tensor:
-    """
-    layer2, layer3 forward hook으로 특징 추출 후
-    동일 공간 크기로 bilinear upsample + concat.
-    반환 shape: (B * H' * W', C2 + C3)
-    """
-    captured: dict[str, torch.Tensor] = {}
-    hooks = []
-
-    def _make_hook(name: str):
-        def _hook(module, inp, out):
-            captured[name] = out
-        return _hook
-
-    hooks.append(model.backbone.layer2.register_forward_hook(_make_hook("layer2")))
-    hooks.append(model.backbone.layer3.register_forward_hook(_make_hook("layer3")))
-
-    with torch.no_grad():
-        _ = model.backbone(images)
-
-    for h in hooks:
-        h.remove()
-
-    f2 = captured["layer2"]   # (B, C2, H2, W2)
-    f3 = captured["layer3"]   # (B, C3, H3, W3)
-
-    # f3를 f2의 공간 크기로 upsample
-    f3_up = nn.functional.interpolate(
-        f3, size=f2.shape[-2:], mode="bilinear", align_corners=False
-    )
-    combined = torch.cat([f2, f3_up], dim=1)   # (B, C2+C3, H2, W2)
-
-    B, C, H, W = combined.shape
-    patches = combined.permute(0, 2, 3, 1).reshape(B * H * W, C)
-    return patches   # (B*H'*W', C_combined)
-
-
-def _get_anomaly_map(model, image: torch.Tensor) -> np.ndarray:
-    """
-    단일 이미지 (1, C, H, W) → Anomaly Map (H, W) float32.
-
-    1순위: model.anomaly_map_generator 존재 시 Anomalib 내장 경로 사용
-    2순위: model.memory_bank 존재 시 수동 kNN 거리 계산
-    """
-    # Anomalib 내장 경로
-    if hasattr(model, "anomaly_map_generator"):
-        output = model(image)
-        if isinstance(output, dict) and "anomaly_map" in output:
-            amap = output["anomaly_map"]
-        elif hasattr(output, "anomaly_map"):
-            amap = output.anomaly_map
-        else:
-            amap = output
-        return amap.squeeze().cpu().numpy().astype(np.float32)
-
-    # PatchCore 수동 kNN fallback
-    if hasattr(model, "memory_bank") and model.memory_bank is not None:
-        features = _extract_patchcore_features(model, image)   # (H'*W', C)
-        mem = model.memory_bank
-        if mem.device != features.device:
-            mem = mem.to(features.device)
-
-        # 유클리드 거리 행렬
-        dists = torch.cdist(
-            features.unsqueeze(0),
-            mem.unsqueeze(0),
-            p=2,
-        ).squeeze(0)   # (H'*W', M)
-
-        k = min(getattr(model, "num_neighbors", 9), dists.shape[1])
-        patch_scores, _ = torch.topk(dists, k, dim=1, largest=False)
-        patch_scores = patch_scores.mean(dim=1)   # (H'*W',)
-
-        spatial = int(round(patch_scores.shape[0] ** 0.5))
-        patch_map = patch_scores.reshape(spatial, spatial).cpu().numpy()
-
-        H = W = image.shape[-1]
-        amap = cv2.resize(patch_map, (W, H), interpolation=cv2.INTER_LINEAR)
-        return amap.astype(np.float32)
-
-    raise NotImplementedError(f"알 수 없는 모델 구조: {type(model)}")
+        return _get_anomaly_map(model, image_tensor)

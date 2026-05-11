@@ -16,6 +16,11 @@ def compute_all_metrics(
     anomaly_scores: list[float],
     threshold: float,
 ) -> dict:
+    pairs = [(lbl, s) for lbl, s in zip(y_true, anomaly_scores) if not np.isnan(s)]
+    if not pairs:
+        raise ValueError("All anomaly scores are NaN — cannot compute metrics.")
+    y_true, anomaly_scores = zip(*pairs)
+
     y_pred = [1 if s >= threshold else 0 for s in anomaly_scores]
 
     accuracy = round(float(accuracy_score(y_true, y_pred)), 6)
@@ -54,6 +59,10 @@ def compute_roc_curve(
     y_true: list[int],
     anomaly_scores: list[float],
 ) -> tuple[np.ndarray, np.ndarray, float]:
+    pairs = [(lbl, s) for lbl, s in zip(y_true, anomaly_scores) if not np.isnan(s)]
+    if not pairs:
+        raise ValueError("All anomaly scores are NaN — cannot compute ROC curve.")
+    y_true, anomaly_scores = zip(*pairs)
     fpr, tpr, _ = roc_curve(y_true, anomaly_scores)
     auc = float(roc_auc_score(y_true, anomaly_scores))
     return fpr, tpr, auc

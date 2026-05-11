@@ -174,11 +174,14 @@ def _render_running_ui() -> None:
     st.progress(pct, text=label)
 
     loss_history = st.session_state.get("_loss_history") or []
-    if loss_history:
-        df = pd.DataFrame(loss_history)
-        fig = px.line(df, x="step", y="loss", title="학습 Loss 곡선")
+    valid_history = [h for h in loss_history if h.get("loss") is not None and np.isfinite(h["loss"])]
+    if valid_history:
+        df = pd.DataFrame(valid_history)
+        fig = px.line(df, x="step", y="loss", title="학습 Loss 곡선", markers=True)
         fig.update_layout(height=250, margin=dict(t=30, b=10))
         st.plotly_chart(fig, use_container_width=True)
+    elif loss_history:
+        st.warning("Loss 값이 모두 NaN입니다. 학습률을 낮춰 주세요.")
 
     log_lines = st.session_state.get("_log_lines") or []
     log_text = "\n".join(log_lines[-50:])

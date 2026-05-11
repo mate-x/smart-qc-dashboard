@@ -293,67 +293,37 @@ from PIL import Image
 
 def _homomorphic_filter(
     image: Image.Image,   # RGB PIL Image
-    sigma: float,         # 가우시안 필터의 표준편차
+    sigma: float,         # GaussianBlur 표준편차 (공간 도메인 저주파 분리 기준)
     gamma_H: float,       # 고주파 게인 (> 1.0)
     gamma_L: float,       # 저주파 게인 (< 1.0)
-    cutoff: float,        # 주파수 컷오프 반경 (픽셀 단위)
     normalize: bool,      # True: 출력을 [0, 255] 정규화
 ) -> Image.Image:
     """
-    주파수 도메인 기반 조명 정규화 필터.
+    GaussianBlur 기반 공간 도메인 조명 정규화 필터.
     각 채널(R, G, B)에 독립적으로 적용한다.
 
     알고리즘:
       1. 채널별로 분리
-      2. float32로 변환, [0,1] 범위
-      3. log(1 + I) 변환 (log 도메인으로 이동)
-      4. 2D FFT → 주파수 도메인
-      5. Gaussian High-Pass 필터 H(u,v) 적용:
-         H(u,v) = (gamma_H - gamma_L) * [1 - exp(-D²(u,v) / (2*cutoff²))] + gamma_L
-         D(u,v) = sqrt((u-R)² + (v-C)²)  (R,C: 영상 중심)
-      6. 역 FFT → 공간 도메인
-      7. exp(result) - 1 변환 (log 역변환)
-      8. normalize=True이면 cv2.normalize()로 [0,255] 클리핑
-      9. uint8로 변환
+      2. float32로 변환, log(I + ε) 변환
+      3. GaussianBlur(sigma) → 저주파 성분 추출
+      4. high = log_ch - blur  (고주파 = 원본 - 저주파)
+      5. out = gamma_H * high + gamma_L * blur
+      6. exp(out) 역변환
+      7. normalize=True이면 cv2.normalize()로 [0,255] 클리핑
+      8. uint8로 변환
     """
-    img_np = np.array(image, dtype=np.float32) / 255.0  # (H, W, 3), [0,1]
-    rows, cols = img_np.shape[:2]
-    crow, ccol = rows // 2, cols // 2
-
-    # 주파수 필터 사전 계산 (채널 공통)
-    y_idx, x_idx = np.mgrid[-crow:rows - crow, -ccol:cols - ccol]
-    D_sq = (x_idx ** 2 + y_idx ** 2).astype(np.float32)
-    H = (gamma_H - gamma_L) * (1.0 - np.exp(-D_sq / (2.0 * cutoff ** 2))) + gamma_L
-    # H shape: (H, W), float32
-
-    channels_out = []
-    for c in range(3):
-        channel = img_np[:, :, c]
-
-        # Log 변환
-        log_ch = np.log1p(channel)
-
-        # FFT + fftshift
-        fft_ch = np.fft.fftshift(np.fft.fft2(log_ch))
-
-        # 필터 적용
-        filtered = fft_ch * H
-
-        # 역 FFT
-        img_back = np.real(np.fft.ifft2(np.fft.ifftshift(filtered)))
-
-        # Exp 역변환
-        result = np.expm1(img_back)
-
+    def _homo_channel(ch: np.ndarray) -> np.ndarray:
+        ch_float = np.log(ch.astype(np.float32) + 1e-6)
+        blur = cv2.GaussianBlur(ch_float, (0, 0), sigma)
+        high = ch_float - blur
+        out = gamma_H * high + gamma_L * blur
+        out = np.exp(out)
         if normalize:
-            result = cv2.normalize(
-                result, None, 0.0, 255.0, cv2.NORM_MINMAX
-            ).astype(np.float32)
-        else:
-            result = np.clip(result * 255.0, 0.0, 255.0)
+            out = cv2.normalize(out, None, 0, 255, cv2.NORM_MINMAX)
+        return np.clip(out, 0, 255).astype(np.uint8)
 
-        channels_out.append(result.astype(np.uint8))
-
+    img_np = np.array(image)   # (H, W, 3), uint8
+    channels_out = [_homo_channel(img_np[:, :, c]) for c in range(3)]
     out_np = np.stack(channels_out, axis=2)  # (H, W, 3)
     return Image.fromarray(out_np, mode="RGB")
 ```
@@ -439,7 +409,6 @@ def apply_filter(
             sigma=params.get("sigma", 10.0),
             gamma_H=params.get("gamma_H", 1.5),
             gamma_L=params.get("gamma_L", 0.5),
-            cutoff=params.get("cutoff", 30.0),
             normalize=params.get("normalize", True),
         )
     elif method == "he":
@@ -456,35 +425,44 @@ def apply_filter(
 
 #### B.4.1 model_config → EfficientAd 파라미터 매핑
 
-| model_config 키 | Anomalib EfficientAd 파라미터 | 타입 | 비고 |
-|----------------|-------------------------------|------|------|
+| model_config 키 | Anomalib EfficientAd 생성자 파라미터 | 타입 | 비고 |
+|----------------|--------------------------------------|------|------|
 | `params.model_size` | `model_size` | `EfficientAdModelSize` | SIZE_MAP으로 변환 |
 | `params.learning_rate` | `lr` | `float` | |
 | `params.weight_decay` | `weight_decay` | `float` | |
 | `params.out_channels` | `teacher_out_channels` | `int` | |
 | `params.padding` | `padding` | `bool` | |
-| `params.ae_loss_weight` | `map_combination_alpha` | `float` | ae 가중치 |
-| `params.st_loss_weight` | 암묵적: `1 - map_combination_alpha` | | |
-| `params.autoencoder_lr` | `autoencoder_lr` | `float` | 고급 설정 |
-| `params.autoencoder_weight_decay` | `autoencoder_weight_decay` | `float` | 고급 설정 |
-| `params.imagenet_penalty_weight` | `penalized_normalized` | `bool` + weight | True if > 0 |
-| `params.train_steps` | 학습 루프 max_steps | `int` | Anomalib 생성자 아님, 루프에서 사용 |
-| `common.image_size` | 데이터 전처리에서 처리, 모델 생성자 불필요 | | |
+| `params.ae_loss_weight` | (생성자 전달 안 함) | `float` | α — 학습 루프에서 `total = α*loss_ae + (1-α)*loss_st + loss_stae` |
+| `params.use_imagenet_penalty` | (생성자 전달 안 함) | `bool` | True일 때 penalty_loader 활성화, 학습 루프에서 처리 |
+| `params.train_steps` | (생성자 전달 안 함) | `int` | 학습 루프 max_steps |
+| `common.image_size` | (생성자 전달 안 함) | | 데이터 전처리에서 처리 |
+
+> **주의 (anomalib 2.4.1)**: `EfficientAd.__init__`은 `map_combination_alpha`, `autoencoder_lr`,
+> `autoencoder_weight_decay`, `penalized_normalized` 파라미터를 수용하지 않는다.
+> `inspect`로 실제 수용 파라미터만 필터링하여 전달한다.
 
 ```python
 def _create_efficientad_model(model_config: dict) -> EfficientAd:
+    import inspect
+
     params = model_config["params"]
-    return EfficientAd(
-        teacher_out_channels=params["out_channels"],
-        model_size=SIZE_MAP[params["model_size"]],
-        lr=params["learning_rate"],
-        weight_decay=params["weight_decay"],
-        padding=params["padding"],
-        map_combination_alpha=params["ae_loss_weight"],
-        autoencoder_lr=params.get("autoencoder_lr", params["learning_rate"]),
-        autoencoder_weight_decay=params.get("autoencoder_weight_decay", 1e-5),
-        penalized_normalized=(params.get("imagenet_penalty_weight", 1.0) > 0),
-    )
+    model_size_key = params.get("model_size", "medium")
+    model_size_enum = SIZE_MAP.get(model_size_key, SIZE_MAP.get("medium"))
+
+    # anomalib 2.4.1 생성자에 실제로 존재하는 파라미터만 전달
+    # ae_loss_weight/use_imagenet_penalty 등은 학습 루프에서 처리
+    candidates = {
+        "teacher_out_channels": params.get("out_channels", 384),
+        "model_size":           model_size_enum,
+        "lr":                   params.get("learning_rate", 1e-4),
+        "weight_decay":         params.get("weight_decay", 1e-4),
+        "padding":              params.get("padding", False),
+    }
+
+    valid_params = set(inspect.signature(EfficientAd.__init__).parameters) - {"self"}
+    kwargs = {k: v for k, v in candidates.items() if k in valid_params}
+
+    return EfficientAd(**kwargs)
 ```
 
 #### B.4.2 EfficientAD 학습 루프
@@ -635,7 +613,7 @@ def _infinite_loader(loader: DataLoader):
 
 #### B.4.3 EfficientAD training_step_impl
 
-Anomalib의 EfficientAd 모델 객체에 `training_step_impl`이 없는 경우, 직접 forward를 호출한다:
+`alpha`는 `model_config.params.ae_loss_weight`를 학습 루프에서 읽어 전달한다.
 
 ```python
 # model_factory.py 내 _efficientad_training_step() 헬퍼
@@ -644,31 +622,65 @@ def _efficientad_training_step(
     model: EfficientAd,
     images: torch.Tensor,            # (B, C, H, W)
     penalty_images: torch.Tensor,    # (B, C, H, W)
+    alpha: float = 0.5,              # params["ae_loss_weight"] — 호출 측에서 전달
 ) -> dict:
     """
-    EfficientAd.training_step()을 직접 사용하거나,
-    Anomalib 버전이 다를 경우 아래 fallback 사용.
-    반환: {"loss_total": Tensor}
+    3단계 순서로 loss 계산. 반환: {"loss_total": Tensor} 포함 dict.
+
+    Path 1: model.training_step() — Batch 타입 불일치 시 except로 다음 경로 진행.
+    Path 2: EfficientAdModel.forward(batch, batch_imagenet) — anomalib 2.4.x 전용.
+             반환 tuple (loss_st, loss_ae, loss_stae) → total = α*loss_ae + (1-α)*loss_st + loss_stae
+    Path 3: 컴포넌트별 수동 forward — 구버전 anomalib fallback.
+             total = α*loss_ae + (1-α)*loss_st
     """
-    # Anomalib v1.0 방식 시도
+    _inner = getattr(model, "model", model)
+
+    # Path 1: training_step
     if hasattr(model, "training_step"):
-        batch = {"image": images, "penalty_images": penalty_images}
-        loss = model.training_step(batch, batch_idx=0)
-        if isinstance(loss, dict):
-            return loss
-        return {"loss_total": loss}
+        try:
+            loss = model.training_step({"image": images, "penalty_images": penalty_images}, batch_idx=0)
+            if isinstance(loss, dict):
+                if "loss_total" not in loss and "loss" in loss:
+                    loss["loss_total"] = loss["loss"]
+                return loss
+            return {"loss_total": loss}
+        except Exception:
+            pass
 
-    # Fallback: student-teacher loss 직접 계산
+    # Path 2: anomalib 2.4.x EfficientAdModel.forward
+    if hasattr(_inner, "compute_losses"):
+        try:
+            result = _inner(batch=images, batch_imagenet=penalty_images)
+            if isinstance(result, tuple) and len(result) == 3:
+                loss_st, loss_ae, loss_stae = result
+                total = alpha * loss_ae + (1.0 - alpha) * loss_st + loss_stae
+                return {"loss_st": loss_st, "loss_ae": loss_ae, "loss_total": total}
+        except Exception:
+            pass
+
+    # Path 3: 컴포넌트별 수동 forward
+    teacher    = getattr(model, "teacher",     getattr(_inner, "teacher",     None))
+    student    = getattr(model, "student",     getattr(_inner, "student",     None))
+    autoencoder = (
+        getattr(model, "autoencoder", None) or getattr(model, "ae", None)
+        or getattr(_inner, "autoencoder", None) or getattr(_inner, "ae", None)
+    )
+
     with torch.no_grad():
-        teacher_out = model.teacher(images)   # (B, C', H', W')
-    student_out = model.student(images)
-    ae_out      = model.autoencoder(images)
+        teacher_out = teacher(images)
+    student_out = student(images)
+    ae_out      = autoencoder(images)
 
-    loss_st = torch.mean((teacher_out - student_out) ** 2)
-    loss_ae = torch.mean((images - ae_out) ** 2)
-    alpha   = model.map_combination_alpha if hasattr(model, "map_combination_alpha") else 0.5
-    loss_total = alpha * loss_ae + (1 - alpha) * loss_st
+    loss_st    = torch.mean((teacher_out - student_out) ** 2)
+    loss_ae    = torch.mean((images - ae_out) ** 2)
+    loss_total = alpha * loss_ae + (1.0 - alpha) * loss_st
     return {"loss_st": loss_st, "loss_ae": loss_ae, "loss_total": loss_total}
+```
+
+호출 측 (학습 루프):
+```python
+alpha = float(params.get("ae_loss_weight", 0.5))
+loss_dict = _efficientad_training_step(model, images, penalty, alpha=alpha)
 ```
 
 ---
@@ -677,37 +689,43 @@ def _efficientad_training_step(
 
 #### B.5.1 model_config → Patchcore 파라미터 매핑
 
-| model_config 키 | Anomalib Patchcore 파라미터 | 타입 | 비고 |
-|----------------|----------------------------|------|------|
+| model_config 키 | Anomalib Patchcore 생성자 파라미터 | 타입 | 비고 |
+|----------------|-----------------------------------|------|------|
 | `params.backbone` | `backbone` | `str` | `"wide_resnet50_2"` 등 |
 | `params.pretrained_source` | `pre_trained` | `bool` | `"torchvision"` → `True`, `"local"` → `False` |
 | `params.pretrained_path` | 별도 `torch.load()` 후 `model.backbone.load_state_dict()` | | `pretrained_source == "local"`인 경우 |
 | `params.coreset_sampling_ratio` | `coreset_sampling_ratio` | `float` | |
-| `params.neighbourhood_kernel_size` | `num_neighbors` | `int` | |
-| `params.knn` | `num_neighbors` | `int` | 고급 설정. neighbourhood_kernel_size와 동일 파라미터, knn 우선 |
-| `params.top_k_ratio` | `sampling_ratio` (내부 사용) | `float` | Anomalib 버전에 따라 다름 |
+| `params.knn` | `num_neighbors` | `int` | KNN 이웃 수. 기본값 9 |
+| `params.neighbourhood_kernel_size` | (생성자 전달 안 함) | `int` | `feature_pooler` kernel 크기 override에만 사용 |
 | `params.max_train` | DataLoader 샘플 수 제한 (`Subset` 사용) | `int` | |
 
 ```python
 def _create_patchcore_model(model_config: dict) -> Patchcore:
     params = model_config["params"]
-    pre_trained = (params["pretrained_source"] == "torchvision")
+    pre_trained = (params.get("pretrained_source", "torchvision") == "torchvision")
 
-    # knn 파라미터: neighbourhood_kernel_size와 knn 중 knn 우선
-    num_neighbors = params.get("knn", params["neighbourhood_kernel_size"])
+    # knn → num_neighbors (neighbourhood_kernel_size는 num_neighbors가 아님)
+    num_neighbors = params.get("knn", 9)
 
     model = Patchcore(
         backbone=params["backbone"],
         layers=["layer2", "layer3"],    # 고정값: WideResNet50/ResNet 기준 최적 레이어
         pre_trained=pre_trained,
-        coreset_sampling_ratio=params["coreset_sampling_ratio"],
+        coreset_sampling_ratio=params.get("coreset_sampling_ratio", 0.1),
         num_neighbors=num_neighbors,
     )
+
+    # neighbourhood_kernel_size → feature_pooler kernel 크기 override
+    # anomalib 2.4.1: PatchcoreModel.feature_pooler = AvgPool2d(3,1,1) 하드코딩
+    nks = params.get("neighbourhood_kernel_size", 3)
+    torch_model = getattr(model, "model", None)
+    if torch_model is not None and hasattr(torch_model, "feature_pooler"):
+        import torch.nn as nn
+        torch_model.feature_pooler = nn.AvgPool2d(nks, 1, nks // 2)
 
     # 로컬 가중치 로드
     if not pre_trained and params.get("pretrained_path"):
         state_dict = torch.load(params["pretrained_path"], map_location="cpu")
-        # state_dict가 {"model": {...}} 형태일 수 있음
         if "model" in state_dict:
             state_dict = state_dict["model"]
         model.backbone.load_state_dict(state_dict, strict=False)
@@ -999,8 +1017,8 @@ def _run_full_test_inference(
             anomaly_map = _get_anomaly_map(model, image)
             # anomaly_map: np.ndarray (H, W), float32
 
-            # 이미지 레벨 Score = Anomaly Map의 최댓값
-            score = float(anomaly_map.max())
+            # 이미지 레벨 Score: pred_score 우선, 없으면 anomaly_map.max() fallback
+            score = _get_pred_score(model, image)
 
             y_true.append(label)
             anomaly_scores.append(round(score, 6))
@@ -1370,13 +1388,13 @@ ML 레이어 추가 로그 이벤트:
 #### TC-ML-01: Homomorphic Filter 채널 독립성
 
 ```
-Given:  256×256 RGB 이미지, gamma_H=1.5, gamma_L=0.5, sigma=10, cutoff=30, normalize=True
+Given:  256×256 RGB 이미지, gamma_H=1.5, gamma_L=0.5, sigma=10, normalize=True
 When:   _homomorphic_filter() 호출
 Then:   출력 PIL.Image의 mode == "RGB"
         출력 shape == (256, 256, 3)
         출력 값 범위: [0, 255] (normalize=True 보장)
         R/G/B 각 채널이 서로 독립적으로 처리됨
-        (채널 간 교차 영향 없음: 채널별 FFT 독립 적용)
+        (채널 간 교차 영향 없음: 채널별 GaussianBlur 독립 적용)
 ```
 
 #### TC-ML-02: PatchCore 재현성

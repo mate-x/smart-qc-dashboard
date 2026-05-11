@@ -150,10 +150,10 @@ class TrainingWorker(threading.Thread):
         model_type = self.model_config.get("model_type", "")
 
         # 3. EfficientAD — imagenet penalty 사전 검증 (Z.1)
-        # imagenet_penalty_weight == 0이면 penalty 미사용 → 디렉터리 불필요
+        # use_imagenet_penalty == False이면 penalty 미사용 → 디렉터리 불필요
         if model_type == "efficientad":
-            penalty_weight = self.model_config.get("params", {}).get("imagenet_penalty_weight", 1.0)
-            if penalty_weight > 0:
+            use_imagenet_penalty = self.model_config.get("params", {}).get("use_imagenet_penalty", False)
+            if use_imagenet_penalty:
                 from utils.storage import validate_imagenet_penalty_dir
                 ok, _ = validate_imagenet_penalty_dir()
                 if not ok:
@@ -183,7 +183,7 @@ class TrainingWorker(threading.Thread):
         if model_type == "efficientad":
             self._write_log("[초기화] EfficientAD 모델 생성 중... (사전학습 가중치 로딩 포함, 수십 초 소요)")
             model = _create_efficientad_model(self.model_config)
-            if penalty_weight > 0:
+            if use_imagenet_penalty:
                 penalty_loader = build_imagenet_penalty_loader(
                     batch_size=self.model_config["params"].get("penalty_batch_size", 8),
                     image_size=self.model_config.get("image_size", 256),
@@ -310,7 +310,8 @@ class TrainingWorker(threading.Thread):
             else:
                 penalty = torch.zeros_like(images)
 
-            loss_dict = _efficientad_training_step(model, images, penalty)
+            alpha = float(params.get("ae_loss_weight", 0.5))
+            loss_dict = _efficientad_training_step(model, images, penalty, alpha=alpha)
             total_loss = loss_dict["loss_total"]
             last_loss = total_loss.item()
 
@@ -466,7 +467,7 @@ class TrainingWorker(threading.Thread):
           anomaly_scores: list[float]
           anomaly_maps:   dict[str → np.ndarray(H,W)]
         """
-        from utils.model_factory import _get_anomaly_map
+        from utils.model_factory import _get_anomaly_map, _get_pred_score
 
         model = model.to(device)
         model.eval()
@@ -485,7 +486,7 @@ class TrainingWorker(threading.Thread):
                 image_path = batch["image_path"][0]
 
                 amap = _get_anomaly_map(model, image)
-                score = float(amap.max())
+                score = _get_pred_score(model, image)
 
                 y_true.append(label)
                 anomaly_scores.append(round(score, 6))

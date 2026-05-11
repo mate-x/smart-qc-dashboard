@@ -12,44 +12,9 @@ import pytest
 from tabs.tab3_model_params import (
     build_model_config,
     build_patchcore_params,
-    compute_st_loss_weight,
     compute_threshold_ratio,
     _apply_patchcore_widgets,
 )
-
-
-# ─────────────────────────────────────────────
-# compute_st_loss_weight — ae/st weight 자동 보정 (R-03)
-# ─────────────────────────────────────────────
-
-class TestComputeStLossWeight:
-    """TC-FR-T3-03: ae_loss_weight 변경 시 st_loss_weight 자동 보정."""
-
-    def test_default_half(self):
-        assert compute_st_loss_weight(0.5) == 0.5
-
-    def test_sum_equals_one(self):
-        for ae in (0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0):
-            st_w = compute_st_loss_weight(ae)
-            assert abs(ae + st_w - 1.0) < 1e-6, f"sum != 1.0 for ae={ae}"
-
-    def test_tc_fr_t3_03_0_73(self):
-        """PRD TC-FR-T3-03: ae=0.73 → st=0.27."""
-        ae = 0.73
-        st_w = compute_st_loss_weight(ae)
-        assert st_w == round(1.0 - 0.73, 6)
-        assert abs(ae + st_w - 1.0) < 1e-6
-
-    def test_edge_zero(self):
-        assert compute_st_loss_weight(0.0) == 1.0
-
-    def test_edge_one(self):
-        assert compute_st_loss_weight(1.0) == 0.0
-
-    def test_rounded_to_6_decimals(self):
-        val = compute_st_loss_weight(0.333333)
-        assert val == round(val, 6)
-
 
 # ─────────────────────────────────────────────
 # build_patchcore_params — 00_Global_Context 1.4절 스키마 검증

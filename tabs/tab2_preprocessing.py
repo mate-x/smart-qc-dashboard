@@ -76,13 +76,11 @@ def _render_method_section() -> tuple[str, dict | None]:
         sigma = st.slider("sigma", 0.1, 50.0, 10.0, 0.1, key="t2_sigma")
         gamma_h = st.slider("gamma_H", 1.0, 3.0, 1.5, 0.05, key="t2_gamma_h")
         gamma_l = st.slider("gamma_L", 0.1, 1.0, 0.5, 0.05, key="t2_gamma_l")
-        cutoff = st.slider("cutoff", 1.0, 100.0, 30.0, 1.0, key="t2_cutoff")
         normalize = st.checkbox("정규화 적용 (normalize)", value=True, key="t2_normalize")
         params = {
             "sigma": sigma,
             "gamma_H": gamma_h,
             "gamma_L": gamma_l,
-            "cutoff": cutoff,
             "normalize": normalize,
         }
     elif method == "clahe":
@@ -235,10 +233,9 @@ def _apply_config_to_widgets(config: dict) -> None:
 
     params = config.get("params") or {}
     if method == "homomorphic":
-        st.session_state["t2_sigma"]     = max(0.1,  min(50.0,  float(params.get("sigma",     10.0))))
-        st.session_state["t2_gamma_h"]   = max(1.0,  min(3.0,   float(params.get("gamma_H",   1.5))))
-        st.session_state["t2_gamma_l"]   = max(0.1,  min(1.0,   float(params.get("gamma_L",   0.5))))
-        st.session_state["t2_cutoff"]    = max(1.0,  min(100.0, float(params.get("cutoff",    30.0))))
+        st.session_state["t2_sigma"]     = max(0.1,  min(50.0, float(params.get("sigma",   10.0))))
+        st.session_state["t2_gamma_h"]   = max(1.0,  min(3.0,  float(params.get("gamma_H", 1.5))))
+        st.session_state["t2_gamma_l"]   = max(0.1,  min(1.0,  float(params.get("gamma_L", 0.5))))
         st.session_state["t2_normalize"] = bool(params.get("normalize", True))
     elif method == "clahe":
         st.session_state["t2_clip_limit"] = max(0.1, min(40.0, float(params.get("clip_limit", 2.0))))

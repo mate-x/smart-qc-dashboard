@@ -324,9 +324,11 @@ def render() -> None:
     if status == "idle":
         _render_idle_ui()
     elif status == "running":
-        _drain_queue()           # 먼저 Queue 드레인하여 session_state 최신화
-        _render_running_ui()     # 최신화된 session_state로 UI 렌더링
-        _schedule_rerun()        # 0.3초 후 재실행 예약
+        finished = _drain_queue()   # 먼저 Queue 드레인하여 session_state 최신화
+        _render_running_ui()        # 최신화된 session_state로 UI 렌더링
+        if not finished:
+            time.sleep(0.3)         # R-THREAD-05: 0.3초 고정 (종료 시 슬립 없음)
+        st.rerun()                  # 항상 rerun — 종료 시 idle UI 전환
     # "stopped" / "completed" 상태는 drain 중 _handle_terminal() 호출로 처리됨
     # → 처리 완료 후 status = "idle" 로 전환되므로 여기서 별도 분기 불필요
 
@@ -367,10 +369,10 @@ def _drain_queue() -> None:
             break
 
 
-def _schedule_rerun() -> None:
-    """0.3초 대기 후 st.rerun() 호출."""
-    time.sleep(0.3)   # R-THREAD-05: 0.3초 고정
-    st.rerun()
+def _drain_queue() -> bool:
+    """Queue 메시지를 소비하고, 종료 메시지 처리 시 True 반환."""
+    ...
+    return finished  # True if completed/error/stopped processed
 ```
 
 ### 5.2 각 메시지 처리 함수
@@ -706,7 +708,7 @@ def _handle_path_change(new_path: str) -> None:
 - [ ] `q.get_nowait()` 사용 (블로킹 get 금지)
 - [ ] 종료 메시지 처리 후 즉시 `break`
 - [ ] `_reset_run_state()` 이후 `_result_queue = None` 처리
-- [ ] `time.sleep(1.0)` 후 `st.rerun()` 호출 (1.0초 고정)
+- [ ] 종료 메시지 미수신 시 `time.sleep(0.3)` 후 `st.rerun()` 호출 (0.3초 고정, 종료 시 슬립 없음)
 - [ ] `_handle_completed()` 내 `del msg["model"]` + `torch.cuda.empty_cache()`
 
 ### 에러 계약

@@ -205,8 +205,8 @@
   4. image_size 필드에 preprocessing_config.image_size 자동 반영 (편집 가능)
   5. 사용자가 기본 노출 파라미터 설정
      (model_size, train_steps, optimizer, learning_rate, weight_decay,
-      out_channels, padding, ae_loss_weight ↔ st_loss_weight)
-  6. ae_loss_weight 변경 시 st_loss_weight = 1.0 - ae_loss_weight 자동 보정 (R-03)
+      out_channels, padding, ae_loss_weight)
+  6. ae_loss_weight(α) 설정 — ST 비중(1-α)은 학습 루프에서 자동 적용
   7. (선택) [고급 설정] expander 열기 → 고급 파라미터 설정
   8. Threshold 방식·값 설정
   9. [모델 설정 저장] 클릭 → session_state.model_config Write
@@ -596,14 +596,14 @@ Then:   우측 미리보기 이미지가 1초 이내에 갱신된다
         (설정 저장은 [전처리 설정 저장] 버튼 클릭 시에만 발생)
 ```
 
-#### TC-UC-03: ae_loss_weight 자동 보정
+#### TC-UC-03: ae_loss_weight 저장 확인
 
 ```
 Given:  탭3에서 EfficientAD가 선택된 상태이다
-        ae_loss_weight = 0.5, st_loss_weight = 0.5
-When:   사용자가 ae_loss_weight 슬라이더를 0.7로 변경한다
-Then:   st_loss_weight 슬라이더가 자동으로 0.3으로 갱신된다
-        ae_loss_weight + st_loss_weight == 1.0 (부동소수점 오차 허용: abs(sum-1.0) < 1e-6)
+        ae_loss_weight = 0.5
+When:   사용자가 ae_loss_weight 슬라이더를 0.7로 변경하고 [모델 설정 저장]을 클릭한다
+Then:   session_state.model_config.params["ae_loss_weight"] == 0.7
+        ST 비중(1 - 0.7 = 0.3)은 학습 루프 내부에서 자동 적용된다
 ```
 
 #### TC-UC-10: 실험 삭제 안전성

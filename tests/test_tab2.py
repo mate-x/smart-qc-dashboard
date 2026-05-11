@@ -74,7 +74,7 @@ class TestBuildConfig:
         assert config["method"] == "none"
 
     def test_method_homomorphic(self) -> None:
-        params = {"sigma": 10.0, "gamma_H": 1.5, "gamma_L": 0.5, "cutoff": 30.0, "normalize": True}
+        params = {"sigma": 10.0, "gamma_H": 1.5, "gamma_L": 0.5, "normalize": True}
         config = _build_config("homomorphic", params, 256, "ImageNet", _IMAGENET_MEAN, _IMAGENET_STD)
         assert config["method"] == "homomorphic"
 
@@ -145,14 +145,13 @@ class TestBuildConfig:
             "sigma": 5.0,
             "gamma_H": 2.0,
             "gamma_L": 0.3,
-            "cutoff": 20.0,
             "normalize": False,
         }
         config = _build_config("homomorphic", params, 256, "ImageNet", _IMAGENET_MEAN, _IMAGENET_STD)
         assert config["params"] == params
 
     def test_homomorphic_normalize_false_preserved(self) -> None:
-        params = {"sigma": 10.0, "gamma_H": 1.5, "gamma_L": 0.5, "cutoff": 30.0, "normalize": False}
+        params = {"sigma": 10.0, "gamma_H": 1.5, "gamma_L": 0.5, "normalize": False}
         config = _build_config("homomorphic", params, 256, "ImageNet", _IMAGENET_MEAN, _IMAGENET_STD)
         assert config["params"]["normalize"] is False
 
@@ -169,7 +168,7 @@ class TestBuildConfig:
     # ── 복합 시나리오 ────────────────────────────────────────────────────────
 
     def test_full_homomorphic_config(self) -> None:
-        params = {"sigma": 10.0, "gamma_H": 1.5, "gamma_L": 0.5, "cutoff": 30.0, "normalize": True}
+        params = {"sigma": 10.0, "gamma_H": 1.5, "gamma_L": 0.5, "normalize": True}
         config = _build_config("homomorphic", params, 256, "ImageNet", _IMAGENET_MEAN, _IMAGENET_STD)
         assert config["method"] == "homomorphic"
         assert config["resize_mode"] == "padding"

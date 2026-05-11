@@ -63,7 +63,7 @@ def render() -> None:
         _render_running_ui()
         if not finished:
             time.sleep(0.3)
-            st.rerun()
+        st.rerun()
     else:
         _show_last_result()
         _render_idle_ui()
@@ -211,8 +211,8 @@ def _handle_start_training(experiment_name: str) -> None:
         st.stop()
 
     if model_config.get("model_type") == "efficientad":
-        penalty_weight = model_config.get("params", {}).get("imagenet_penalty_weight", 1.0)
-        if penalty_weight > 0:
+        use_imagenet_penalty = model_config.get("params", {}).get("use_imagenet_penalty", False)
+        if use_imagenet_penalty:
             ok, count = validate_imagenet_penalty_dir()
             if not ok:
                 st.error(

@@ -21,5 +21,4 @@ ERR: dict[str, str] = {
     "ERR_MODEL_SAVE_FAILED":           "모델 저장에 실패했습니다.",
     "ERR_EXPERIMENT_NOT_FOUND":        "해당 실험 ID가 존재하지 않습니다.",
     "ERR_INVALID_PARAM_RANGE":         "파라미터 값이 허용 범위를 벗어났습니다.",
-    "ERR_WEIGHT_SUM_INVALID":          "ae_loss_weight + st_loss_weight != 1.0 입니다.",
 }

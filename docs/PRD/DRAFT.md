@@ -89,7 +89,7 @@
 | 모델 | 파라미터 | UI |
 |---|---|---|
 | 선택 안 함 | - | 파라미터 UI 없음 |
-| Homomorphic Filter | sigma, gamma_H, gamma_L, cutoff, normalize | 슬라이더 |
+| Homomorphic Filter | sigma, gamma_H, gamma_L, normalize | 슬라이더 |
 | HE | 없음 | 안내 텍스트만 표시 |
 | CLAHE | clipLimit | 슬라이더 |
 
@@ -119,8 +119,8 @@
 
 | 구분 | 파라미터 |
 |---|---|
-| **기본 노출** | model_size(small/medium), train_steps, optimizer(Adam/AdamW/SGD), learning_rate, weight_decay, out_channels, padding, ae_loss_weight ↔ st_loss_weight (합산 1.0 슬라이더) |
-| **고급 설정 (st.expander)** | autoencoder_lr, autoencoder_weight_decay, lr_decay_epochs, lr_decay_factor, 스케줄러(StepLR/CosineAnnealingLR), imagenet_penalty_weight, penalty_batch_size |
+| **기본 노출** | model_size(small/medium), train_steps, optimizer(Adam/AdamW/SGD), learning_rate, weight_decay, out_channels, padding, ae_loss_weight (α, ST 비중 = 1-α 자동 계산) |
+| **고급 설정 (st.expander)** | lr_decay_epochs, lr_decay_factor, 스케줄러(StepLR/CosineAnnealingLR), use_imagenet_penalty (bool), penalty_batch_size |
 
 #### PatchCore 전용 파라미터
 
@@ -389,7 +389,6 @@ preprocessing:
     sigma: 10
     gamma_H: 1.5
     gamma_L: 0.5
-    cutoff: 30
     normalize: true
   clahe:
     clipLimit: 2.0
@@ -415,14 +414,13 @@ model:
     out_channels: 384
     padding: false
     ae_loss_weight: 0.5
-    st_loss_weight: 0.5
     advanced:
       autoencoder_lr: 0.0001
       autoencoder_weight_decay: 0.00001
       lr_decay_epochs: 50000
       lr_decay_factor: 0.1
       scheduler: "StepLR"
-      imagenet_penalty_weight: 1.0
+      use_imagenet_penalty: false
       penalty_batch_size: 8
   patchcore:
     backbone: "wide_resnet50_2"

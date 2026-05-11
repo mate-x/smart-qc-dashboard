@@ -290,6 +290,9 @@ class TrainingWorker(threading.Thread):
         train_iter = self._infinite_loader(train_loader)
         penalty_iter = self._infinite_loader(penalty_loader) if penalty_loader is not None else None
 
+        use_amp = device.type == "cuda"
+        scaler = torch.cuda.amp.GradScaler() if use_amp else None
+
         step = 0
         last_loss = 0.0
 
@@ -298,28 +301,35 @@ class TrainingWorker(threading.Thread):
                 return False, step
 
             batch = next(train_iter)
-            images = batch["image"].to(device)
+            images = batch["image"].to(device, non_blocking=True)
 
             if penalty_iter is not None:
                 penalty_batch = next(penalty_iter)
                 # FakeData / ImageFolder 모두 (img, label) 튜플 반환
                 if isinstance(penalty_batch, (list, tuple)):
-                    penalty = penalty_batch[0].to(device)
+                    penalty = penalty_batch[0].to(device, non_blocking=True)
                 else:
-                    penalty = penalty_batch["image"].to(device)
+                    penalty = penalty_batch["image"].to(device, non_blocking=True)
             else:
                 penalty = torch.zeros_like(images)
 
-            alpha = float(params.get("ae_loss_weight", 0.5))
-            loss_dict = _efficientad_training_step(model, images, penalty, alpha=alpha)
-            total_loss = loss_dict["loss_total"]
+            with torch.cuda.amp.autocast(enabled=use_amp):
+                alpha = float(params.get("ae_loss_weight", 0.5))
+                loss_dict = _efficientad_training_step(model, images, penalty, alpha=alpha)
+                total_loss = loss_dict["loss_total"]
+
             last_loss = total_loss.item()
 
-            optimizer_st.zero_grad()
-            optimizer_ae.zero_grad()
-            total_loss.backward()
-            optimizer_st.step()
-            optimizer_ae.step()
+            if scaler is not None:
+                scaler.scale(total_loss).backward()
+                scaler.step(optimizer_st)
+                scaler.step(optimizer_ae)
+                scaler.update()
+            else:
+                total_loss.backward()
+                optimizer_st.step()
+                optimizer_ae.step()
+
             scheduler_st.step()
             scheduler_ae.step()
 

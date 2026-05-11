@@ -322,6 +322,7 @@ def _render_ui(exp_id: str, exp: dict, metrics: dict, cache: dict) -> None:
                 dataset_path=exp.get("dataset_path", ""),
                 threshold=threshold,
                 exp_id=exp_id,
+                score=float(row["Anomaly Score"]),
             )
 
     st.divider()
@@ -364,6 +365,7 @@ def _render_triplet(
     dataset_path: str,
     threshold: float,
     exp_id: str,
+    score: float = 0.0,
 ) -> None:
     """FR-T6-04: 원본 / GT 마스크 / Heatmap 3-패널 시각화 + FR-T6-05: PNG 다운로드."""
     st.subheader("이미지 상세 시각화")
@@ -412,7 +414,6 @@ def _render_triplet(
         st.image(heatmap_display, use_container_width=True)
 
     # Score / Threshold / 판정 요약 (PRD §07 §7.5)
-    score = float(np.max(anomaly_map))
     verdict = "NG" if score >= threshold else "OK"
     m1, m2, m3 = st.columns(3)
     m1.metric("Anomaly Score", f"{score:.4f}")

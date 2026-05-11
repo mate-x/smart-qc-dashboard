@@ -120,18 +120,18 @@ class TestEnsureRgb:
 class TestHomomorphicFilter:
     def test_output_shape_preserved(self):
         img = (np.random.rand(256, 256, 3) * 255).astype(np.uint8)
-        params = {"sigma": 10.0, "gamma_H": 1.5, "gamma_L": 0.5, "cutoff": 30.0, "normalize": True}
+        params = {"sigma": 10.0, "gamma_H": 1.5, "gamma_L": 0.5, "normalize": True}
         result = apply_homomorphic(img, **params)
         assert result.shape == img.shape
 
     def test_output_dtype_uint8(self):
         img = (np.random.rand(128, 128, 3) * 255).astype(np.uint8)
-        result = apply_homomorphic(img, sigma=10.0, gamma_H=1.5, gamma_L=0.5, cutoff=30.0, normalize=True)
+        result = apply_homomorphic(img, sigma=10.0, gamma_H=1.5, gamma_L=0.5, normalize=True)
         assert result.dtype == np.uint8
 
     def test_normalized_range(self):
         img = (np.random.rand(128, 128, 3) * 255).astype(np.uint8)
-        result = apply_homomorphic(img, sigma=10.0, gamma_H=1.5, gamma_L=0.5, cutoff=30.0, normalize=True)
+        result = apply_homomorphic(img, sigma=10.0, gamma_H=1.5, gamma_L=0.5, normalize=True)
         assert result.min() >= 0
         assert result.max() <= 255
 ```

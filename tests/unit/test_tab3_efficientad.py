@@ -12,11 +12,9 @@ import pytest
 from tabs.tab3_model_params import (
     build_efficientad_params,
     build_model_config,
-    compute_st_loss_weight,
     compute_threshold_ratio,
     _apply_efficientad_widgets,
 )
-
 
 # ─────────────────────────────────────────────
 # 상수 — PRD §1.4 EfficientAD model_params 필수 키
@@ -31,13 +29,12 @@ EFFICIENTAD_REQUIRED_KEYS = {
     "out_channels",
     "padding",
     "ae_loss_weight",
-    "st_loss_weight",
     "autoencoder_lr",
     "autoencoder_weight_decay",
     "lr_decay_epochs",
     "lr_decay_factor",
     "scheduler",
-    "imagenet_penalty_weight",
+    "use_imagenet_penalty",
     "penalty_batch_size",
 }
 
@@ -57,7 +54,7 @@ def _default_ead_params(**overrides) -> dict:
         lr_decay_epochs=50_000,
         lr_decay_factor=0.1,
         scheduler="StepLR",
-        imagenet_penalty_weight=1.0,
+        use_imagenet_penalty=False,
         penalty_batch_size=8,
     )
     defaults.update(overrides)
@@ -118,26 +115,13 @@ class TestBuildEfficientadParams:
         assert isinstance(params["ae_loss_weight"], float)
         assert params["ae_loss_weight"] == pytest.approx(0.5)
 
-    def test_st_loss_weight_derived_from_ae(self):
-        """st_loss_weight는 build 시 R-03에 따라 자동 계산."""
-        params = _default_ead_params(ae_loss_weight=0.3)
-        assert params["st_loss_weight"] == pytest.approx(0.7)
-
-    def test_ae_st_sum_equals_one(self):
-        for ae in (0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0):
-            params = _default_ead_params(ae_loss_weight=ae)
-            total = params["ae_loss_weight"] + params["st_loss_weight"]
-            assert abs(total - 1.0) < 1e-6, f"sum != 1.0 for ae={ae}"
-
     def test_ae_loss_weight_zero(self):
         params = _default_ead_params(ae_loss_weight=0.0)
         assert params["ae_loss_weight"] == pytest.approx(0.0)
-        assert params["st_loss_weight"] == pytest.approx(1.0)
 
     def test_ae_loss_weight_one(self):
         params = _default_ead_params(ae_loss_weight=1.0)
         assert params["ae_loss_weight"] == pytest.approx(1.0)
-        assert params["st_loss_weight"] == pytest.approx(0.0)
 
     def test_autoencoder_lr_is_float(self):
         params = _default_ead_params(autoencoder_lr=1e-4)
@@ -163,14 +147,11 @@ class TestBuildEfficientadParams:
         params = _default_ead_params(scheduler=sched)
         assert params["scheduler"] == sched
 
-    def test_imagenet_penalty_weight_is_float(self):
-        params = _default_ead_params(imagenet_penalty_weight=1.0)
-        assert isinstance(params["imagenet_penalty_weight"], float)
-        assert params["imagenet_penalty_weight"] == pytest.approx(1.0)
-
-    def test_imagenet_penalty_weight_zero(self):
-        params = _default_ead_params(imagenet_penalty_weight=0.0)
-        assert params["imagenet_penalty_weight"] == pytest.approx(0.0)
+    def test_use_imagenet_penalty_is_bool(self):
+        for val in (True, False):
+            params = _default_ead_params(use_imagenet_penalty=val)
+            assert isinstance(params["use_imagenet_penalty"], bool)
+            assert params["use_imagenet_penalty"] is val
 
     def test_penalty_batch_size_is_int(self):
         params = _default_ead_params(penalty_batch_size=8)
@@ -188,21 +169,18 @@ class TestBuildEfficientadParams:
         assert params["out_channels"] == 384
         assert params["padding"] is False
         assert params["ae_loss_weight"] == pytest.approx(0.5)
-        assert params["st_loss_weight"] == pytest.approx(0.5)
         assert params["autoencoder_lr"] == pytest.approx(1e-4)
         assert params["autoencoder_weight_decay"] == pytest.approx(1e-5)
         assert params["lr_decay_epochs"] == 50_000
         assert params["lr_decay_factor"] == pytest.approx(0.1)
         assert params["scheduler"] == "StepLR"
-        assert params["imagenet_penalty_weight"] == pytest.approx(1.0)
+        assert params["use_imagenet_penalty"] is False
         assert params["penalty_batch_size"] == 8
 
     def test_tc_fr_t3_03_ae_0_73(self):
-        """PRD TC-FR-T3-03: ae=0.73 → st=0.27."""
+        """PRD TC-FR-T3-03: ae=0.73 → ae_loss_weight 저장 검증."""
         params = _default_ead_params(ae_loss_weight=0.73)
-        expected_st = round(1.0 - 0.73, 6)
-        assert params["st_loss_weight"] == pytest.approx(expected_st)
-        assert abs(params["ae_loss_weight"] + params["st_loss_weight"] - 1.0) < 1e-6
+        assert params["ae_loss_weight"] == pytest.approx(0.73)
 
 
 # ─────────────────────────────────────────────
@@ -281,9 +259,9 @@ class TestApplyEfficientadWidgets:
         ss = self._run({"scheduler": "CosineAnnealingLR"})
         assert ss["ead_sched"] == "CosineAnnealingLR"
 
-    def test_imagenet_penalty_weight_key_set(self):
-        ss = self._run({"imagenet_penalty_weight": 2.5})
-        assert ss["ead_img_pw"] == pytest.approx(2.5)
+    def test_use_imagenet_penalty_key_set(self):
+        ss = self._run({"use_imagenet_penalty": True})
+        assert ss["ead_use_img_penalty"] is True
 
     def test_penalty_batch_size_key_set(self):
         ss = self._run({"penalty_batch_size": 16})
@@ -369,12 +347,6 @@ class TestBuildModelConfigEfficientad:
         assert isinstance(cfg["threshold_value"], float)
         assert cfg["threshold_value"] == pytest.approx(90.0)
 
-    def test_params_ae_st_sum_one(self):
-        """model_config 내 params ae+st 불변 조건 유지."""
-        cfg = self._make()
-        p = cfg["params"]
-        assert abs(p["ae_loss_weight"] + p["st_loss_weight"] - 1.0) < 1e-6
-
     def test_params_is_dict(self):
         cfg = self._make()
         assert isinstance(cfg["params"], dict)
@@ -388,7 +360,6 @@ class TestBuildModelConfigEfficientad:
         assert p["out_channels"] == 384
         assert p["padding"] is False
         assert p["ae_loss_weight"] == pytest.approx(0.5)
-        assert p["st_loss_weight"] == pytest.approx(0.5)
 
 
 # ─────────────────────────────────────────────

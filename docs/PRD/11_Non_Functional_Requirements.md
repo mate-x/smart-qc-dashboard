@@ -305,7 +305,6 @@ assert np.all(rgb_arr[:, :, 0] == rgb_arr[:, :, 1] == rgb_arr[:, :, 2]), "R=G=B 
 |------|----------|-----------|
 | R-01 | `selected_experiment_id` 조회 시 `experiments` dict에 키 존재 | 탭6 진입 시 |
 | R-02 | `model_config.image_size == preprocessing_config.image_size` | 탭3 저장 시 자동 동기화 |
-| R-03 | `ae_loss_weight + st_loss_weight == 1.0` | 탭3 UI에서 자동 보정 |
 | R-04 | `status=="completed"` 이고 `model_path` NOT NULL인 경우 파일 존재 | 탭5 로딩 시 |
 | R-05 | `status=="중단"` 레코드의 `metrics`, `model_path`, `configs_path` 모두 `null` | 중단 처리 시 |
 

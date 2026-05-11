@@ -218,18 +218,11 @@ def _render_efficientad_params() -> dict:
         )
         padding = bool(st.checkbox("패딩 사용 (padding)", value=False, key="ead_padding"))
 
-    # FR-T3-03: ae/st loss weight 자동 보정 (R-03)
-    st.markdown("**AE / ST Loss 비중** (합산 1.0 자동 보정)")
+    # FR-T3-03: ae_loss_weight (alpha). st_loss_weight = 1 - ae_loss_weight 는 학습 루프에서 자동 적용
+    st.markdown("**AE Loss 비중 (ae_loss_weight)**")
     ae_loss_weight = float(
-        st.slider("AE Loss 비중 (ae_loss_weight)", 0.0, 1.0, 0.5, 0.01, key="ead_ae_weight")
+        st.slider("ae_loss_weight (α)", 0.0, 1.0, 0.5, 0.01, key="ead_ae_weight")
     )
-    st_loss_weight = compute_st_loss_weight(ae_loss_weight)
-
-    col_ae, col_st = st.columns(2)
-    with col_ae:
-        st.metric("ae_loss_weight", f"{ae_loss_weight:.2f}")
-    with col_st:
-        st.metric("st_loss_weight", f"{st_loss_weight:.2f}")
 
     # FR-T3-04: 고급 설정 expander
     with st.expander("고급 설정 (Advanced Settings)"):
@@ -262,11 +255,9 @@ def _render_efficientad_params() -> dict:
                 "스케줄러 (scheduler)", ["StepLR", "CosineAnnealingLR"],
                 index=0, key="ead_sched",
             )
-            imagenet_pw = float(
-                st.slider(
-                    "ImageNet 패널티 가중치 (imagenet_penalty_weight)",
-                    0.0, 10.0, 1.0, 0.1, key="ead_img_pw",
-                )
+            use_imagenet_penalty = st.checkbox(
+                "ImageNet Penalty 사용 (use_imagenet_penalty)",
+                value=False, key="ead_use_img_penalty",
             )
             penalty_bs = int(
                 st.number_input(
@@ -275,14 +266,14 @@ def _render_efficientad_params() -> dict:
                 )
             )
 
-        # §Z.1: imagenet_penalty_weight > 0 시 디렉터리 검증 피드백
-        if imagenet_pw > 0:
+        # §Z.1: use_imagenet_penalty 시 디렉터리 검증 피드백
+        if use_imagenet_penalty:
             ok, count = validate_imagenet_penalty_dir()
             if not ok:
                 st.warning(
                     "ImageNet penalty 디렉터리에 이미지가 없습니다. "
-                    "imagenet_penalty_weight > 0이면 EfficientAD 학습이 실패합니다. "
-                    "이미지를 추가하거나 weight를 0으로 설정하세요."
+                    "use_imagenet_penalty가 True이면 EfficientAD 학습이 실패합니다. "
+                    "이미지를 추가하거나 체크박스를 해제하세요."
                 )
             elif count < 1000:
                 st.caption(f"ImageNet 패널티 디렉터리: {count}장 확인됨 (1,000장 미만 — 품질 저하 가능)")
@@ -303,7 +294,7 @@ def _render_efficientad_params() -> dict:
         lr_decay_epochs=lr_decay_epochs,
         lr_decay_factor=lr_decay_factor,
         scheduler=scheduler,
-        imagenet_penalty_weight=imagenet_pw,
+        use_imagenet_penalty=use_imagenet_penalty,
         penalty_batch_size=penalty_bs,
     )
 
@@ -572,8 +563,8 @@ def _apply_efficientad_widgets(params: dict) -> None:
         st.session_state["ead_decay_f"] = float(params["lr_decay_factor"])
     if params.get("scheduler"):
         st.session_state["ead_sched"] = params["scheduler"]
-    if params.get("imagenet_penalty_weight") is not None:
-        st.session_state["ead_img_pw"] = float(params["imagenet_penalty_weight"])
+    if params.get("use_imagenet_penalty") is not None:
+        st.session_state["ead_use_img_penalty"] = bool(params["use_imagenet_penalty"])
     if params.get("penalty_batch_size") is not None:
         st.session_state["ead_pen_bs"] = int(params["penalty_batch_size"])
 
@@ -598,12 +589,6 @@ def compute_threshold_ratio(
         return normal_ratio, defect_ratio
     return None, None
 
-
-def compute_st_loss_weight(ae_loss_weight: float) -> float:
-    """R-03: st_loss_weight = round(1.0 - ae_loss_weight, 6)."""
-    return round(1.0 - ae_loss_weight, 6)
-
-
 def build_efficientad_params(
     model_size: str,
     train_steps: int,
@@ -618,11 +603,10 @@ def build_efficientad_params(
     lr_decay_epochs: int,
     lr_decay_factor: float,
     scheduler: str,
-    imagenet_penalty_weight: float,
+    use_imagenet_penalty: bool,
     penalty_batch_size: int,
 ) -> dict:
     """00_Global_Context 1.4절 EfficientAD model_params 오브젝트 생성."""
-    st_loss_weight = compute_st_loss_weight(ae_loss_weight)
     return {
         "model_size": model_size,
         "train_steps": int(train_steps),
@@ -632,13 +616,12 @@ def build_efficientad_params(
         "out_channels": int(out_channels),
         "padding": bool(padding),
         "ae_loss_weight": float(ae_loss_weight),
-        "st_loss_weight": st_loss_weight,
         "autoencoder_lr": float(autoencoder_lr),
         "autoencoder_weight_decay": float(autoencoder_weight_decay),
         "lr_decay_epochs": int(lr_decay_epochs),
         "lr_decay_factor": float(lr_decay_factor),
         "scheduler": scheduler,
-        "imagenet_penalty_weight": float(imagenet_penalty_weight),
+        "use_imagenet_penalty": bool(use_imagenet_penalty),
         "penalty_batch_size": int(penalty_batch_size),
     }
 

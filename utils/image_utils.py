@@ -28,15 +28,13 @@ def apply_homomorphic(
     sigma: float = 10.0,
     gamma_H: float = 1.5,
     gamma_L: float = 0.5,
-    cutoff: float = 30.0,
     normalize: bool = True,
 ) -> np.ndarray:
     """
-    Homomorphic Filter (Gaussian 기반 로그 도메인 필터링).
-    sigma: Gaussian blur sigma (저주파/고주파 분리 기준)
+    Homomorphic Filter — GaussianBlur 기반 공간 도메인 근사.
+    sigma: 저주파/고주파 분리 기준 (클수록 넓은 저주파 제거)
     gamma_H: 고주파(reflectance) 가중치
     gamma_L: 저주파(illumination) 가중치
-    cutoff: 주파수 커트오프 (현재 구현에서는 sigma로 통제)
     normalize: True 시 출력을 [0, 255]로 정규화
     """
     def _homo_channel(ch: np.ndarray) -> np.ndarray:
@@ -143,7 +141,6 @@ def apply_filter(
             sigma=p.get("sigma", 10.0),
             gamma_H=p.get("gamma_H", 1.5),
             gamma_L=p.get("gamma_L", 0.5),
-            cutoff=p.get("cutoff", 30.0),
             normalize=p.get("normalize", True),
         )
     else:

@@ -95,5 +95,5 @@ class TestApplyHomomorphic:
         assert result.dtype == np.uint8
 
     def test_cutoff_param_accepted(self, rgb_array):
-        result = apply_homomorphic(rgb_array, cutoff=20.0)
+        result = apply_homomorphic(rgb_array)
         assert result.shape == rgb_array.shape

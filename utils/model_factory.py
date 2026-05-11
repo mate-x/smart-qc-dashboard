@@ -79,17 +79,14 @@ def _create_efficientad_model(model_config: dict) -> "EfficientAd":
     model_size_key = params.get("model_size", "medium")
     model_size_enum = SIZE_MAP.get(model_size_key, SIZE_MAP.get("medium"))
 
-    # 버전에 따라 지원 여부가 다른 파라미터를 후보로 정의
+    # anomalib 2.4.1 생성자에 실제로 존재하는 파라미터만 전달
+    # autoencoder_lr/autoencoder_weight_decay/ae_loss_weight/use_imagenet_penalty 은 학습 루프에서 처리
     candidates = {
         "teacher_out_channels": params.get("out_channels", 384),
         "model_size":           model_size_enum,
         "lr":                   params.get("learning_rate", 1e-4),
         "weight_decay":         params.get("weight_decay", 1e-4),
         "padding":              params.get("padding", False),
-        "map_combination_alpha": params.get("ae_loss_weight", 0.5),
-        "autoencoder_lr":       params.get("autoencoder_lr", params.get("learning_rate", 1e-4)),
-        "autoencoder_weight_decay": params.get("autoencoder_weight_decay", 1e-5),
-        "penalized_normalized": (params.get("imagenet_penalty_weight", 1.0) > 0),
     }
 
     valid_params = set(inspect.signature(EfficientAd.__init__).parameters) - {"self"}
@@ -108,7 +105,7 @@ def _create_patchcore_model(model_config: dict) -> "Patchcore":
         )
     params = model_config["params"]
     pre_trained = (params.get("pretrained_source", "torchvision") == "torchvision")
-    num_neighbors = params.get("knn", params.get("neighbourhood_kernel_size", 3))
+    num_neighbors = params.get("knn", 9)
 
     model = Patchcore(
         backbone=params.get("backbone", "wide_resnet50_2"),
@@ -117,6 +114,15 @@ def _create_patchcore_model(model_config: dict) -> "Patchcore":
         coreset_sampling_ratio=params.get("coreset_sampling_ratio", 0.1),
         num_neighbors=num_neighbors,
     )
+
+    # neighbourhood_kernel_size → feature_pooler kernel 크기 override
+    # anomalib 2.4.1: PatchcoreModel.feature_pooler = AvgPool2d(3,1,1) 하드코딩
+    nks = params.get("neighbourhood_kernel_size", 3)
+    torch_model = getattr(model, "model", None)
+    if torch_model is not None and hasattr(torch_model, "feature_pooler"):
+        import torch.nn as _nn
+        padding = nks // 2
+        torch_model.feature_pooler = _nn.AvgPool2d(nks, 1, padding)
 
     if not pre_trained and params.get("pretrained_path"):
         state_dict = torch.load(params["pretrained_path"], map_location="cpu")
@@ -205,6 +211,7 @@ def _efficientad_training_step(
     model: "EfficientAd",
     images: torch.Tensor,
     penalty_images: torch.Tensor,
+    alpha: float = 0.5,
 ) -> dict:
     """
     3단계 순서로 loss 계산 시도. 반환: {"loss_total": Tensor} 포함 dict.
@@ -234,7 +241,7 @@ def _efficientad_training_step(
             result = _inner(batch=images, batch_imagenet=penalty_images)
             if isinstance(result, tuple) and len(result) == 3:
                 loss_st, loss_ae, loss_stae = result
-                total = loss_st + loss_ae + loss_stae
+                total = alpha * loss_ae + (1.0 - alpha) * loss_st + loss_stae
                 return {"loss_st": loss_st, "loss_ae": loss_ae, "loss_total": total}
         except Exception:
             pass
@@ -260,7 +267,6 @@ def _efficientad_training_step(
 
     loss_st = torch.mean((teacher_out - student_out) ** 2)
     loss_ae = torch.mean((images - ae_out) ** 2)
-    alpha = getattr(model, "map_combination_alpha", getattr(_inner, "map_combination_alpha", 0.5))
     loss_total = alpha * loss_ae + (1.0 - alpha) * loss_st
     return {"loss_st": loss_st, "loss_ae": loss_ae, "loss_total": loss_total}
 
@@ -314,6 +320,33 @@ def _get_anomaly_map(
         return cv2.resize(patch_map, (W, H), interpolation=cv2.INTER_LINEAR).astype(np.float32)
 
     raise NotImplementedError(f"알 수 없는 모델 구조: {type(model)}")
+
+
+def _get_pred_score(
+    model: object,
+    image: torch.Tensor,
+) -> float:
+    """단일 이미지 추론 → pred_score float 반환.
+
+    anomalib 2.4.x: InferenceBatch.pred_score 우선 (num_neighbors 반영).
+    pred_score가 없으면 anomaly_map.max() fallback.
+    """
+    torch_model = getattr(model, "model", None)
+    for m in ([torch_model, model] if torch_model is not None else [model]):
+        if m is None:
+            continue
+        try:
+            output = m(image)
+            score = None
+            if hasattr(output, "pred_score") and output.pred_score is not None:
+                score = output.pred_score
+            elif isinstance(output, dict) and "pred_score" in output:
+                score = output["pred_score"]
+            if score is not None:
+                return float(score.squeeze().cpu().item() if isinstance(score, torch.Tensor) else score)
+        except Exception:
+            continue
+    return float(_get_anomaly_map(model, image).max())
 
 
 # ── Public factory functions ───────────────────────────────────────────────────

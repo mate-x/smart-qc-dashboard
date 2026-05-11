@@ -88,7 +88,6 @@ preprocessing_method에 따라 포함되는 필드가 다르다.
 sigma        FLOAT    NOT NULL   0.1 ~ 50.0 / 기본값: 10.0
 gamma_H      FLOAT    NOT NULL   1.0 ~ 3.0  / 기본값: 1.5
 gamma_L      FLOAT    NOT NULL   0.1 ~ 1.0  / 기본값: 0.5
-cutoff       FLOAT    NOT NULL   1.0 ~ 100.0 / 기본값: 30.0
 normalize    BOOLEAN  NOT NULL   기본값: true
 
 [method == "clahe"]
@@ -118,14 +117,13 @@ learning_rate            FLOAT     NOT NULL   1e-6 ~ 1e-1 / 기본값: 0.0001
 weight_decay             FLOAT     NOT NULL   0.0 ~ 0.1 / 기본값: 0.0001
 out_channels             INTEGER   NOT NULL   128 | 256 | 384 | 512 / 기본값: 384
 padding                  BOOLEAN   NOT NULL   기본값: false
-ae_loss_weight           FLOAT     NOT NULL   0.0 ~ 1.0, st_loss_weight와 합산 1.0 / 기본값: 0.5
-st_loss_weight           FLOAT     NOT NULL   0.0 ~ 1.0, ae_loss_weight와 합산 1.0 / 기본값: 0.5
+ae_loss_weight           FLOAT     NOT NULL   0.0 ~ 1.0 (α, ST 비중은 학습 루프에서 1-α 자동 적용) / 기본값: 0.5
 autoencoder_lr           FLOAT     NOT NULL   1e-6 ~ 1e-1 / 기본값: 0.0001
 autoencoder_weight_decay FLOAT     NOT NULL   0.0 ~ 0.1 / 기본값: 0.00001
 lr_decay_epochs          INTEGER   NOT NULL   1000 ~ 200000 / 기본값: 50000
 lr_decay_factor          FLOAT     NOT NULL   0.01 ~ 1.0 / 기본값: 0.1
 scheduler                ENUM      NOT NULL   "StepLR" | "CosineAnnealingLR" / 기본값: "StepLR"
-imagenet_penalty_weight  FLOAT     NOT NULL   0.0 ~ 10.0 / 기본값: 1.0
+use_imagenet_penalty     BOOLEAN   NOT NULL   기본값: false
 penalty_batch_size       INTEGER   NOT NULL   1 ~ 64 / 기본값: 8
 
 [model_type == "patchcore"]
@@ -285,7 +283,6 @@ model:                      # model_config 1.7절 스키마 그대로
 |------|------|
 | R-01 | `selected_experiment_id`는 반드시 `experiments` 배열 내 존재하는 `experiment_id`를 참조한다. |
 | R-02 | `model_config.image_size`는 항상 `preprocessing_config.image_size`와 동일한 값으로 자동 동기화된다. |
-| R-03 | `ae_loss_weight + st_loss_weight == 1.0` 불변 조건. 어느 한쪽 변경 시 다른 쪽을 자동 보정한다. |
 | R-04 | `experiment.model_path`가 NOT NULL인 경우, 해당 경로에 `model_state_dict.pth`와 `configs.yaml`이 반드시 존재한다. |
 | R-05 | `status == "중단"`인 레코드의 `metrics`, `model_path`, `configs_path`는 반드시 NULL이다. |
 
@@ -431,7 +428,6 @@ MSG = {
 | `ERR_MODEL_SAVE_FAILED` | 모델 저장 실패 | 디스크 공간 부족 또는 권한 없음 |
 | `ERR_EXPERIMENT_NOT_FOUND` | 실험 ID 미존재 | 삭제된 실험에 접근 시 |
 | `ERR_INVALID_PARAM_RANGE` | 파라미터 범위 초과 | 1.4절 범위 벗어난 값 입력 |
-| `ERR_WEIGHT_SUM_INVALID` | ae+st weight 합 != 1.0 | 자동 보정 불가 상태 (edge case) |
 
 ---
 
@@ -577,9 +573,8 @@ smart-qc-dashboard/
   Step 3. 모델 라디오 선택 (EfficientAD / PatchCore)
   Step 4. image_size = preprocessing_config.image_size 자동 반영
   Step 5. 모델별 파라미터 UI 렌더링
-  Step 6. ae/st weight 합산 1.0 자동 보정
-  Step 7. session_state.model_config Write
-  Step 8. configs.yaml model 섹션 Save (선택적)
+  Step 6. session_state.model_config Write
+  Step 7. configs.yaml model 섹션 Save (선택적)
   ↓
 [탭4: 학습 시작 + 학습 로그]
   Step 1. dataset_path, preprocessing_config, model_config None 체크 → 차단

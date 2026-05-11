@@ -668,49 +668,69 @@ def _render_threshold_section(anomaly_map: np.ndarray) -> float:
 ```python
 # tabs/tab6_anomaly_map.py
 
-def _render_visualization(
-    selected_idx: int,
-    cache: dict,
+def _render_triplet(
+    path: str,
+    anomaly_map: np.ndarray,
+    dataset_path: str,
     threshold: float,
-    preprocessing_config: dict
+    exp_id: str,
+    score: float = 0.0,        # metrics["anomaly_scores"]에서 전달 (_get_pred_score로 계산됨)
 ) -> None:
     """
     선택된 이미지에 대해 원본 / GT 마스크 / Heatmap 3분할 시각화.
+    score는 학습 시 _get_pred_score()로 계산된 값을 호출 측에서 전달한다.
     """
-    image_path: str = cache["image_paths"][selected_idx]
-    anomaly_map: np.ndarray = cache["anomaly_maps"][selected_idx]  # (H, W)
-
-    # 원본 이미지 (전처리 미적용 원본)
-    original_pil = load_image(image_path)
+    original_pil = load_image(path)
 
     # GT 마스크 로드 (없으면 검정 마스크)
-    gt_mask = _load_gt_mask(image_path)   # PIL.Image | None
+    gt_mask = _load_gt_mask(path)   # PIL.Image | None
 
-    # Heatmap (이진 마스크 오버레이 포함)
+    # Heatmap (GT 윤곽선 오버레이 포함)
     heatmap_pil = anomaly_map_to_heatmap(anomaly_map)
-    binary_mask = (anomaly_map > threshold).astype(np.uint8) * 255
-    heatmap_with_mask = _overlay_binary_mask(heatmap_pil, binary_mask)
+    gt_mask_gray: np.ndarray | None = None
+    if gt_mask is not None:
+        gt_arr = np.array(gt_mask.convert("L"))
+        gt_mask_gray = (gt_arr > 127).astype(np.uint8)
+    if gt_mask_gray is not None and gt_mask_gray.any():
+        heatmap_display = _overlay_binary_mask(heatmap_pil, gt_mask_gray)
+    else:
+        heatmap_display = heatmap_pil
 
-    # 3분할 이미지 생성
-    triplet = create_triplet_image(
-        original=original_pil,
-        gt_mask=gt_mask,
-        heatmap=heatmap_with_mask
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.caption("원본 이미지")
+        st.image(original_pil, use_container_width=True)
+    with col2:
+        st.caption("GT 마스크")
+        if gt_mask is not None:
+            st.image(gt_mask, use_container_width=True)
+        else:
+            blank = Image.new("RGB", original_pil.size, (40, 40, 40))
+            st.image(blank, use_container_width=True)
+    with col3:
+        st.caption("Anomaly Heatmap (윤곽선 오버레이)")
+        st.image(heatmap_display, use_container_width=True)
+
+    # Anomaly Score / Threshold / 판정
+    verdict = "NG" if score >= threshold else "OK"
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Anomaly Score", f"{score:.4f}")
+    m2.metric("Threshold", f"{threshold:.4f}")
+    m3.metric("판정", verdict)
+
+    # FR-T6-05: PNG 다운로드
+    triplet = create_triplet_image(original_pil, gt_mask, heatmap_display)
+    buf = io.BytesIO()
+    triplet.save(buf, format="PNG")
+    buf.seek(0)
+    stem = Path(path).stem
+    st.download_button(
+        label="PNG 다운로드",
+        data=buf.getvalue(),
+        file_name=f"{exp_id}_{stem}_anomaly.png",
+        mime="image/png",
+        key=f"tab6_dl_{stem}",
     )
-
-    st.image(triplet, caption="원본 이미지 | GT 마스크 | Anomaly Heatmap", use_column_width=True)
-
-    # Anomaly Score 표시
-    score = float(anomaly_map.max())
-    col1, col2 = st.columns(2)
-    col1.metric("Anomaly Score", f"{score:.4f}")
-    col2.metric("Threshold", f"{threshold:.4f}")
-    is_defect = score > threshold
-    st.markdown(f"**판정**: {'🔴 결함' if is_defect else '🟢 정상'}")
-
-    # PNG 저장 버튼
-    if st.button("PNG 저장"):
-        _save_triplet_png(triplet, image_path)
 
 
 def _load_gt_mask(image_path: str) -> PIL.Image.Image | None:

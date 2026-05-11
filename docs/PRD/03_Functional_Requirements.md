@@ -233,7 +233,6 @@
 | **Homomorphic** | sigma | `st.slider("sigma", 0.1, 50.0, 10.0, 0.1)` | 0.1 ~ 50.0 | 10.0 |
 | | gamma_H | `st.slider("gamma_H", 1.0, 3.0, 1.5, 0.05)` | 1.0 ~ 3.0 | 1.5 |
 | | gamma_L | `st.slider("gamma_L", 0.1, 1.0, 0.5, 0.05)` | 0.1 ~ 1.0 | 0.5 |
-| | cutoff | `st.slider("cutoff", 1.0, 100.0, 30.0, 1.0)` | 1.0 ~ 100.0 | 30.0 |
 | | normalize | `st.checkbox("정규화 적용 (normalize)", value=True)` | bool | True |
 | **HE** | (없음) | `st.info("히스토그램 평탄화(HE)는 파라미터가 없습니다.")` | - | - |
 | **CLAHE** | clip_limit | `st.slider("클립 한계 (clipLimit)", 0.1, 40.0, 2.0, 0.1)` | 0.1 ~ 40.0 | 2.0 |
@@ -333,9 +332,9 @@
 | weight_decay | `st.number_input("가중치 감쇠 (weight_decay)", 0.0, 0.1, 1e-4, format="%.6f")` | 0.0~0.1 | 0.0001 |
 | out_channels | `st.selectbox("출력 채널 수 (out_channels)", [128, 256, 384, 512])` | enum | 384 |
 | padding | `st.checkbox("패딩 사용 (padding)", value=False)` | bool | False |
-| ae/st weight | `st.slider("AE Loss 비중 (ae_loss_weight)", 0.0, 1.0, 0.5, 0.01)` — st_loss_weight = 1.0 - ae | 0.0~1.0 | 0.5 / 0.5 |
+| ae_loss_weight (α) | `st.slider("AE Loss 비중 (ae_loss_weight)", 0.0, 1.0, 0.5, 0.01)` | 0.0~1.0 | 0.5 |
 
-ae_loss_weight 변경 시 st_loss_weight 자동 보정: `st_loss_weight = round(1.0 - ae_loss_weight, 6)`. 두 값을 나란히 `st.columns(2)`로 표시한다.
+ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * loss_st + loss_stae` 공식으로 사용된다. UI에서는 ae_loss_weight 슬라이더만 표시한다.
 
 ---
 
@@ -353,7 +352,7 @@ ae_loss_weight 변경 시 st_loss_weight 자동 보정: `st_loss_weight = round(
 | lr_decay_epochs | `st.number_input(...)` | 1000~200000 | 50000 |
 | lr_decay_factor | `st.slider(...)` | 0.01~1.0 | 0.1 |
 | scheduler | `st.selectbox(...)` | ["StepLR", "CosineAnnealingLR"] | "StepLR" |
-| imagenet_penalty_weight | `st.slider(...)` | 0.0~10.0 | 1.0 |
+| use_imagenet_penalty | `st.checkbox("ImageNet Penalty 사용 (use_imagenet_penalty)", value=False)` | bool | False |
 | penalty_batch_size | `st.number_input(...)` | 1~64 | 8 |
 
 ---
@@ -836,7 +835,7 @@ FR별 로그 이벤트 매핑:
 #### 탭3
 
 - [ ] FR-T3-01: PatchCore 선택 시 EfficientAD 파라미터 DOM 미존재
-- [ ] FR-T3-03: ae_loss_weight 변경 시 st_loss_weight 자동 보정
+- [ ] FR-T3-03: ae_loss_weight 슬라이더 0.0~1.0 범위 정상 동작
 - [ ] FR-T3-07: torch.cuda.is_available() 결과 사이드바에 반영
 - [ ] FR-T3-08: [모델 설정 저장] 후 session_state.model_config 갱신
 
@@ -865,15 +864,14 @@ FR별 로그 이벤트 매핑:
 
 ### H.2 Given-When-Then 시나리오
 
-#### TC-FR-T3-03: ae/st weight 자동 보정
+#### TC-FR-T3-03: ae_loss_weight 저장 검증
 
 ```
 Given:  탭3에서 EfficientAD 선택됨
-        ae_loss_weight=0.5, st_loss_weight=0.5 초기 상태
-When:   ae_loss_weight 슬라이더를 0.73으로 변경한다
-Then:   st_loss_weight = round(1.0 - 0.73, 6) = 0.27 로 자동 갱신
-        abs(ae_loss_weight + st_loss_weight - 1.0) < 1e-6
-        st.session_state.model_config 는 아직 갱신 안됨 (버튼 클릭 전)
+        ae_loss_weight=0.5 초기 상태
+When:   ae_loss_weight 슬라이더를 0.73으로 변경 후 [모델 설정 저장] 클릭
+Then:   st.session_state.model_config["params"]["ae_loss_weight"] == 0.73
+        학습 루프에서 ST 비중은 (1 - 0.73) = 0.27 이 자동 적용됨
 ```
 
 #### TC-FR-T4-05: 학습 완료 후 파일 검증

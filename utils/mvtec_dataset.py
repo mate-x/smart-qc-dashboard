@@ -105,13 +105,14 @@ def build_dataloaders(
     g = torch.Generator()
     g.manual_seed(random_seed)
 
-    num_workers = 0  # Windows 환경 호환성
+    use_cuda = torch.cuda.is_available()
+    num_workers = 0  # Windows 백그라운드 스레드에서 spawn 데드락 방지
     train_loader = DataLoader(
         train_ds,
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
-        pin_memory=False,
+        pin_memory=use_cuda,
         drop_last=True,
         generator=g,
     )
@@ -120,6 +121,6 @@ def build_dataloaders(
         batch_size=1,
         shuffle=False,
         num_workers=num_workers,
-        pin_memory=False,
+        pin_memory=use_cuda,
     )
     return train_loader, test_loader

@@ -1201,7 +1201,13 @@ def compute_metrics(
 ) -> dict:
     """
     반환: 00_Global_Context 1.2절 metrics 스키마
+    NaN score는 (레이블 포함) 제거 후 계산. 전체 NaN이면 ValueError.
     """
+    pairs = [(lbl, s) for lbl, s in zip(y_true, anomaly_scores) if not np.isnan(s)]
+    if not pairs:
+        raise ValueError("All anomaly scores are NaN — cannot compute metrics.")
+    y_true, anomaly_scores = zip(*pairs)
+
     y_pred = [1 if s >= threshold else 0 for s in anomaly_scores]
 
     # zero_division=0: 예측이 전부 한쪽인 경우 0 반환 (예외 발생 금지)
@@ -1240,8 +1246,13 @@ def compute_roc_curve(
 ) -> tuple[np.ndarray, np.ndarray, float]:
     """
     반환: (fpr, tpr, auc)
-    정상/결함 레이블이 1종류만 있으면 ([0,1], [0,1], 0.0) 반환
+    NaN score는 (레이블 포함) 제거 후 계산.
+    정상/결함 레이블이 1종류만 있으면 ([0,1], [0,1], 0.0) 반환.
     """
+    pairs = [(lbl, s) for lbl, s in zip(y_true, anomaly_scores) if not np.isnan(s)]
+    if not pairs:
+        raise ValueError("All anomaly scores are NaN — cannot compute ROC curve.")
+    y_true, anomaly_scores = zip(*pairs)
     try:
         fpr, tpr, _ = roc_curve(y_true, anomaly_scores)
         auc = round(roc_auc_score(y_true, anomaly_scores), 6)

@@ -313,6 +313,9 @@ class TrainingWorker(threading.Thread):
             else:
                 penalty = torch.zeros_like(images)
 
+            optimizer_st.zero_grad()
+            optimizer_ae.zero_grad()
+
             with torch.cuda.amp.autocast(enabled=use_amp):
                 alpha = float(params.get("ae_loss_weight", 0.5))
                 loss_dict = _efficientad_training_step(model, images, penalty, alpha=alpha)
@@ -320,13 +323,23 @@ class TrainingWorker(threading.Thread):
 
             last_loss = total_loss.item()
 
+            if not np.isfinite(last_loss):
+                self._write_log(f"[경고] Step {step}: loss={last_loss} — 학습 발산. 학습률을 낮춰 주세요.")
+                raise ValueError(f"Loss가 {last_loss}이 되어 학습을 중단합니다. learning_rate를 낮춰 주세요.")
+
             if scaler is not None:
                 scaler.scale(total_loss).backward()
+                scaler.unscale_(optimizer_st)
+                scaler.unscale_(optimizer_ae)
+                torch.nn.utils.clip_grad_norm_(student.parameters(), max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(autoencoder.parameters(), max_norm=1.0)
                 scaler.step(optimizer_st)
                 scaler.step(optimizer_ae)
                 scaler.update()
             else:
                 total_loss.backward()
+                torch.nn.utils.clip_grad_norm_(student.parameters(), max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(autoencoder.parameters(), max_norm=1.0)
                 optimizer_st.step()
                 optimizer_ae.step()
 

@@ -59,8 +59,8 @@ def render() -> None:
     )
 
     if status == "running":
-        _render_running_ui()
         finished = _drain_queue()
+        _render_running_ui()
         if not finished:
             time.sleep(0.3)
             st.rerun()
@@ -326,6 +326,8 @@ def _handle_log(msg: dict) -> None:
     lines.append(line)
     if len(lines) > 100:
         st.session_state["_log_lines"] = lines[-100:]
+    else:
+        st.session_state["_log_lines"] = lines
 
 
 def _handle_completed(msg: dict) -> None:

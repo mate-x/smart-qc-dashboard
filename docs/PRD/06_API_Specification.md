@@ -324,9 +324,9 @@ def render() -> None:
     if status == "idle":
         _render_idle_ui()
     elif status == "running":
-        _render_running_ui()
-        _drain_queue()           # Queue 드레인 후 UI 갱신
-        _schedule_rerun()        # 1초 후 재실행 예약
+        _drain_queue()           # 먼저 Queue 드레인하여 session_state 최신화
+        _render_running_ui()     # 최신화된 session_state로 UI 렌더링
+        _schedule_rerun()        # 0.3초 후 재실행 예약
     # "stopped" / "completed" 상태는 drain 중 _handle_terminal() 호출로 처리됨
     # → 처리 완료 후 status = "idle" 로 전환되므로 여기서 별도 분기 불필요
 
@@ -368,8 +368,8 @@ def _drain_queue() -> None:
 
 
 def _schedule_rerun() -> None:
-    """1초 대기 후 st.rerun() 호출."""
-    time.sleep(1.0)   # R-THREAD-05: 1.0초 고정
+    """0.3초 대기 후 st.rerun() 호출."""
+    time.sleep(0.3)   # R-THREAD-05: 0.3초 고정
     st.rerun()
 ```
 
@@ -397,6 +397,7 @@ def _handle_log(msg: LogMessage) -> None:
     """
     session_state._log_lines 에 타임스탬프 포함 줄 append.
     최대 100줄 유지 (초과분 앞에서 제거).
+    항상 key를 재할당하여 Streamlit 변경 감지를 보장한다.
     """
     timestamp = datetime.now(tz=KST).strftime("%H:%M:%S")
     line = f"[{timestamp}] {msg['message']}"
@@ -404,6 +405,8 @@ def _handle_log(msg: LogMessage) -> None:
     lines.append(line)
     if len(lines) > 100:
         st.session_state["_log_lines"] = lines[-100:]
+    else:
+        st.session_state["_log_lines"] = lines
 
 
 def _handle_completed(msg: CompletedMessage) -> None:
@@ -514,7 +517,7 @@ def _reset_run_state() -> None:
 def _render_running_ui() -> None:
     """
     학습 중 Progress Bar, Loss 곡선, 로그 텍스트 렌더링.
-    _drain_queue() 호출 전에 실행되어 현재 session_state 값을 표시.
+    _drain_queue() 호출 후 실행되어 최신화된 session_state 값을 표시.
     """
     progress = st.session_state.get("_progress", {})
     step = progress.get("step", 0)

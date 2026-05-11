@@ -562,7 +562,7 @@ app.py
     elif msg["type"] == "stopped":       "type":"completed",
       handle_stopped()                   "y_true": [...],
       break                             "scores": [...],
-  time.sleep(1.0)                        "model": model_object
+  time.sleep(0.3)                        "model": model_object
   st.rerun()                           })
 
 [학습 중지 버튼 클릭]

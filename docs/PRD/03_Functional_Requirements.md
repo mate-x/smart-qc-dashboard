@@ -469,7 +469,7 @@ ae_loss_weight 변경 시 st_loss_weight 자동 보정: `st_loss_weight = round(
 | 항목 | 내용 |
 |------|------|
 | **설명** | 학습 중 Progress Bar, Loss 곡선, 로그 텍스트를 주기적으로 갱신한다 |
-| **갱신 메커니즘** | `st.empty()` 컨테이너 + `time.sleep(1.0)` + `st.rerun()` 루프 |
+| **갱신 메커니즘** | `st.empty()` 컨테이너 + `time.sleep(0.3)` + `st.rerun()` 루프 |
 | **Progress Bar** | `st.progress(current_step / total_steps, text=f"진행: {current_step}/{total_steps} ({pct:.1f}%)")` |
 | **EfficientAD Loss 갱신 주기** | 매 500 step마다 queue에 `{"step": int, "loss": float}` 전송 (가정 A-08) |
 | **PatchCore Loss 갱신 주기** | 에포크 단위 (PatchCore는 단일 에포크 학습) |

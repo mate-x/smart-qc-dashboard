@@ -1,8 +1,19 @@
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import pytest
 from PIL import Image
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _allow_tmp_dataset_paths(tmp_path_factory):
+    """테스트에서 tmp_path가 경로 검증을 통과하도록 DATASET_BASE_DIR 설정."""
+    base = tmp_path_factory.getbasetemp().parent
+    os.environ["DATASET_BASE_DIR"] = str(base)
+    yield
+    os.environ.pop("DATASET_BASE_DIR", None)
 
 
 @pytest.fixture

@@ -24,7 +24,7 @@
 
 ## 1. Core Data Model
 
-> **설계 원칙**: 이 시스템은 전통적인 RDBMS를 사용하지 않는다. 모든 영속 데이터는 파일시스템(JSON, YAML, `.pth`)에 저장된다. 아래 스키마는 Python dataclass 및 파일 직렬화 구조를 SQL 형식으로 표현한 논리 모델이다. 실제 구현 시 아래 필드명, 타입, 제약조건을 그대로 사용한다.
+> **설계 원칙**: 이 시스템은 MySQL 8.0과 파일시스템을 병행한다. 모델 가중치(`.pth`), 학습 로그(`.log`), 공유 설정(`configs.yaml`)은 파일시스템에 저장하고, MySQL은 인프라 레이어에 포함되어 향후 구조화 데이터 저장에 활용된다. 아래 스키마는 Python dataclass 및 파일 직렬화 구조를 SQL 형식으로 표현한 논리 모델이다. 실제 구현 시 아래 필드명, 타입, 제약조건을 그대로 사용한다.
 
 ---
 
@@ -246,7 +246,7 @@ model:                      # model_config 1.7절 스키마 그대로
 
 ## 2. Entity Relationship
 
-> 이 시스템은 RDBMS가 없으므로 파일 간 참조 관계를 ERD로 표현한다.
+> 이 시스템은 MySQL 8.0을 인프라 레이어에 포함하며, 현재 앱 데이터는 파일시스템에 저장된다. 아래는 파일 간 참조 관계를 ERD로 표현한 것이다.
 
 ```
 [session_state] ─── (1:1) ─── [dataset_meta]
@@ -505,7 +505,9 @@ smart-qc-dashboard/
 ├── app.py                          # Streamlit 진입점
 ├── requirements.txt
 ├── Dockerfile
+├── docker-compose.base.yml
 ├── docker-compose.yml
+├── docker-compose.cpu.yml
 ├── .env
 ├── configs.yaml                    # 공유 설정 파일 (탭2/3 Write)
 │

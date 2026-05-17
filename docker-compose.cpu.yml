@@ -1,13 +1,4 @@
 version: "3.8"
 
-services:
-  smart-qc:
-    build: .
-    ports:
-      - "8501:8501"
-    volumes:
-      - ./dataset:/app/dataset
-      - ./experiments:/app/experiments
-      - ./models:/app/models
-      - ./logs:/app/logs
-      - ./results:/app/results
+# CPU 전용 오버라이드 (GPU 설정 없음, base 그대로 사용)
+# 실행: docker compose -f docker-compose.base.yml -f docker-compose.cpu.yml up -d

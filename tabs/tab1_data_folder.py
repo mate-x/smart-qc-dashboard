@@ -56,7 +56,7 @@ def _render_path_input() -> None:
     path_value = st.text_input(
         label="데이터셋 경로 (Dataset Path)",
         key="input_dataset_path",
-        placeholder="예: C:/datasets/mvtec/screw",
+        placeholder="예: /app/dataset/screw",
         help="MVTec AD 형식의 데이터셋 루트 경로를 입력하세요.",
     )
     if st.button("경로 확인", type="primary", key="_tab1_validate_btn"):

@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 ALLOWED_BASE_DIR = Path("/app/dataset")
@@ -17,7 +18,8 @@ def validate_dataset_path(user_input: str) -> Path:
     except (OSError, ValueError) as e:
         raise ValueError(f"유효하지 않은 경로입니다: {e}")
 
-    if not str(p).startswith(str(ALLOWED_BASE_DIR)):
+    allowed_base = Path(os.environ.get("DATASET_BASE_DIR", str(ALLOWED_BASE_DIR)))
+    if not str(p).startswith(str(allowed_base)):
         raise ValueError(f"/app/dataset 하위 경로만 허용됩니다: {p}")
 
     if not p.exists():

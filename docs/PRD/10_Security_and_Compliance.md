@@ -48,7 +48,7 @@
 
 | 위협 | 이유 |
 |------|------|
-| SQL Injection | RDBMS 없음 |
+| SQL Injection | 현재 앱 코드에서 DB 직접 쿼리 없음 — DB 연결 코드 추가 시 parameterized query 필수 |
 | XSS / CSRF | 단일 사용자 로컬, 외부 입력 없음 |
 | 인증 우회 | 인증 없음 (로컬 단일 사용자) |
 | 공급망 공격 (Supply Chain) | requirements.txt 고정 버전으로 완화 |
@@ -68,7 +68,7 @@
 # tab1 경로 검증 — utils/path_validator.py
 from pathlib import Path
 
-ALLOWED_BASE_DIRS: list[Path] = []  # 빈 리스트 = 제한 없음 (로컬 환경)
+ALLOWED_BASE_DIR = Path("/app/dataset")  # `/app/dataset` 하위만 허용
 
 def validate_dataset_path(user_input: str) -> Path:
     """
@@ -85,6 +85,9 @@ def validate_dataset_path(user_input: str) -> Path:
         p = Path(user_input.strip()).resolve()
     except (OSError, ValueError) as e:
         raise ValueError(f"유효하지 않은 경로입니다: {e}")
+
+    if not str(p).startswith(str(ALLOWED_BASE_DIR)):
+        raise ValueError(f"/app/dataset 하위 경로만 허용됩니다: {p}")
 
     if not p.exists():
         raise ValueError(f"경로가 존재하지 않습니다: {p}")

@@ -416,13 +416,25 @@ FROM nvcr.io/nvidia/cuda:12.4.1-runtime-ubuntu22.04
 
 WORKDIR /app
 
-# Python 3.12 설치
-RUN apt-get update && apt-get install -y python3.12 python3.12-venv python3-pip \
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Asia/Seoul
+
+# Python 3.12 및 시스템 의존성 설치
+RUN apt-get update && apt-get install -y software-properties-common \
+    && add-apt-repository ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y \
+       python3.12 python3.12-venv python3.12-dev curl \
+       libcudnn9-cuda-12 libgl1 \
+    && curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12 \
     && rm -rf /var/lib/apt/lists/*
 
-# 의존성 설치
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+
+# 가상환경 생성 및 의존성 설치
+RUN python3.12 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+RUN pip install --no-cache-dir opencv-python-headless && \
+    pip install --no-cache-dir -r requirements.txt
 
 # 소스 복사
 COPY . .
@@ -440,14 +452,40 @@ ENTRYPOINT ["streamlit", "run", "app.py", \
             "--server.address", "0.0.0.0"]
 ```
 
-### H.2 docker-compose.yml (GPU 사용 시)
+### H.2 docker-compose 구성 (base + override 구조)
+
+공통 설정은 `docker-compose.base.yml`, 환경별 차이만 오버라이드 파일로 분리.
+
+**docker-compose.base.yml** (공통):
 
 ```yaml
-version: "3.8"
-
 services:
+  db:
+    image: mysql:8.0
+    container_name: smart-qc-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-1234}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-smart-qc}
+    ports:
+      - "3307:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-1234}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   smart-qc:
     build: .
+    container_name: smart-qc-app
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    depends_on:
+      db:
+        condition: service_healthy
     ports:
       - "8501:8501"
     volumes:
@@ -457,6 +495,18 @@ services:
       - ./models:/app/models
       - ./logs:/app/logs
       - ./results:/app/results
+    environment:
+      DATABASE_URL: mysql+pymysql://root:${MYSQL_ROOT_PASSWORD:-1234}@db:3306/${MYSQL_DATABASE:-smart-qc}
+
+volumes:
+  db_data:
+```
+
+**docker-compose.yml** (GPU 오버라이드):
+
+```yaml
+services:
+  smart-qc:
     deploy:
       resources:
         reservations:
@@ -465,20 +515,18 @@ services:
               count: 1
               capabilities: [gpu]
     environment:
-      - NVIDIA_VISIBLE_DEVICES=0
+      NVIDIA_VISIBLE_DEVICES: 0
 ```
 
 ### H.3 Docker 실행
 
 ```bash
-# 빌드
-docker compose build
+# GPU 빌드 및 실행
+docker compose -f docker-compose.base.yml -f docker-compose.yml build
+docker compose -f docker-compose.base.yml -f docker-compose.yml up -d
 
-# 실행
-docker compose up
-
-# GPU 없는 환경 (deploy 섹션 제거 후)
-docker compose -f docker-compose.cpu.yml up
+# CPU 전용
+docker compose -f docker-compose.base.yml -f docker-compose.cpu.yml up -d
 ```
 
 ### H.4 Docker 사용 시 제약
@@ -489,6 +537,8 @@ docker compose -f docker-compose.cpu.yml up
 | ImageNet penalty | 호스트 `./dataset/imagenet_penalty/` → 컨테이너 마운트 |
 | 브라우저 접속 | `http://localhost:8501` (호스트에서) |
 | Windows Docker Desktop | WSL2 백엔드 + NVIDIA Container Toolkit 필요 |
+| DB 접속 (호스트) | `localhost:3307` (컨테이너 간 통신은 `db:3306`) |
+| DB 시작 순서 | `smart-qc` 컨테이너는 DB healthcheck 통과 후 기동 (`depends_on: service_healthy`) |
 
 ---
 

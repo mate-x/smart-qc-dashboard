@@ -1,16 +1,10 @@
 version: "3.8"
 
+# GPU 전용 오버라이드
+# 실행: docker compose -f docker-compose.base.yml -f docker-compose.yml up -d
+
 services:
   smart-qc:
-    build: .
-    ports:
-      - "8501:8501"
-    volumes:
-      - ./dataset:/app/dataset
-      - ./experiments:/app/experiments
-      - ./models:/app/models
-      - ./logs:/app/logs
-      - ./results:/app/results
     deploy:
       resources:
         reservations:
@@ -19,4 +13,4 @@ services:
               count: 1
               capabilities: [gpu]
     environment:
-      - NVIDIA_VISIBLE_DEVICES=0
+      NVIDIA_VISIBLE_DEVICES: 0

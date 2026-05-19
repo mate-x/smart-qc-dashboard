@@ -73,6 +73,8 @@
 ```
 □ 대상 데이터셋이 MVTec AD 형식인지 확인
 □ EfficientAD 사용 시: ./dataset/imagenet_penalty/ 내 이미지 존재 확인
+□ .env 파일 존재 확인 (MYSQL_ROOT_PASSWORD, MYSQL_DATABASE 설정)
+□ DB 컨테이너(smart-qc-db) 기동 및 healthcheck 통과 확인
 ```
 
 ### B.4 최종 기능 검증 (수동)
@@ -209,14 +211,14 @@ streamlit run app.py --server.headless true --server.address 0.0.0.0
 
 ```bash
 # 빌드 및 실행 (09절 §H 참조)
-docker compose build
-docker compose up -d
+docker compose -f docker-compose.base.yml -f docker-compose.yml build
+docker compose -f docker-compose.base.yml -f docker-compose.yml up -d
 
 # 로그 확인
-docker compose logs -f smart-qc
+docker compose -f docker-compose.base.yml -f docker-compose.yml logs -f smart-qc
 
 # 중단
-docker compose down
+docker compose -f docker-compose.base.yml -f docker-compose.yml down
 ```
 
 ### D.5 보안그룹 설정
@@ -381,9 +383,9 @@ print(f"복구 가능한 실험: {len(records)}개")
 
 ```bash
 # Docker 기반인 경우 — 이전 이미지로 전환
-docker compose down
+docker compose -f docker-compose.base.yml -f docker-compose.yml down
 docker tag smart-qc-dashboard:v1.0 smart-qc-dashboard:current
-docker compose up -d
+docker compose -f docker-compose.base.yml -f docker-compose.yml up -d
 
 # EBS 스냅샷 복구 (심각한 경우)
 # AWS 콘솔에서 스냅샷 → 새 볼륨 생성 → 인스턴스에 연결

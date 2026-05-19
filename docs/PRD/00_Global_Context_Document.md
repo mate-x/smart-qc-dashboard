@@ -273,8 +273,8 @@ model:                      # model_config 1.7절 스키마 그대로
 [history.json] ─── (1:N) ─── [experiment 레코드]
 
 [configs.yaml] ─── (1:1) ─── [preprocessing 섹션]  (탭2 Write)
-               ─── (1:1) ─── [model 섹션]           (탭3 Write)
-               ─── (1:1) ─── [experiment 섹션]      (탭4 Write)
+               ─── (1:1) ─── [model 섹션]           (탭2 Write)
+               ─── (1:1) ─── [experiment 섹션]      (탭3 Write)
 ```
 
 ### 참조 무결성 규칙
@@ -306,20 +306,18 @@ SESSION_STATE_SCHEMA = {
 
     # 탭2 Write
     "preprocessing_config": None,   # dict | None (1.6절 스키마)
-
-    # 탭3 Write
     "model_config": None,           # dict | None (1.7절 스키마)
     "device_info": None,            # dict | None (1.8절 스키마)
 
-    # 탭4 Write
+    # 탭3 Write
     "experiments": {},              # dict[str, dict] — key: experiment_id
     "current_run_status": "idle",   # "idle" | "running" | "stopped" | "completed"
     "current_exp_id": None,         # str | None — 현재 실행 중인 실험 ID
 
-    # 탭5 Write
+    # 탭4 Write
     "selected_experiment_id": None, # str | None
 
-    # 탭6 Write
+    # 탭5 Write
     "anomaly_map_threshold": None,  # float | None — 초기값: model_config.threshold_value
 }
 
@@ -335,15 +333,15 @@ def init_session_state():
 
 | 키 | Write 탭 | Read 탭 | 타입 | NULL 처리 |
 |----|----------|---------|------|-----------|
-| `dataset_path` | 탭1 | 탭2, 탭4 | `str \| None` | None이면 해당 탭 진입 차단 + 안내 메시지 |
+| `dataset_path` | 탭1 | 탭2, 탭3 | `str \| None` | None이면 해당 탭 진입 차단 + 안내 메시지 |
 | `dataset_meta` | 탭1 | 탭2 | `dict \| None` | None이면 탭2 전처리 미리보기 비활성화 |
-| `preprocessing_config` | 탭2 | 탭3(image_size), 탭4 | `dict \| None` | None이면 탭3/탭4 진입 차단 + 안내 메시지 |
-| `model_config` | 탭3 | 탭4 | `dict \| None` | None이면 탭4 진입 차단 + 안내 메시지 |
-| `device_info` | 탭3 | 탭4 | `dict \| None` | None이면 CPU fallback |
-| `experiments` | 탭4 | 탭5, 탭6 | `dict` | 빈 dict이면 탭5/탭6 안내 메시지 |
-| `current_run_status` | 탭4 | 탭4 UI | `str` | 항상 유효한 ENUM 값 |
-| `selected_experiment_id` | 탭5 | 탭6 | `str \| None` | None이면 탭6 안내 메시지 |
-| `anomaly_map_threshold` | 탭6 | 탭6 내부 | `float \| None` | None이면 model_config.threshold_value 사용 |
+| `preprocessing_config` | 탭2 | 탭3 | `dict \| None` | None이면 탭3 진입 차단 + 안내 메시지 |
+| `model_config` | 탭2 | 탭3 | `dict \| None` | None이면 탭3 진입 차단 + 안내 메시지 |
+| `device_info` | 탭2 | 탭3 | `dict \| None` | None이면 CPU fallback |
+| `experiments` | 탭3 | 탭4, 탭5 | `dict` | 빈 dict이면 탭4/탭5 안내 메시지 |
+| `current_run_status` | 탭3 | 탭3 UI | `str` | 항상 유효한 ENUM 값 |
+| `selected_experiment_id` | 탭4 | 탭5 | `str \| None` | None이면 탭5 안내 메시지 |
+| `anomaly_map_threshold` | 탭5 | 탭5 내부 | `float \| None` | None이면 model_config.threshold_value 사용 |
 
 ---
 
@@ -402,9 +400,9 @@ def save_config_section(section: str, data: dict, path: str = "./configs.yaml") 
 MSG = {
     "NO_DATASET":       "먼저 탭1에서 데이터 폴더를 설정해 주세요.",
     "NO_PREPROCESSING": "먼저 탭2에서 전처리 설정을 완료해 주세요.",
-    "NO_MODEL_CONFIG":  "먼저 탭3에서 모델 파라미터를 설정해 주세요.",
-    "NO_EXPERIMENTS":   "아직 실행된 실험이 없습니다. 탭4에서 학습을 먼저 실행해 주세요.",
-    "NO_SELECTED_EXP":  "탭5에서 분석할 실험을 먼저 선택해 주세요.",
+    "NO_MODEL_CONFIG":  "먼저 탭2에서 모델 파라미터를 설정해 주세요.",
+    "NO_EXPERIMENTS":   "아직 실행된 실험이 없습니다. 탭3에서 학습을 먼저 실행해 주세요.",
+    "NO_SELECTED_EXP":  "탭4에서 분석할 실험을 먼저 선택해 주세요.",
     "GRAYSCALE_DETECT": "Grayscale 이미지가 감지되었습니다. 모델 입력을 위해 RGB 3채널로 자동 변환됩니다.",
     "INVALID_FOLDER":   "MVTec AD 형식의 폴더 구조가 아닙니다. (필수: train/good/, test/, ground_truth/)",
     "TRAIN_STOPPED":    "학습이 중단되었습니다. 해당 실험은 '중단' 상태로 히스토리에 기록되었습니다.",
@@ -420,8 +418,8 @@ MSG = {
 | `ERR_DATASET_NOT_FOUND` | 지정 경로가 존재하지 않음 | 탭1 경로 검증 실패 |
 | `ERR_INVALID_FOLDER_STRUCTURE` | MVTec AD 구조 미충족 | `train/good/` 또는 `test/` 미존재 |
 | `ERR_NO_VALID_IMAGES` | 지원 포맷 이미지 없음 | `.jpg/.png/.bmp` 외 파일만 존재 |
-| `ERR_PREPROCESSING_CONFIG_MISSING` | 전처리 설정 없음 | 탭2 미완료 상태에서 탭3/탭4 접근 |
-| `ERR_MODEL_CONFIG_MISSING` | 모델 설정 없음 | 탭3 미완료 상태에서 탭4 접근 |
+| `ERR_PREPROCESSING_CONFIG_MISSING` | 전처리 설정 없음 | 탭2 미완료 상태에서 탭3 접근 |
+| `ERR_MODEL_CONFIG_MISSING` | 모델 설정 없음 | 탭2 미완료 상태에서 탭3 접근 |
 | `ERR_MODEL_INIT_FAILED` | 모델 초기화 실패 | CUDA OOM 또는 Anomalib 오류 |
 | `ERR_TRAINING_INTERRUPTED` | 학습 강제 중단 | 사용자 [학습 중지] 클릭 |
 | `ERR_CONFIG_LOAD_FAILED` | YAML 파싱 실패 | 잘못된 configs.yaml 형식 |
@@ -463,14 +461,14 @@ MSG = {
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                   브라우저 (localhost:8501)                   │
-│              Streamlit Web UI (6-Tab Layout)                 │
+│              Streamlit Web UI (5-Tab Layout)                 │
 └─────────────────────────────┬───────────────────────────────┘
                               │ HTTP (Streamlit WebSocket)
 ┌─────────────────────────────▼───────────────────────────────┐
 │                  app.py (Streamlit 진입점)                    │
 │  ┌────────────┐  ┌──────────────────────────────────────┐   │
-│  │  sidebar   │  │           st.tabs([탭1~탭6])          │   │
-│  │ component  │  │  tabs/tab1.py ~ tabs/tab6.py         │   │
+│  │  sidebar   │  │           st.tabs([탭1~탭5])          │   │
+│  │ component  │  │  tabs/tab1.py ~ tabs/tab5.py         │   │
 │  └────────────┘  └──────────────────────────────────────┘   │
 │                                                              │
 │  ┌──────────────────────────────────────────────────────┐   │
@@ -509,15 +507,14 @@ smart-qc-dashboard/
 ├── docker-compose.yml
 ├── docker-compose.cpu.yml
 ├── .env
-├── configs.yaml                    # 공유 설정 파일 (탭2/3 Write)
+├── configs.yaml                    # 공유 설정 파일 (탭2 Write)
 │
 ├── tabs/
 │   ├── tab1_data_folder.py
-│   ├── tab2_preprocessing.py
-│   ├── tab3_model_params.py
-│   ├── tab4_training.py
-│   ├── tab5_history.py
-│   └── tab6_anomaly_map.py
+│   ├── (통합 파일, 파일명 미확정)          # 구 tab2_preprocessing.py + tab3_model_params.py 통합
+│   ├── (파일명 미확정)                     # 구 tab4_training.py → 탭3
+│   ├── (파일명 미확정)                     # 구 tab5_history.py → 탭4
+│   └── (파일명 미확정)                     # 구 tab6_anomaly_map.py → 탭5
 │
 ├── utils/
 │   ├── session_state_init.py       # SESSION_STATE_SCHEMA 정의 (3.1절)
@@ -559,7 +556,7 @@ smart-qc-dashboard/
   Step 6. 대표 썸네일 추출 (각 클래스 첫 번째 이미지)
   Step 7. session_state.dataset_path, dataset_meta Write
   ↓
-[탭2: 전처리 파라미터 설정]
+[탭2: 전처리 및 모델 설정]
   Step 1. dataset_path None 체크 → 차단 또는 통과
   Step 2. 전처리 라디오 선택
   Step 3. 선택된 전처리 파라미터 UI 렌더링 (비선택 숨김)
@@ -568,17 +565,14 @@ smart-qc-dashboard/
   Step 6. 정규화 설정
   Step 7. session_state.preprocessing_config Write
   Step 8. configs.yaml preprocessing 섹션 Save (선택적)
+  Step 9. torch.cuda.is_available() → device_info Write
+  Step 10. 모델 라디오 선택 (EfficientAD / PatchCore)
+  Step 11. image_size = preprocessing_config.image_size 자동 반영
+  Step 12. 모델별 파라미터 UI 렌더링
+  Step 13. session_state.model_config Write
+  Step 14. configs.yaml model 섹션 Save (선택적)
   ↓
-[탭3: 모델 파라미터 설정]
-  Step 1. preprocessing_config None 체크 → 차단 또는 통과
-  Step 2. torch.cuda.is_available() → device_info Write
-  Step 3. 모델 라디오 선택 (EfficientAD / PatchCore)
-  Step 4. image_size = preprocessing_config.image_size 자동 반영
-  Step 5. 모델별 파라미터 UI 렌더링
-  Step 6. session_state.model_config Write
-  Step 7. configs.yaml model 섹션 Save (선택적)
-  ↓
-[탭4: 학습 시작 + 학습 로그]
+[탭3: 학습 시작 + 학습 로그]
   Step 1. dataset_path, preprocessing_config, model_config None 체크 → 차단
   Step 2. 실험명 입력 (자동 생성 또는 사용자 입력)
   Step 3. [학습 시작] 클릭 → current_run_status = "running"
@@ -589,7 +583,7 @@ smart-qc-dashboard/
   Step 7b. 중단: experiments[exp_id] Write (status="중단") → history.json Append
   Step 8. 완료/중단 알림 표시
   ↓
-[탭5: 실험 히스토리 + 결과 상세 + 모델 저장]
+[탭4: 실험 히스토리 + 결과 상세 + 모델 저장]
   Step 1. history.json 로드 → 실험 목록 테이블 렌더링
   Step 2. 실험 선택 → selected_experiment_id Write
   Step 3. 선택 실험 상세: Confusion Matrix, ROC Curve, Anomaly Score 분포
@@ -598,7 +592,7 @@ smart-qc-dashboard/
   Step 6. 저장 완료 메시지 (경로·파일명·용량)
   Step 7. [실험 삭제] → history.json에서 제거
   ↓
-[탭6: 이상 영역 시각화]
+[탭5: 이상 영역 시각화]
   Step 1. selected_experiment_id None 체크 → 차단 또는 통과
   Step 2. 실험의 metrics.anomaly_scores, image_labels 로드
   Step 3. 테스트 이미지 목록 테이블 렌더링 (결함 유형 필터 적용)
@@ -641,7 +635,7 @@ LOG_FORMAT = {
     "timestamp": "ISO 8601",        # 예: "2026-05-08T14:00:23.456+09:00"
     "level": "INFO|WARNING|ERROR",
     "experiment_id": "str|null",    # 실험 컨텍스트가 없으면 null
-    "tab": "tab1|tab2|...|tab6|null",
+    "tab": "tab1|tab2|...|tab5|null",
     "event": "이벤트명 (snake_case)",
     "message": "사람이 읽을 수 있는 설명",
     "data": {}                      # 이벤트별 추가 데이터 (선택)
@@ -655,14 +649,14 @@ LOG_FORMAT = {
 | `dataset_validated` | tab1 | INFO | 폴더 구조 검증 완료 |
 | `dataset_validation_failed` | tab1 | ERROR | 폴더 구조 검증 실패 |
 | `preprocessing_config_saved` | tab2 | INFO | 전처리 설정 저장 |
-| `model_config_saved` | tab3 | INFO | 모델 설정 저장 |
-| `training_started` | tab4 | INFO | 학습 시작 |
-| `training_step` | tab4 | INFO | 매 N step마다 (N=1000) |
-| `training_completed` | tab4 | INFO | 학습 완료 + 소요 시간 |
-| `training_stopped` | tab4 | WARNING | 사용자 중단 |
-| `training_failed` | tab4 | ERROR | 예외 발생 + traceback |
-| `model_saved` | tab5 | INFO | 모델 파일 저장 완료 |
-| `experiment_deleted` | tab5 | WARNING | 실험 삭제 |
+| `model_config_saved` | tab2 | INFO | 모델 설정 저장 |
+| `training_started` | tab3 | INFO | 학습 시작 |
+| `training_step` | tab3 | INFO | 매 N step마다 (N=1000) |
+| `training_completed` | tab3 | INFO | 학습 완료 + 소요 시간 |
+| `training_stopped` | tab3 | WARNING | 사용자 중단 |
+| `training_failed` | tab3 | ERROR | 예외 발생 + traceback |
+| `model_saved` | tab4 | INFO | 모델 파일 저장 완료 |
+| `experiment_deleted` | tab4 | WARNING | 실험 삭제 |
 
 ### 7.3 학습 로그 파일 형식
 

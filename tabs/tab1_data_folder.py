@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 from PIL import Image
 
+from utils.dataset_converter import count_images, detect_ok_ng_dirs
 from utils.image_utils import SUPPORTED_FORMATS
 from utils.messages import ERR, MSG
 
@@ -16,6 +17,9 @@ _NON_IMAGE_EXTS = {
     ".xml", ".ini", ".cfg", ".toml", ".zip", ".tar", ".gz",
     ".py", ".sh", ".bat", ".exe", ".db", ".npy", ".npz",
 }
+
+# OK/NG 자동 분할 비율 (train:test = 8:2)
+_DEFAULT_TRAIN_RATIO = 0.8
 
 
 def render() -> None:
@@ -34,6 +38,19 @@ def render() -> None:
     if dataset_meta["has_invalid_files"]:
         n = dataset_meta.get("_invalid_file_count", 0)
         st.warning(f"지원하지 않는 파일 {n}개가 발견되었습니다. 학습에서 제외됩니다.")
+
+    # OK/NG 형식 안내 배너
+    if dataset_meta.get("dataset_format") == "oking":
+        train_n    = dataset_meta["train_good_count"]
+        ok_total   = dataset_meta.get("_oking_ok_count", 0)
+        ng_total   = dataset_meta.get("_oking_ng_count", 0)
+        ratio_pct  = int(_DEFAULT_TRAIN_RATIO * 100)
+        st.info(
+            f"**OK/NG 형식으로 로드됩니다.**  \n"
+            f"OK {ok_total:,}장 중 {ratio_pct}% ({train_n:,}장)을 학습에, "
+            f"나머지 {ok_total - train_n:,}장을 테스트(정상)에 사용합니다.  \n"
+            f"NG {ng_total}장은 테스트(불량)로 사용합니다."
+        )
 
     # FR-T1-03: 폴더 구조 트리
     st.subheader("폴더 구조")
@@ -56,15 +73,15 @@ def _render_path_input() -> None:
     path_value = st.text_input(
         label="데이터셋 경로 (Dataset Path)",
         key="input_dataset_path",
-        placeholder="예: C:/datasets/mvtec/screw",
-        help="MVTec AD 형식의 데이터셋 루트 경로를 입력하세요.",
+        placeholder="예: C:/datasets/bolt  또는  C:/datasets/mvtec/screw",
+        help="OK/NG 폴더 형식 또는 MVTec AD 형식 모두 지원합니다.",
     )
     if st.button("경로 확인", type="primary", key="_tab1_validate_btn"):
         _validate_and_load((path_value or "").strip())
 
 
 # ---------------------------------------------------------------------------
-# FR-T1-01: 4단계 검증 + FR-T1-08: 상세 오류 메시지
+# 경로 검증 + 데이터셋 메타 구성
 # ---------------------------------------------------------------------------
 
 def _validate_and_load(path_str: str) -> None:
@@ -81,21 +98,41 @@ def _validate_and_load(path_str: str) -> None:
         _clear_dataset_state()
         return
 
-    # Step 2: train/good/ 존재 여부 (FR-T1-08 상세 메시지)
     train_good = root / "train" / "good"
+
+    # ── OK/NG 폴더 형식 감지 (MVTec 구조 없을 때)
     if not train_good.is_dir():
-        st.error(f"누락된 폴더: `train/good/` — {MSG['INVALID_FOLDER']}")
+        ok_dir, ng_dir = detect_ok_ng_dirs(root)
+        if ok_dir is not None:
+            meta = _build_dataset_meta_oking(root, ok_dir, ng_dir)
+            if meta["train_good_count"] == 0:
+                st.error(f"`{ok_dir.name}/` 폴더에 유효한 이미지가 없습니다.")
+                _clear_dataset_state()
+                return
+            _handle_path_change(str(root))
+            st.session_state["dataset_path"] = str(root)
+            st.session_state["dataset_meta"] = meta
+            st.success(
+                f"OK/NG 형식 데이터셋 확인 완료.  "
+                f"(OK {meta['_oking_ok_count']:,}장 / NG {meta['_oking_ng_count']}장)"
+            )
+            return
+
+        st.error(
+            f"지원하지 않는 폴더 구조입니다.  \n"
+            f"**OK/NG 형식**: `OK/`, `NG/` 폴더가 있어야 합니다.  \n"
+            f"**MVTec AD 형식**: `train/good/`, `test/` 폴더가 있어야 합니다."
+        )
         _clear_dataset_state()
         return
 
-    # Step 3: test/ 존재 여부 (FR-T1-08 상세 메시지)
+    # ── MVTec AD 형식 검증
     test_dir = root / "test"
     if not test_dir.is_dir():
         st.error(f"누락된 폴더: `test/` — {MSG['INVALID_FOLDER']}")
         _clear_dataset_state()
         return
 
-    # Step 4: train/good/ 이미지 최소 1개 이상
     has_train_image = any(
         f.suffix.lower() in SUPPORTED_FORMATS for f in train_good.iterdir()
     )
@@ -104,25 +141,79 @@ def _validate_and_load(path_str: str) -> None:
         _clear_dataset_state()
         return
 
-    # Step 5: 검증 통과 → dataset_meta 구성 및 저장
-    meta = _build_dataset_meta(root)
+    meta = _build_dataset_meta_mvtec(root)
     _handle_path_change(str(root))
     st.session_state["dataset_path"] = str(root)
     st.session_state["dataset_meta"] = meta
-    st.success("데이터셋 구조 검증 완료.")
+    st.success("MVTec AD 형식 데이터셋 확인 완료.")
 
 
 # ---------------------------------------------------------------------------
-# FR-T1-02: dataset_meta 구성 (00_Global_Context §1.5 스키마)
+# dataset_meta 구성 — OK/NG 형식
 # ---------------------------------------------------------------------------
 
-def _build_dataset_meta(root: Path) -> dict:
+def _build_dataset_meta_oking(root: Path, ok_dir: Path, ng_dir: "Path | None") -> dict:
+    ok_images = sorted(
+        f for f in ok_dir.iterdir() if f.suffix.lower() in SUPPORTED_FORMATS
+    )
+    ok_count = len(ok_images)
+    ng_count = count_images(ng_dir) if ng_dir else 0
+
+    train_n     = max(1, int(ok_count * _DEFAULT_TRAIN_RATIO)) if ok_count else 0
+    test_good_n = max(0, ok_count - train_n)
+
+    # 채널 감지
+    channels = 3
+    if ok_images:
+        try:
+            with Image.open(ok_images[0]) as img:
+                channels = 1 if img.mode == "L" else 3
+        except Exception:
+            channels = 3
+
+    ng_key       = ng_dir.name.lower() if ng_dir else "ng"
+    test_counts  = {"good": test_good_n}
+    defect_classes: list[str] = []
+    if ng_dir and ng_count > 0:
+        test_counts[ng_key] = ng_count
+        defect_classes.append(ng_key)
+
+    found_formats: set[str] = set()
+    for f in ok_dir.iterdir():
+        if f.is_file() and f.suffix.lower() in SUPPORTED_FORMATS:
+            found_formats.add(f.suffix.lower())
+
+    return {
+        "dataset_path":      str(root),
+        "dataset_format":    "oking",
+        "train_good_count":  train_n,
+        "test_counts":       test_counts,
+        "gt_counts":         {},
+        "total_test_count":  sum(test_counts.values()),
+        "channels":          channels,
+        "defect_classes":    defect_classes,
+        "supported_formats": sorted(found_formats),
+        "has_invalid_files": False,
+        "_invalid_file_count": 0,
+        # OK/NG 전용 메타
+        "_oking_ok_dir":   ok_dir.name,
+        "_oking_ng_dir":   ng_dir.name if ng_dir else None,
+        "_oking_ok_count": ok_count,
+        "_oking_ng_count": ng_count,
+        "_train_ratio":    _DEFAULT_TRAIN_RATIO,
+    }
+
+
+# ---------------------------------------------------------------------------
+# dataset_meta 구성 — MVTec AD 형식 (기존 로직)
+# ---------------------------------------------------------------------------
+
+def _build_dataset_meta_mvtec(root: Path) -> dict:
     train_good = root / "train" / "good"
     train_images = sorted(
         f for f in train_good.iterdir() if f.suffix.lower() in SUPPORTED_FORMATS
     )
 
-    # 채널 감지: 첫 번째 train/good 이미지 기준
     channels = 3
     if train_images:
         try:
@@ -131,7 +222,6 @@ def _build_dataset_meta(root: Path) -> dict:
         except Exception:
             channels = 3
 
-    # test/ 하위 디렉토리 스캔 (good 포함 — FR-T1-02)
     test_dir = root / "test"
     test_counts: dict[str, int] = {}
     defect_classes: list[str] = []
@@ -143,11 +233,10 @@ def _build_dataset_meta(root: Path) -> dict:
             1 for f in cls_dir.iterdir() if f.suffix.lower() in SUPPORTED_FORMATS
         )
         test_counts[cls_dir.name] = count
-        defect_classes.append(cls_dir.name)  # good 포함
+        defect_classes.append(cls_dir.name)
 
     total_test_count = sum(test_counts.values())
 
-    # ground_truth/ 하위 디렉토리 스캔 (선택적)
     gt_dir = root / "ground_truth"
     gt_counts: dict[str, int] = {}
     if gt_dir.is_dir():
@@ -159,10 +248,6 @@ def _build_dataset_meta(root: Path) -> dict:
             )
             gt_counts[cls_dir.name] = count
 
-    # 포맷 목록 + 지원 외 파일 감지
-    # · 숨김 파일(이름이 '.'으로 시작, 예: .DS_Store)은 제외
-    # · 메타/설정 파일(_NON_IMAGE_EXTS)은 제외
-    # · 위 조건을 제외하고 SUPPORTED_FORMATS에 없는 파일만 invalid로 집계
     found_formats: set[str] = set()
     invalid_count = 0
     for scan_dir in [root / "train", test_dir, gt_dir]:
@@ -180,17 +265,22 @@ def _build_dataset_meta(root: Path) -> dict:
                 invalid_count += 1
 
     return {
-        "dataset_path": str(root),
-        "train_good_count": len(train_images),
-        "test_counts": test_counts,
-        "gt_counts": gt_counts,
-        "total_test_count": total_test_count,
-        "channels": channels,
-        "defect_classes": defect_classes,
+        "dataset_path":      str(root),
+        "dataset_format":    "mvtec",
+        "train_good_count":  len(train_images),
+        "test_counts":       test_counts,
+        "gt_counts":         gt_counts,
+        "total_test_count":  total_test_count,
+        "channels":          channels,
+        "defect_classes":    defect_classes,
         "supported_formats": sorted(found_formats),
         "has_invalid_files": invalid_count > 0,
-        "_invalid_file_count": invalid_count,  # UI 표시용 (스키마 외 필드)
+        "_invalid_file_count": invalid_count,
     }
+
+
+# 하위 호환: 이전 코드가 _build_dataset_meta를 호출하는 경우 대비
+_build_dataset_meta = _build_dataset_meta_mvtec
 
 
 # ---------------------------------------------------------------------------
@@ -200,24 +290,36 @@ def _build_dataset_meta(root: Path) -> dict:
 def _build_tree_text(root: Path, meta: dict) -> str:
     lines: list[str] = [f"📂 {root.name}/"]
 
-    train_dir = root / "train"
-    if train_dir.is_dir():
-        lines.append("  📂 train/")
-        good_dir = train_dir / "good"
-        if good_dir.is_dir():
-            lines.append(f"    📂 good/ ({meta['train_good_count']}장)")
+    if meta.get("dataset_format") == "oking":
+        ok_name = meta.get("_oking_ok_dir", "OK")
+        ng_name = meta.get("_oking_ng_dir")
+        ok_n    = meta.get("_oking_ok_count", 0)
+        ng_n    = meta.get("_oking_ng_count", 0)
+        train_n = meta["train_good_count"]
+        test_g  = meta["test_counts"].get("good", 0)
+        lines.append(f"  📂 {ok_name}/ ({ok_n:,}장 전체)")
+        lines.append(f"    ↳ 학습(train): {train_n:,}장  |  테스트(good): {test_g:,}장  ← 자동 분할")
+        if ng_name:
+            lines.append(f"  📂 {ng_name}/ ({ng_n}장) ← 테스트(불량)")
+    else:
+        train_dir = root / "train"
+        if train_dir.is_dir():
+            lines.append("  📂 train/")
+            good_dir = train_dir / "good"
+            if good_dir.is_dir():
+                lines.append(f"    📂 good/ ({meta['train_good_count']}장)")
 
-    test_dir = root / "test"
-    if test_dir.is_dir():
-        lines.append("  📂 test/")
-        for cls_name, count in sorted(meta["test_counts"].items()):
-            lines.append(f"    📂 {cls_name}/ ({count}장)")
+        test_dir = root / "test"
+        if test_dir.is_dir():
+            lines.append("  📂 test/")
+            for cls_name, count in sorted(meta["test_counts"].items()):
+                lines.append(f"    📂 {cls_name}/ ({count}장)")
 
-    gt_dir = root / "ground_truth"
-    if gt_dir.is_dir():
-        lines.append("  📂 ground_truth/")
-        for cls_name, count in sorted(meta["gt_counts"].items()):
-            lines.append(f"    📂 {cls_name}/ ({count}장)")
+        gt_dir = root / "ground_truth"
+        if gt_dir.is_dir():
+            lines.append("  📂 ground_truth/")
+            for cls_name, count in sorted(meta["gt_counts"].items()):
+                lines.append(f"    📂 {cls_name}/ ({count}장)")
 
     return "\n".join(lines)
 
@@ -229,15 +331,13 @@ def _build_tree_text(root: Path, meta: dict) -> str:
 def _build_count_table(meta: dict) -> pd.DataFrame:
     rows: list[dict] = []
 
-    # good 행: 학습/테스트 모두 표시
     rows.append({
-        "클래스": "good",
+        "클래스": "good (정상)",
         "학습(train)": meta["train_good_count"],
         "테스트(test)": meta["test_counts"].get("good", 0),
         "GT 마스크": meta["gt_counts"].get("good", 0),
     })
 
-    # 결함 클래스 행 (good 제외)
     for cls in meta["defect_classes"]:
         if cls == "good":
             continue
@@ -263,13 +363,44 @@ def _build_count_table(meta: dict) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def _render_thumbnails(root: Path, meta: dict) -> None:
+    st.subheader("클래스 대표 이미지")
+
+    if meta.get("dataset_format") == "oking":
+        cols_data: list[tuple[str, Path]] = []
+
+        ok_name = meta.get("_oking_ok_dir", "OK")
+        ok_dir  = root / ok_name
+        if ok_dir.is_dir():
+            cols_data.append(("OK (정상)", ok_dir))
+
+        ng_name = meta.get("_oking_ng_dir")
+        if ng_name:
+            ng_dir = root / ng_name
+            if ng_dir.is_dir():
+                cols_data.append(("NG (불량)", ng_dir))
+
+        if not cols_data:
+            return
+        cols = st.columns(len(cols_data))
+        for col, (label, img_dir) in zip(cols, cols_data):
+            images = sorted(
+                f for f in img_dir.iterdir() if f.suffix.lower() in SUPPORTED_FORMATS
+            )
+            if not images:
+                col.write(f"{label}: 이미지 없음")
+                continue
+            try:
+                img = Image.open(images[0]).convert("RGB").resize((150, 150), Image.LANCZOS)
+                col.image(img, caption=label, width=150)
+            except Exception:
+                col.warning(f"{label}: 이미지 로드 실패")
+        return
+
+    # MVTec AD 형식 썸네일
     classes = meta["defect_classes"]
     if not classes:
         return
-
     test_dir = root / "test"
-    st.subheader("클래스 대표 이미지")
-
     for row_start in range(0, len(classes), 4):
         row_classes = classes[row_start : row_start + 4]
         cols = st.columns(len(row_classes))
@@ -284,8 +415,7 @@ def _render_thumbnails(root: Path, meta: dict) -> None:
                 col.write(f"{cls_name}: 이미지 없음")
                 continue
             try:
-                img = Image.open(images[0]).convert("RGB")
-                img = img.resize((150, 150), Image.LANCZOS)
+                img = Image.open(images[0]).convert("RGB").resize((150, 150), Image.LANCZOS)
                 col.image(img, caption=cls_name, width=150)
             except Exception:
                 col.warning(f"{cls_name}: 이미지 로드 실패")
@@ -301,7 +431,6 @@ def _handle_path_change(new_path: str) -> None:
         st.session_state["preprocessing_config"] = None
         st.session_state["model_config"] = None
         st.session_state["device_info"] = None
-        # experiments, selected_experiment_id는 유지 (이전 실험 보존)
 
 
 def _clear_dataset_state() -> None:

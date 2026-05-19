@@ -66,16 +66,16 @@ pip install -r requirements.txt
 GPU 사용 (NVIDIA Container Toolkit 필요):
 
 ```bash
-docker compose build
-docker compose up
+docker compose -f docker-compose.base.yml -f docker-compose.yml build
+docker compose -f docker-compose.base.yml -f docker-compose.yml up -d
 # 브라우저: http://localhost:8501
 ```
 
 CPU 전용 환경:
 
 ```bash
-docker compose -f docker-compose.cpu.yml build
-docker compose -f docker-compose.cpu.yml up
+docker compose -f docker-compose.base.yml -f docker-compose.cpu.yml build
+docker compose -f docker-compose.base.yml -f docker-compose.cpu.yml up -d
 ```
 
 > 데이터셋과 학습 결과는 호스트 디렉터리와 마운트됩니다.

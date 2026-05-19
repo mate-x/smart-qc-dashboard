@@ -44,6 +44,7 @@ class TrainingWorker(threading.Thread):
     Queue 메시지 타입:
         {"type": "progress", "step": int, "total": int, "loss": float, "elapsed": float}
         {"type": "log", "message": str}
+        {"type": "paused", "step": int, "ckpt_path": str}
         {"type": "completed", "y_true": list, "anomaly_scores": list,
          "anomaly_maps": dict, "image_paths": list, "model": object,
          "duration_seconds": int}
@@ -57,23 +58,54 @@ class TrainingWorker(threading.Thread):
         model_config: dict,
         preprocessing_config: dict,
         dataset_path: str,
-        device: str,                 # Z.2: device_info dict 아님, 문자열 직접 전달
+        device: str,
         stop_event: threading.Event,
         result_queue: queue.Queue,
+        # 일시정지 지원
+        pause_event: threading.Event | None = None,
+        # EfficientAD resume 파라미터
+        start_step: int = 0,
+        student_state_dict: dict | None = None,
+        autoencoder_state_dict: dict | None = None,
+        optimizer_st_state_dict: dict | None = None,
+        optimizer_ae_state_dict: dict | None = None,
+        scheduler_st_state_dict: dict | None = None,
+        scheduler_ae_state_dict: dict | None = None,
+        loss_history: list | None = None,
+        # PatchCore resume 파라미터
+        start_batch_idx: int = 0,
+        accumulated_features: "torch.Tensor | None" = None,
     ) -> None:
         super().__init__(daemon=True, name=f"TrainingWorker-{experiment_id}")
-        self.experiment_id = experiment_id
-        self.model_config = model_config
+        self.experiment_id        = experiment_id
+        self.model_config         = model_config
         self.preprocessing_config = preprocessing_config
         self.dataset_path         = dataset_path
         self.device               = device
         self.stop_event           = stop_event
         self.result_queue         = result_queue
+        self.pause_event          = pause_event if pause_event is not None else threading.Event()
 
-        self._model = None
+        # EfficientAD resume
+        self.start_step               = start_step
+        self.student_state_dict       = student_state_dict
+        self.autoencoder_state_dict   = autoencoder_state_dict
+        self.optimizer_st_state_dict  = optimizer_st_state_dict
+        self.optimizer_ae_state_dict  = optimizer_ae_state_dict
+        self.scheduler_st_state_dict  = scheduler_st_state_dict
+        self.scheduler_ae_state_dict  = scheduler_ae_state_dict
+        self.loss_history: list       = list(loss_history) if loss_history else []
+
+        # PatchCore resume
+        self.start_batch_idx     = start_batch_idx
+        self.accumulated_features = accumulated_features
+
+        self._model      = None
         self._start_time: float = 0.0
         self._log_writer = None
         self._last_step: int = 0
+
+    # ── 스레드 진입점 ──────────────────────────────────────────────────────────
 
     def run(self) -> None:
         if self.stop_event.is_set():
@@ -146,11 +178,15 @@ class TrainingWorker(threading.Thread):
             f"이미지 크기: {self.model_config.get('image_size', '?')} | "
             f"디바이스: {self.device}"
         )
+        if self.start_step > 0:
+            self._write_log(f"[재개] EfficientAD step {self.start_step}부터 학습 재시작")
+        if self.start_batch_idx > 0:
+            self._write_log(f"[재개] PatchCore batch {self.start_batch_idx}부터 특징 추출 재시작")
 
         model_type = self.model_config.get("model_type", "")
 
         # 3. EfficientAD — imagenet penalty 사전 검증 (Z.1)
-        # use_imagenet_penalty == False이면 penalty 미사용 → 디렉터리 불필요
+        use_imagenet_penalty = False
         if model_type == "efficientad":
             use_imagenet_penalty = self.model_config.get("params", {}).get("use_imagenet_penalty", False)
             if use_imagenet_penalty:
@@ -183,14 +219,13 @@ class TrainingWorker(threading.Thread):
         if model_type == "efficientad":
             self._write_log("[초기화] EfficientAD 모델 생성 중... (사전학습 가중치 로딩 포함, 수십 초 소요)")
             model = _create_efficientad_model(self.model_config)
+            penalty_loader = None
             if use_imagenet_penalty:
                 penalty_loader = build_imagenet_penalty_loader(
                     batch_size=self.model_config["params"].get("penalty_batch_size", 8),
                     image_size=self.model_config.get("image_size", 256),
                     device=self.device,
                 )
-            else:
-                penalty_loader = None
             self._write_log("[초기화] EfficientAD 모델 준비 완료")
             completed, last_step = self._train_efficientad(
                 model, train_loader, penalty_loader, device
@@ -227,12 +262,12 @@ class TrainingWorker(threading.Thread):
         )
 
         self.result_queue.put({
-            "type":            "completed",
-            "y_true":          y_true,
-            "anomaly_scores":  anomaly_scores,
-            "anomaly_maps":    anomaly_maps,
-            "image_paths":     image_paths,
-            "model":           model.cpu(),
+            "type":             "completed",
+            "y_true":           y_true,
+            "anomaly_scores":   anomaly_scores,
+            "anomaly_maps":     anomaly_maps,
+            "image_paths":      image_paths,
+            "model":            model.cpu(),
             "duration_seconds": int(elapsed),
         })
 
@@ -247,11 +282,17 @@ class TrainingWorker(threading.Thread):
     ) -> tuple[bool, int]:
         """
         반환: (completed: bool, last_step: int)
-        completed=False: stop_event로 중단
+        completed=False: stop_event 또는 pause_event(→중지) 로 중단
+
+        resume 지원:
+          - start_step: 이 step부터 학습 시작 (이전 배치 소비 없이 바로 진행)
+          - student/autoencoder/optimizer/scheduler 상태 복원
+          - loss_history: 이전 Loss 곡선 이어붙이기
         """
         from utils.model_factory import _efficientad_training_step
+        from utils.checkpoint_manager import save_checkpoint
 
-        params = self.model_config["params"]
+        params      = self.model_config["params"]
         total_steps = params.get("train_steps", 70000)
         report_every = 100
 
@@ -260,8 +301,6 @@ class TrainingWorker(threading.Thread):
         self._write_log("[학습] EfficientAD GPU 전송 완료. 학습 루프 시작...")
 
         # anomalib 버전별로 student/autoencoder 위치가 다름
-        # 2.4.x: model.model.student / model.model.ae
-        # 구버전: model.student / model.autoencoder
         _inner = getattr(model, "model", model)
         student = getattr(model, "student", getattr(_inner, "student", None))
         autoencoder = (
@@ -281,31 +320,104 @@ class TrainingWorker(threading.Thread):
             {
                 **params,
                 "learning_rate": params.get("autoencoder_lr", params.get("learning_rate", 1e-4)),
-                "weight_decay": params.get("autoencoder_weight_decay", 1e-5),
+                "weight_decay":  params.get("autoencoder_weight_decay", 1e-5),
             },
         )
         scheduler_st = self._build_scheduler(optimizer_st, params, total_steps)
         scheduler_ae = self._build_scheduler(optimizer_ae, params, total_steps)
 
-        train_iter = self._infinite_loader(train_loader)
+        # ── resume: 가중치 및 옵티마이저/스케줄러 상태 복원 ─────────────────
+        if self.student_state_dict:
+            try:
+                student.load_state_dict(self.student_state_dict)
+                self._write_log("[재개] Student 가중치 복원 완료")
+            except RuntimeError:
+                self._write_log("[경고] Student 가중치 불일치 — 초기값으로 시작")
+        if self.autoencoder_state_dict:
+            try:
+                autoencoder.load_state_dict(self.autoencoder_state_dict)
+                self._write_log("[재개] Autoencoder 가중치 복원 완료")
+            except RuntimeError:
+                self._write_log("[경고] Autoencoder 가중치 불일치 — 초기값으로 시작")
+        for opt, state in [
+            (optimizer_st, self.optimizer_st_state_dict),
+            (optimizer_ae, self.optimizer_ae_state_dict),
+        ]:
+            if state:
+                try:
+                    opt.load_state_dict(state)
+                except (ValueError, KeyError):
+                    pass
+        for sch, state in [
+            (scheduler_st, self.scheduler_st_state_dict),
+            (scheduler_ae, self.scheduler_ae_state_dict),
+        ]:
+            if state:
+                try:
+                    sch.load_state_dict(state)
+                except (ValueError, KeyError):
+                    pass
+
+        train_iter   = self._infinite_loader(train_loader)
         penalty_iter = self._infinite_loader(penalty_loader) if penalty_loader is not None else None
 
         use_amp = device.type == "cuda"
-        scaler = torch.cuda.amp.GradScaler() if use_amp else None
+        scaler  = torch.cuda.amp.GradScaler() if use_amp else None
 
-        step = 0
+        step      = self.start_step   # resume 시 이미 완료된 step부터 시작
         last_loss = 0.0
+        _ckpt_saved = False           # 동일 pause에서 중복 저장 방지
 
         while step < total_steps:
+            # ① 중지 체크
             if self.stop_event.is_set():
                 return False, step
 
-            batch = next(train_iter)
+            # ② 일시정지 체크
+            if self.pause_event.is_set():
+                if not _ckpt_saved:
+                    ckpt_path = save_checkpoint(
+                        data={
+                            "model_type":             "efficientad",
+                            "experiment_id":          self.experiment_id,
+                            "step":                   step,
+                            "total_steps":            total_steps,
+                            "model_config":           self.model_config,
+                            "preprocessing_config":   self.preprocessing_config,
+                            "dataset_path":           self.dataset_path,
+                            "student_state_dict":     student.state_dict(),
+                            "autoencoder_state_dict": autoencoder.state_dict(),
+                            "optimizer_st_state_dict": optimizer_st.state_dict(),
+                            "optimizer_ae_state_dict": optimizer_ae.state_dict(),
+                            "scheduler_st_state_dict": scheduler_st.state_dict(),
+                            "scheduler_ae_state_dict": scheduler_ae.state_dict(),
+                            "loss_history":           self.loss_history,
+                        },
+                        exp_id=self.experiment_id,
+                        label=step,
+                    )
+                    self._write_log(f"[체크포인트] 저장 완료: {ckpt_path.name}")
+                    self.result_queue.put({
+                        "type":     "paused",
+                        "step":     step,
+                        "ckpt_path": str(ckpt_path),
+                    })
+                    _ckpt_saved = True
+
+                # pause_event 해제될 때까지 대기
+                while self.pause_event.is_set():
+                    time.sleep(0.1)
+                    if self.stop_event.is_set():
+                        return False, step
+                _ckpt_saved = False
+                self._write_log(f"[재개] step {step}부터 학습 재시작")
+
+            # ── 학습 스텝
+            batch  = next(train_iter)
             images = batch["image"].to(device, non_blocking=True)
 
             if penalty_iter is not None:
                 penalty_batch = next(penalty_iter)
-                # FakeData / ImageFolder 모두 (img, label) 튜플 반환
                 if isinstance(penalty_batch, (list, tuple)):
                     penalty = penalty_batch[0].to(device, non_blocking=True)
                 else:
@@ -317,7 +429,7 @@ class TrainingWorker(threading.Thread):
             optimizer_ae.zero_grad()
 
             with torch.cuda.amp.autocast(enabled=use_amp):
-                alpha = float(params.get("ae_loss_weight", 0.5))
+                alpha     = float(params.get("ae_loss_weight", 0.5))
                 loss_dict = _efficientad_training_step(model, images, penalty, alpha=alpha)
                 total_loss = loss_dict["loss_total"]
 
@@ -348,8 +460,9 @@ class TrainingWorker(threading.Thread):
 
             step += 1
 
-            if step == 1 or step % report_every == 0 or step == total_steps:
+            if step == self.start_step + 1 or step % report_every == 0 or step == total_steps:
                 elapsed = time.time() - self._start_time
+                self.loss_history.append({"step": step, "loss": round(last_loss, 6)})
                 self.result_queue.put({
                     "type":    "progress",
                     "step":    step,
@@ -365,7 +478,7 @@ class TrainingWorker(threading.Thread):
         self._last_step = step
         return True, step
 
-    # ── PatchCore 학습 루프 ────────────────────────────────────────────────────
+    # ── PatchCore 학습 루프 (단일 경로) ───────────────────────────────────────
 
     def _train_patchcore(
         self,
@@ -374,107 +487,156 @@ class TrainingWorker(threading.Thread):
         device: torch.device,
     ) -> tuple[bool, int]:
         """
-        PatchCore 학습: 단일 에포크 특징 추출 후 coreset 메모리 뱅크 구성.
+        PatchCore 특징 추출 → coreset 구성 → memory_bank 설정.
 
-        anomalib 2.4.x: PatchcoreModel.forward(training=True)가 embedding_store에 자동 축적,
-                         model.fit()으로 coreset 구성.
-        구버전 fallback: _extract_patchcore_features로 수동 추출 후 memory_bank 직접 설정.
+        단일 경로(_extract_patchcore_features)로 통합:
+          - checkpoint/resume 일관성 보장
+          - anomalib 버전에 무관하게 동일한 로직 사용
+          - 마지막에 coreset 서브샘플링 후 memory_bank 직접 설정
+
+        resume 지원:
+          - start_batch_idx: 이 배치 이전은 건너뜀
+          - accumulated_features: 이미 추출된 특징 텐서
         """
-        params = self.model_config.get("params", {})
+        from utils.model_factory import _extract_patchcore_features
+        from utils.checkpoint_manager import save_checkpoint
+
+        params    = self.model_config.get("params", {})
         max_train = params.get("max_train", 1000)
 
         model = model.to(device)
-        torch_model = getattr(model, "model", None)
+        model.eval()
 
-        batch_size = train_loader.batch_size or 1
+        batch_size    = train_loader.batch_size or 1
         total_batches = min(len(train_loader), max_train // max(batch_size, 1) + 1)
 
+        # resume: 이미 추출된 특징 복원
+        all_features: list[torch.Tensor] = []
+        if (
+            self.accumulated_features is not None
+            and self.accumulated_features.numel() > 0
+        ):
+            all_features.append(self.accumulated_features.cpu())
+            self._write_log(
+                f"[재개] batch {self.start_batch_idx}까지 추출된 특징 복원 "
+                f"({self.accumulated_features.shape[0]:,}개 패치)"
+            )
+
         self._write_log(
-            f"[학습] PatchCore 특징 추출 시작 — 총 {total_batches}배치"
+            f"[학습] PatchCore 특징 추출 시작 — "
+            f"총 {total_batches}배치 / 재개: {self.start_batch_idx}배치부터"
         )
         self.result_queue.put({
-            "type": "progress", "step": 0,
-            "total": total_batches, "loss": 0.0,
+            "type":    "progress",
+            "step":    self.start_batch_idx,
+            "total":   total_batches,
+            "loss":    0.0,
             "elapsed": round(time.time() - self._start_time, 1),
         })
 
-        if torch_model is not None:
-            # anomalib 2.4.x: training mode에서 torch_model(images) → embedding_store 축적
-            model.train()
-            with torch.no_grad():
-                for batch_idx, batch in enumerate(train_loader):
-                    if self.stop_event.is_set():
-                        return False, batch_idx
-                    if batch_idx >= total_batches:
-                        break
-                    images = batch["image"].to(device)
-                    torch_model(images)
-                    elapsed = time.time() - self._start_time
-                    self.result_queue.put({
-                        "type":    "progress",
-                        "step":    batch_idx + 1,
-                        "total":   total_batches,
-                        "loss":    0.0,
-                        "elapsed": round(elapsed, 1),
-                    })
-                    self._write_log(
-                        f"[배치 {batch_idx+1}/{total_batches}] 특징 추출 중 | "
-                        f"경과: {elapsed:.1f}s"
-                    )
-            self._write_log("[PatchCore] 특징 추출 완료. Coreset 구성 중...")
-            model.eval()
-            model.fit()  # embedding_store → coreset subsample → memory_bank
+        _ckpt_saved = False
 
+        with torch.no_grad():
+            for batch_idx, batch in enumerate(train_loader):
+                # ① 중지 체크
+                if self.stop_event.is_set():
+                    return False, batch_idx
+
+                if batch_idx >= total_batches:
+                    break
+
+                # resume: 이미 처리된 배치 건너뜀
+                if batch_idx < self.start_batch_idx:
+                    continue
+
+                # ② 일시정지 체크
+                if self.pause_event.is_set():
+                    if not _ckpt_saved:
+                        feat_tensor = (
+                            torch.cat(all_features, dim=0)
+                            if all_features
+                            else torch.empty(0)
+                        )
+                        ckpt_path = save_checkpoint(
+                            data={
+                                "model_type":           "patchcore",
+                                "experiment_id":        self.experiment_id,
+                                "batch_idx":            batch_idx,
+                                "total_batches":        total_batches,
+                                "model_config":         self.model_config,
+                                "preprocessing_config": self.preprocessing_config,
+                                "dataset_path":         self.dataset_path,
+                                "accumulated_features": feat_tensor,
+                            },
+                            exp_id=self.experiment_id,
+                            label=batch_idx,
+                        )
+                        self._write_log(f"[체크포인트] 저장 완료: {ckpt_path.name}")
+                        self.result_queue.put({
+                            "type":     "paused",
+                            "step":     batch_idx,
+                            "ckpt_path": str(ckpt_path),
+                        })
+                        _ckpt_saved = True
+
+                    while self.pause_event.is_set():
+                        time.sleep(0.1)
+                        if self.stop_event.is_set():
+                            return False, batch_idx
+                    _ckpt_saved = False
+                    self._write_log(f"[재개] batch {batch_idx}부터 특징 추출 재시작")
+
+                # ── 특징 추출
+                images   = batch["image"].to(device)
+                features = _extract_patchcore_features(model, images)
+                all_features.append(features.cpu())
+
+                elapsed = time.time() - self._start_time
+                self.result_queue.put({
+                    "type":    "progress",
+                    "step":    batch_idx + 1,
+                    "total":   total_batches,
+                    "loss":    0.0,
+                    "elapsed": round(elapsed, 1),
+                })
+                self._write_log(
+                    f"[배치 {batch_idx+1}/{total_batches}] 특징 추출 중 | "
+                    f"경과: {elapsed:.1f}s"
+                )
+
+        if not all_features:
+            raise ValueError("특징 추출된 배치가 없습니다. 데이터셋을 확인해 주세요.")
+
+        # ── coreset 구성 → memory_bank 직접 설정
+        self._write_log("[PatchCore] 특징 추출 완료. Coreset 구성 중...")
+        feature_stack = torch.cat(all_features, dim=0)
+        coreset_ratio = params.get("coreset_sampling_ratio", 0.1)
+        coreset_size  = max(1, int(len(feature_stack) * coreset_ratio))
+        indices       = torch.randperm(len(feature_stack))[:coreset_size]
+        coreset       = feature_stack[indices].to(device)
+
+        # model.model.memory_bank 또는 model.memory_bank 중 존재하는 쪽에 설정
+        torch_model = getattr(model, "model", None)
+        if torch_model is not None and hasattr(torch_model, "memory_bank"):
+            torch_model.memory_bank = coreset
         else:
-            # Fallback: 구버전 anomalib — 수동 feature 추출
-            from utils.model_factory import _extract_patchcore_features
-
-            model.eval()
-            all_features: list[torch.Tensor] = []
-            with torch.no_grad():
-                for batch_idx, batch in enumerate(train_loader):
-                    if self.stop_event.is_set():
-                        return False, batch_idx
-                    if batch_idx >= total_batches:
-                        break
-                    images = batch["image"].to(device)
-                    features = _extract_patchcore_features(model, images)
-                    all_features.append(features.cpu())
-                    elapsed = time.time() - self._start_time
-                    self.result_queue.put({
-                        "type":    "progress",
-                        "step":    batch_idx + 1,
-                        "total":   total_batches,
-                        "loss":    0.0,
-                        "elapsed": round(elapsed, 1),
-                    })
-                    self._write_log(
-                        f"[배치 {batch_idx+1}/{total_batches}] 특징 추출 중 | "
-                        f"경과: {elapsed:.1f}s"
-                    )
-
-            if not all_features:
-                raise ValueError("특징 추출된 배치가 없습니다. 데이터셋을 확인해 주세요.")
-
-            feature_stack = torch.cat(all_features, dim=0)
-            self._write_log("[PatchCore] 특징 추출 완료. Coreset 구성 중...")
-            coreset_ratio = params.get("coreset_sampling_ratio", 0.1)
-            coreset_size = max(1, int(len(feature_stack) * coreset_ratio))
-            indices = torch.randperm(len(feature_stack))[:coreset_size]
-            model.memory_bank = feature_stack[indices].to(device)
+            model.memory_bank = coreset
 
         elapsed_total = time.time() - self._start_time
-        self._write_log(f"[완료] 메모리 뱅크 구성 완료 | 경과: {elapsed_total:.1f}s")
+        self._write_log(
+            f"[완료] 메모리 뱅크 구성 완료 "
+            f"({coreset_size:,}/{len(feature_stack):,} 패치) | 경과: {elapsed_total:.1f}s"
+        )
         self.result_queue.put({
             "type":    "progress",
-            "step":    1,
-            "total":   1,
+            "step":    total_batches,
+            "total":   total_batches,
             "loss":    0.0,
             "elapsed": round(elapsed_total, 1),
         })
 
-        self._last_step = 1
-        return True, 1
+        self._last_step = total_batches
+        return True, total_batches
 
     # ── 전체 테스트셋 추론 ─────────────────────────────────────────────────────
 
@@ -504,11 +666,11 @@ class TrainingWorker(threading.Thread):
                 if self.stop_event.is_set():
                     return y_true, anomaly_scores, anomaly_maps
 
-                image = batch["image"].to(device)
-                label = int(batch["label"].item())
+                image      = batch["image"].to(device)
+                label      = int(batch["label"].item())
                 image_path = batch["image_path"][0]
 
-                amap = _get_anomaly_map(model, image)
+                amap  = _get_anomaly_map(model, image)
                 score = _get_pred_score(model, image)
 
                 y_true.append(label)
@@ -546,7 +708,7 @@ class TrainingWorker(threading.Thread):
         scheduler_name = params.get("scheduler", "StepLR")
         if scheduler_name == "StepLR":
             step_size = params.get("lr_decay_epochs", 50000)
-            gamma = params.get("lr_decay_factor", 0.1)
+            gamma     = params.get("lr_decay_factor", 0.1)
             return torch.optim.lr_scheduler.StepLR(
                 optimizer, step_size=step_size, gamma=gamma
             )

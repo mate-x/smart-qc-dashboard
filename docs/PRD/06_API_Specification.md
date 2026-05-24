@@ -246,20 +246,28 @@ class StoppedMessage(TypedDict):
     type: Literal["stopped"]
     step: int               # 중단된 시점의 스텝 번호
 
-QueueMessage = ProgressMessage | LogMessage | CompletedMessage | ErrorMessage | StoppedMessage
+class PausedMessage(TypedDict):
+    type: Literal["paused"]
+    step: int               # 일시정지된 시점의 스텝 번호
+    ckpt_path: str          # 저장된 체크포인트 파일의 절대 경로
+
+QueueMessage = ProgressMessage | LogMessage | CompletedMessage | ErrorMessage | StoppedMessage | PausedMessage
 ```
 
 ### 4.2 메시지 발생 시점 규칙
 
 | 메시지 타입 | 발생 조건 | 발생 횟수 |
 |------------|-----------|-----------|
-| `"progress"` | EfficientAD: 매 500 step. PatchCore: feature 추출 완료, coreset 구성 완료 (총 2회) | N회 |
+| `"progress"` | EfficientAD: 매 100 step. PatchCore: feature 추출 완료, coreset 구성 완료 | N회 |
 | `"log"` | 학습 시작, 완료, 중단, 오류, 주요 단계 전환 | N회 |
 | `"completed"` | 학습 루프 정상 종료 직후 | **정확히 1회** |
 | `"error"` | 예외 발생 시 (except 블록 내) | **정확히 1회** |
 | `"stopped"` | `stop_event.is_set()` 확인 후 루프 탈출 시 | **정확히 1회** |
+| `"paused"` | `pause_event.is_set()` 확인 후 체크포인트 저장 완료 시 | pause마다 1회 (중복 저장 방지) |
 
 **종료 메시지 불변 조건**: `"completed"`, `"error"`, `"stopped"` 중 정확히 하나만 전송된다. 이 세 메시지 중 하나가 Queue에 들어오면 학습 스레드는 곧 종료된다.
+
+**`"paused"` 비종료 특성**: `"paused"` 메시지는 종료 메시지가 아니다. 스레드는 계속 실행 중이며 `pause_event.is_set()` 동안 `time.sleep(0.5)` 루프로 대기한다. `pause_event.clear()` 시 학습이 재개된다.
 
 ### 4.3 메시지 생성 코드 패턴 (TrainingWorker 내부)
 
@@ -329,18 +337,23 @@ def render() -> None:
         if not finished:
             time.sleep(0.3)         # R-THREAD-05: 0.3초 고정 (종료 시 슬립 없음)
         st.rerun()                  # 항상 rerun — 종료 시 idle UI 전환
+    elif status == "paused":
+        # 일시정지 중: 드레인 후 UI 표시, 자동 rerun 없음
+        _drain_queue()
+        _render_running_ui()        # paused 상태 UI 표시 (재시작/중지 버튼 포함)
     # "stopped" / "completed" 상태는 drain 중 _handle_terminal() 호출로 처리됨
     # → 처리 완료 후 status = "idle" 로 전환되므로 여기서 별도 분기 불필요
 
 
-def _drain_queue() -> None:
+def _drain_queue() -> bool:
     """
     Queue에 쌓인 메시지를 모두 소비한다.
-    종료 메시지(completed/error/stopped)를 만나면 즉시 처리 후 드레인 중단.
+    종료 메시지(completed/error/stopped)를 만나면 즉시 처리 후 True 반환.
+    paused 메시지는 비종료이므로 드레인 계속 진행 (True 반환 안 함).
     """
     q: queue.Queue = st.session_state.get("_result_queue")
     if q is None:
-        return
+        return False
 
     while True:
         try:
@@ -356,23 +369,23 @@ def _drain_queue() -> None:
         elif msg_type == "log":
             _handle_log(msg)
 
+        elif msg_type == "paused":
+            _handle_paused(msg)  # status="paused" 전환, ckpt_path 저장
+            # 비종료 메시지 → 드레인 계속 (이후 메시지 없을 것이나 안전하게 처리)
+
         elif msg_type == "completed":
             _handle_completed(msg)  # 메인 스레드에서 저장 처리
-            break  # 종료 메시지 → 드레인 중단
+            return True  # 종료 메시지
 
         elif msg_type == "error":
             _handle_error(msg)
-            break
+            return True
 
         elif msg_type == "stopped":
             _handle_stopped(msg)
-            break
+            return True
 
-
-def _drain_queue() -> bool:
-    """Queue 메시지를 소비하고, 종료 메시지 처리 시 True 반환."""
-    ...
-    return finished  # True if completed/error/stopped processed
+    return False  # 종료 메시지 미수신
 ```
 
 ### 5.2 각 메시지 처리 함수
@@ -505,12 +518,25 @@ def _handle_stopped(msg: StoppedMessage) -> None:
     _reset_run_state()
 
 
+def _handle_paused(msg: PausedMessage) -> None:
+    """
+    일시정지 메시지 처리.
+    current_run_status = "paused" 전환.
+    _last_ckpt_path 저장.
+    history.json에 기록하지 않음 (일시정지는 영구 중단이 아님).
+    """
+    st.session_state["current_run_status"] = "paused"
+    st.session_state["_last_ckpt_path"]    = msg.get("ckpt_path")
+
+
 def _reset_run_state() -> None:
     """학습 종료 후 내부 상태 초기화."""
     st.session_state["current_run_status"] = "idle"
-    st.session_state["current_exp_id"] = None
-    st.session_state["_stop_event"] = None
-    st.session_state["_result_queue"] = None
+    st.session_state["current_exp_id"]     = None
+    st.session_state["_stop_event"]        = None
+    st.session_state["_pause_event"]       = None
+    st.session_state["_result_queue"]      = None
+    st.session_state["_last_ckpt_path"]    = None
 ```
 
 ### 5.3 _render_running_ui 에서의 UI 갱신
@@ -518,9 +544,19 @@ def _reset_run_state() -> None:
 ```python
 def _render_running_ui() -> None:
     """
-    학습 중 Progress Bar, Loss 곡선, 로그 텍스트 렌더링.
+    running/paused 상태 모두에서 사용.
     _drain_queue() 호출 후 실행되어 최신화된 session_state 값을 표시.
     """
+    status = st.session_state.get("current_run_status", "running")
+
+    if status == "paused":
+        st.warning("⏸ 일시정지됨 — 체크포인트 저장 완료")
+        ckpt_path = st.session_state.get("_last_ckpt_path")
+        if ckpt_path:
+            st.caption(f"저장 위치: `{ckpt_path}`")
+    else:
+        st.info("🔄 학습이 진행 중입니다. 탭을 전환해도 학습은 계속됩니다.")
+
     progress = st.session_state.get("_progress", {})
     step = progress.get("step", 0)
     total = progress.get("total", 1)
@@ -542,12 +578,33 @@ def _render_running_ui() -> None:
     log_text = "\n".join(st.session_state.get("_log_lines", []))
     st.text_area("학습 로그", value=log_text, height=200, disabled=True)
 
-    # 학습 중지 버튼
-    if st.button("학습 중지", type="secondary"):
-        stop_event: threading.Event = st.session_state.get("_stop_event")
-        if stop_event:
-            stop_event.set()
-        st.info("중지 신호를 전송했습니다. 현재 스텝 완료 후 중단됩니다.")
+    # 제어 버튼 — 3열 레이아웃
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("⏸ 일시정지", disabled=(status == "paused"), use_container_width=True):
+            pause_ev = st.session_state.get("_pause_event")
+            if pause_ev:
+                pause_ev.set()
+    with col2:
+        if st.button("▶ 재시작", disabled=(status == "running"), use_container_width=True):
+            pause_ev = st.session_state.get("_pause_event")
+            if pause_ev:
+                pause_ev.clear()
+            st.session_state["current_run_status"] = "running"
+            st.rerun()
+    with col3:
+        if st.button("⏹ 학습 중지", type="secondary", use_container_width=True):
+            stop_ev = st.session_state.get("_stop_event")
+            pause_ev = st.session_state.get("_pause_event")
+            if stop_ev:
+                stop_ev.set()
+            if pause_ev:
+                pause_ev.clear()  # 일시정지 중이면 해제하여 스레드가 stop_event 감지 가능
+            if status == "paused":
+                st.session_state["current_run_status"] = "running"
+                st.rerun()
+            else:
+                st.info("중지 신호를 전송했습니다. 현재 스텝 완료 후 중단됩니다.")
 ```
 
 ---
@@ -577,6 +634,8 @@ def _render_running_ui() -> None:
 | **R-RACE-02** | 시나리오 D의 경우 — stopped가 먼저 처리되어 "중단" 레코드가 기록된다. Queue에 남은 completed 메시지는 다음 rerun에서 드레인되지 않는다. 이유: `_reset_run_state()` 후 `_result_queue = None`으로 초기화되므로 Q 참조 소멸. |
 | **R-RACE-03** | 시나리오 C의 경우 — completed가 먼저 처리되어 "완료" 레코드가 기록된다. 이후 stopped 메시지는 소멸. |
 | **R-RACE-04** | 사용자의 [학습 중지] 클릭 의도가 항상 우선한다는 보장은 없다. stop_event.set() 이후 TrainingWorker가 이미 completed를 put했다면 "완료"로 처리되어 모델이 저장된다. 이것은 정상 동작이다. |
+| **R-RACE-05** | 일시정지 중 [⏹ 학습 중지] 클릭 시 `stop_event.set()` + `pause_event.clear()` 순서로 처리한다. `pause_event.clear()` 없이는 스레드가 pause 대기 루프에 갇혀 stop_event를 감지하지 못한다. |
+| **R-RACE-06** | `_ckpt_saved` 플래그로 동일 pause_event 세트에서 체크포인트가 1회만 저장된다. `pause_event.clear()` 후 플래그는 초기화되므로 다음 일시정지 시 재저장 가능. |
 
 **요약**: 경쟁 조건은 Queue의 메시지 도착 순서로 자연 해결된다. 별도의 락이나 플래그 없이 "먼저 도착한 종료 메시지가 우선"이다.
 

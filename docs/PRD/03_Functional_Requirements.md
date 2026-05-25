@@ -23,11 +23,10 @@
 - [B. Detailed Specification](#b-detailed-specification)
   - [B.1 공통 기능 (CMN)](#b1-공통-기능-cmn)
   - [B.2 탭1 — 데이터 폴더 구조](#b2-탭1--데이터-폴더-구조)
-  - [B.3 탭2 — 전처리 파라미터 설정](#b3-탭2--전처리-파라미터-설정)
-  - [B.4 탭3 — 모델 파라미터 설정](#b4-탭3--모델-파라미터-설정)
-  - [B.5 탭4 — 학습 시작 + 학습 로그](#b5-탭4--학습-시작--학습-로그)
-  - [B.6 탭5 — 실험 히스토리 + 결과 상세 + 모델 저장](#b6-탭5--실험-히스토리--결과-상세--모델-저장)
-  - [B.7 탭6 — 이상 영역 시각화](#b7-탭6--이상-영역-시각화)
+  - [B.3 탭2 — 전처리 및 모델 설정](#b3-탭2--전처리-및-모델-설정)
+  - [B.4 탭3 — 학습 시작 + 학습 로그](#b4-탭3--학습-시작--학습-로그)
+  - [B.5 탭4 — 실험 히스토리 + 결과 상세 + 모델 저장](#b5-탭4--실험-히스토리--결과-상세--모델-저장)
+  - [B.6 탭5 — 이상 영역 시각화](#b6-탭5--이상-영역-시각화)
 - [C. System & Data Design](#c-system--data-design)
 - [D. API Contracts](#d-api-contracts)
 - [E. AI/ML Details](#e-aiml-details)
@@ -42,7 +41,7 @@
 
 ### A.1 이 문서의 목적
 
-탭1~탭6 전체 기능을 FR ID 단위로 분해하여, 각 기능의 동작 조건·UI 컴포넌트·유효성 검증·입출력을 구현 가능한 수준으로 명세한다. 이 문서에 정의된 FR이 구현 완료 기준이 된다.
+탭1~탭5 전체 기능을 FR ID 단위로 분해하여, 각 기능의 동작 조건·UI 컴포넌트·유효성 검증·입출력을 구현 가능한 수준으로 명세한다. 이 문서에 정의된 FR이 구현 완료 기준이 된다.
 
 ### A.2 FR 전체 목록 요약
 
@@ -50,12 +49,11 @@
 |------|-----------|-----------|------|
 | 공통 (CMN) | 4 | 0 | 4 |
 | 탭1 | 6 | 2 | 8 |
-| 탭2 | 5 | 2 | 7 |
-| 탭3 | 7 | 2 | 9 |
-| 탭4 | 6 | 2 | 8 |
-| 탭5 | 6 | 3 | 9 |
-| 탭6 | 5 | 3 | 8 |
-| **합계** | **39** | **14** | **53** |
+| 탭2 (전처리 및 모델 설정 통합) | 12 | 3 | 15 |
+| 탭3 (구 탭4) | 6 | 2 | 8 |
+| 탭4 (구 탭5) | 6 | 3 | 9 |
+| 탭5 (구 탭6) | 5 | 3 | 8 |
+| **합계** | **39** | **13** | **52** |
 
 ---
 
@@ -74,7 +72,7 @@
 | **설명** | 앱 최초 실행 시 session_state를 초기화하고 전체 레이아웃을 구성한다 |
 | **트리거** | `app.py` 실행 (Streamlit 프로세스 시작) |
 | **구현 위치** | `app.py` |
-| **동작** | 1. `utils/session_state_init.py`의 `init_session_state()` 호출 (00_Global_Context 3.1절 스키마 기준) <br> 2. `st.set_page_config(page_title="비전검사 대시보드", layout="wide")` <br> 3. `components/sidebar.py`의 사이드바 렌더링 <br> 4. `st.tabs(["📁 데이터", "🔧 전처리", "⚙️ 모델 설정", "🚀 학습", "📊 히스토리", "🔍 Anomaly Map"])` 로 6탭 렌더링 <br> 5. 각 탭 내부에서 해당 `tabs/tab{n}_*.py` 함수 호출 |
+| **동작** | 1. `utils/session_state_init.py`의 `init_session_state()` 호출 (00_Global_Context 3.1절 스키마 기준) <br> 2. `st.set_page_config(page_title="비전검사 대시보드", layout="wide")` <br> 3. `components/sidebar.py`의 사이드바 렌더링 <br> 4. `st.tabs(["📁 데이터", "(이모지 미확정) 전처리 및 모델 설정", "🚀 학습", "📊 히스토리", "🔍 Anomaly Map"])` 로 5탭 렌더링 <br> 5. 각 탭 내부에서 해당 `tabs/tab{n}_*.py` 함수 호출 |
 | **멱등성** | Streamlit rerun 발생 시 `init_session_state()`는 이미 설정된 키를 덮어쓰지 않는다 |
 
 ---
@@ -101,7 +99,8 @@
 | **구현 위치** | 각 `tabs/tab{n}_*.py` 파일 상단 |
 | **구현 패턴** | `if session_state.{key} is None: st.warning(MSG["{key}"]); return` |
 | **차단 조건 및 메시지** | 01_Product_Overview.md B.4절 표와 동일 |
-| **비고** | `st.tabs()`는 항상 6개 탭을 렌더링한다. `return`으로 함수를 조기 종료하여 이후 코드를 실행하지 않는다 |
+| **Guard 체인** | 탭2 guard: `dataset_meta is None` → `st.warning(MSG["NO_DATASET"]); return` <br> 탭3 guard: `dataset_path is None or preprocessing_config is None or model_config is None` → `st.warning(MSG["{key}"]); return` <br> (구 탭3의 독립 guard `preprocessing_config is None` 제거 — 탭2·탭3 통합으로 소멸) |
+| **비고** | `st.tabs()`는 항상 5개 탭을 렌더링한다. `return`으로 함수를 조기 종료하여 이후 코드를 실행하지 않는다 |
 
 ---
 
@@ -211,7 +210,7 @@
 
 ---
 
-### B.3 탭2 — 전처리 파라미터 설정
+### B.3 탭2 — 전처리 및 모델 설정
 
 ---
 
@@ -264,15 +263,15 @@
 
 ---
 
-#### FR-T2-05 (M): 전처리 설정 저장
+#### FR-T2-05 (M): 설정 저장
 
 | 항목 | 내용 |
 |------|------|
-| **설명** | 현재 UI 설정을 session_state.preprocessing_config에 저장한다 |
-| **Streamlit 컴포넌트** | `st.button("전처리 설정 저장", type="primary")` |
-| **동작** | 1. 현재 UI 값으로 preprocessing_config dict 구성 (00_Global_Context 1.6절 스키마) <br> 2. `st.session_state.preprocessing_config = config` <br> 3. `st.success("전처리 설정이 저장되었습니다.")` |
-| **추가 버튼** | `st.button("configs.yaml 저장")` → `save_config_section("preprocessing", config)` |
-| **추가 버튼** | `st.button("configs.yaml 불러오기")` → UC-09 플로우 실행 |
+| **설명** | 전처리 영역 및 모델 영역의 현재 UI 설정을 session_state에 동시 저장한다 |
+| **Streamlit 컴포넌트** | `st.button("설정 저장", type="primary")` |
+| **동작** | 1. 현재 UI 값으로 preprocessing_config dict 구성 (00_Global_Context 1.6절 스키마) <br> 2. 현재 UI 값으로 model_config dict 구성 (00_Global_Context 1.7절 스키마) <br> 3. `st.session_state.preprocessing_config = preprocessing_config` <br> 4. `st.session_state.model_config = model_config` <br> 5. `st.success("설정이 저장되었습니다.")` |
+| **추가 버튼** | `st.button("configs.yaml 저장")` → `save_config_section("preprocessing", preprocessing_config)` + `save_config_section("model", model_config)` (preprocessing + model 섹션 동시 저장) |
+| **추가 버튼** | `st.button("configs.yaml 불러오기")` → UC-09 플로우 실행 (preprocessing + model 섹션 모두 로드) |
 
 ---
 
@@ -296,11 +295,7 @@
 
 ---
 
-### B.4 탭3 — 모델 파라미터 설정
-
----
-
-#### FR-T3-01 (M): 모델 종류 라디오 선택
+#### FR-T2-08 (M): 모델 종류 라디오 선택
 
 | 항목 | 내용 |
 |------|------|
@@ -311,17 +306,18 @@
 
 ---
 
-#### FR-T3-02 (M): 공통 파라미터 UI
+#### FR-T2-09 (M): 공통 파라미터 UI
+
+공통 설정은 batch_size + random_seed 2개로 구성된다. image_size는 전처리 영역(FR-T2-03) 단독 소유이며 이 섹션에서 중복 렌더링하지 않는다.
 
 | 파라미터 | Streamlit 컴포넌트 | 범위 | 기본값 | 비고 |
 |----------|-------------------|------|--------|------|
-| image_size | `st.number_input("이미지 크기 (image_size)", 32, 1024, 256, 32)` | 32~1024, 32배수 | 256 | `preprocessing_config.image_size` 자동 반영 (S: FR-T3-07) |
 | batch_size | `st.number_input("배치 크기 (batch_size)", 1, 128, 16, 1)` | 1~128 | 16 | |
 | random_seed | `st.number_input("랜덤 시드 (random_seed)", 0, 2147483647, 42, 1)` | 0~2147483647 | 42 | |
 
 ---
 
-#### FR-T3-03 (M): EfficientAD 전용 파라미터 UI — 기본 노출
+#### FR-T2-10 (M): EfficientAD 전용 파라미터 UI — 기본 노출
 
 | 파라미터 | Streamlit 컴포넌트 | 범위 | 기본값 |
 |----------|-------------------|------|--------|
@@ -338,7 +334,7 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 
 ---
 
-#### FR-T3-04 (M): EfficientAD 고급 설정
+#### FR-T2-11 (M): EfficientAD 고급 설정
 
 | 항목 | 내용 |
 |------|------|
@@ -357,7 +353,7 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 
 ---
 
-#### FR-T3-05 (M): PatchCore 전용 파라미터 UI — 기본 노출
+#### FR-T2-12 (M): PatchCore 전용 파라미터 UI — 기본 노출
 
 | 파라미터 | Streamlit 컴포넌트 | 범위 | 기본값 |
 |----------|-------------------|------|--------|
@@ -369,7 +365,7 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 
 ---
 
-#### FR-T3-06 (M): PatchCore 고급 설정
+#### FR-T2-13 (M): PatchCore 고급 설정
 
 | 항목 | 내용 |
 |------|------|
@@ -383,39 +379,19 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 
 ---
 
-#### FR-T3-07 (M): Threshold 설정 + 디바이스 감지
+#### FR-T2-14 (M): Threshold 설정 + 디바이스 감지
 
 | 항목 | 내용 |
 |------|------|
 | **Threshold 방식** | `st.radio("Threshold 방식", ["Percentile (백분위)", "Absolute (절대값)"], horizontal=True)` <br> "Percentile" → `"percentile"`, "Absolute" → `"absolute"` |
 | **Threshold 값 — percentile** | `st.slider("백분위 값", 0.0, 100.0, 95.0, 0.5)` |
 | **Threshold 값 — absolute** | `st.slider("절대값", 0.0, 1.0, 0.5, 0.01)` |
-| **디바이스 감지** | 탭3 최초 렌더링 시 `torch.cuda.is_available()` 실행 <br> → `device_info` 구성 후 Write <br> → `st.info(f"현재 디바이스: {'CUDA (' + gpu_name + ')' if device=='cuda' else 'CPU'}")` |
+| **디바이스 감지** | 탭2 최초 렌더링 시 `torch.cuda.is_available()` 실행 <br> → `device_info` 구성 후 Write <br> → `st.info(f"현재 디바이스: {'CUDA (' + gpu_name + ')' if device=='cuda' else 'CPU'}")` |
 | **디바이스 감지 실행 조건** | `device_info is None`인 경우에만 실행 (rerun 시 재감지 방지) |
 
 ---
 
-#### FR-T3-08 (M): 모델 설정 저장
-
-| 항목 | 내용 |
-|------|------|
-| **Streamlit 컴포넌트** | `st.button("모델 설정 저장", type="primary")` |
-| **동작** | 1. 현재 UI 값으로 model_config dict 구성 (00_Global_Context 1.7절 스키마) <br> 2. `st.session_state.model_config = config` <br> 3. `st.success("모델 설정이 저장되었습니다.")` |
-| **추가 버튼** | `st.button("configs.yaml 저장")`, `st.button("configs.yaml 불러오기")` (UC-09 동일) |
-
----
-
-#### FR-T3-09 (S): image_size 탭2 연동 자동 반영
-
-| 항목 | 내용 |
-|------|------|
-| **설명** | 탭3 진입 시 `preprocessing_config.image_size` 값을 image_size 필드의 초기값으로 자동 반영한다 |
-| **구현** | `default_image_size = st.session_state.preprocessing_config.get("image_size", 256) if st.session_state.preprocessing_config else 256` |
-| **불일치 감지** | 탭3에서 image_size를 변경 후 탭3 재진입 시 `preprocessing_config.image_size`와 다르면 `st.warning("image_size가 전처리 설정과 다릅니다. 동기화 권장.")` |
-
----
-
-#### FR-T3-10 (S): 정상/결함 비율 실시간 표시
+#### FR-T2-15 (S): 정상/결함 비율 실시간 표시
 
 | 항목 | 내용 |
 |------|------|
@@ -426,11 +402,11 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 
 ---
 
-### B.5 탭4 — 학습 시작 + 학습 로그
+### B.4 탭3 — 학습 시작 + 학습 로그
 
 ---
 
-#### FR-T4-01 (M): 실험명 입력 및 자동 생성
+#### FR-T3-01 (M): 실험명 입력 및 자동 생성
 
 | 항목 | 내용 |
 |------|------|
@@ -441,7 +417,7 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 
 ---
 
-#### FR-T4-02 (M): 학습 전 설정 요약 표시
+#### FR-T3-02 (M): 학습 전 설정 요약 표시
 
 | 항목 | 내용 |
 |------|------|
@@ -451,19 +427,19 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 
 ---
 
-#### FR-T4-03 (M): 학습 실행 제어 버튼
+#### FR-T3-03 (M): 학습 실행 제어 버튼
 
 | 항목 | 내용 |
 |------|------|
 | **[학습 시작] 버튼** | `st.button("🚀 학습 시작", type="primary", disabled=(current_run_status == "running"))` |
 | **[학습 중지] 버튼** | `st.button("⏹ 학습 중지", type="secondary", disabled=(current_run_status != "running"))` |
 | **상태 표시** | `current_run_status == "running"` → `st.warning("학습 진행 중입니다...")` |
-| **[학습 시작] 동작** | 1. `current_run_status = "running"` <br> 2. `threading.Thread(target=training_worker, args=(queue, config), daemon=True).start()` <br> 3. 메인 루프 진입 (FR-T4-04) |
-| **[학습 중지] 동작** | 1. `stop_event.set()` (threading.Event) <br> 2. 백그라운드 스레드가 stop_event 감지 후 종료 <br> 3. FR-T4-06 중단 처리 실행 |
+| **[학습 시작] 동작** | 1. `current_run_status = "running"` <br> 2. `threading.Thread(target=training_worker, args=(queue, config), daemon=True).start()` <br> 3. 메인 루프 진입 (FR-T3-04) |
+| **[학습 중지] 동작** | 1. `stop_event.set()` (threading.Event) <br> 2. 백그라운드 스레드가 stop_event 감지 후 종료 <br> 3. FR-T3-06 중단 처리 실행 |
 
 ---
 
-#### FR-T4-04 (M): 진행률 + 실시간 차트 갱신
+#### FR-T3-04 (M): 진행률 + 실시간 차트 갱신
 
 | 항목 | 내용 |
 |------|------|
@@ -478,7 +454,7 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 
 ---
 
-#### FR-T4-05 (M): 학습 완료 처리
+#### FR-T3-05 (M): 학습 완료 처리
 
 | 항목 | 내용 |
 |------|------|
@@ -493,7 +469,7 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 
 ---
 
-#### FR-T4-06 (M): 학습 중단 처리
+#### FR-T3-06 (M): 학습 중단 처리
 
 | 항목 | 내용 |
 |------|------|
@@ -502,7 +478,7 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 
 ---
 
-#### FR-T4-07 (S): 실험명 자동 생성 표시
+#### FR-T3-07 (S): 실험명 자동 생성 표시
 
 | 항목 | 내용 |
 |------|------|
@@ -511,25 +487,25 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 
 ---
 
-#### FR-T4-08 (S): 중단 실험 히스토리 기록
+#### FR-T3-08 (S): 중단 실험 히스토리 기록
 
 | 항목 | 내용 |
 |------|------|
-| **설명** | 중단 시 히스토리에 "중단" 상태 레코드를 남긴다 (FR-T4-06과 동일, Should 항목으로 명시) |
-| **표시** | 탭5 테이블에서 status="중단" 행은 회색 텍스트로 렌더링 |
+| **설명** | 중단 시 히스토리에 "중단" 상태 레코드를 남긴다 (FR-T3-06과 동일, Should 항목으로 명시) |
+| **표시** | 탭4 테이블에서 status="중단" 행은 회색 텍스트로 렌더링 |
 
 ---
 
-### B.6 탭5 — 실험 히스토리 + 결과 상세 + 모델 저장
+### B.5 탭4 — 실험 히스토리 + 결과 상세 + 모델 저장
 
 ---
 
-#### FR-T5-01 (M): 실험 목록 테이블 렌더링
+#### FR-T4-01 (M): 실험 목록 테이블 렌더링
 
 | 항목 | 내용 |
 |------|------|
 | **설명** | history.json을 로드하여 실험 목록을 테이블로 표시한다 |
-| **데이터 로드** | `load_history()` 호출 (탭5 진입 시마다 재로드하여 최신 상태 반영) |
+| **데이터 로드** | `load_history()` 호출 (탭4 진입 시마다 재로드하여 최신 상태 반영) |
 | **테이블 컬럼** | 실험명 / 모델 / 파라미터 요약 / Accuracy / Precision / Recall / F1 / F2 / AUC / 실행 시각 / 상태 |
 | **파라미터 요약 형식** | EfficientAD: `medium/70k/adam` / PatchCore: `wrn50/0.1` |
 | **중단 실험 표시** | status="중단" 행: 지표 컬럼에 "—" 표시 |
@@ -539,7 +515,7 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 
 ---
 
-#### FR-T5-02 (M): 실험 상세 결과 표시
+#### FR-T4-02 (M): 실험 상세 결과 표시
 
 | 항목 | 내용 |
 |------|------|
@@ -552,7 +528,7 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 
 ---
 
-#### FR-T5-03 (M): 실험 삭제
+#### FR-T4-03 (M): 실험 삭제
 
 | 항목 | 내용 |
 |------|------|
@@ -564,7 +540,7 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 
 ---
 
-#### FR-T5-04 (M): 모델 저장
+#### FR-T4-04 (M): 모델 저장
 
 | 항목 | 내용 |
 |------|------|
@@ -578,26 +554,26 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 
 ---
 
-#### FR-T5-05 (M): 탭5 Guard
+#### FR-T4-05 (M): 탭4 Guard
 
 | 항목 | 내용 |
 |------|------|
-| **설명** | 실험이 없으면 탭5 핵심 기능을 차단한다 |
+| **설명** | 실험이 없으면 탭4 핵심 기능을 차단한다 |
 | **조건** | `len(load_history()) == 0` |
 | **처리** | `st.warning(MSG["NO_EXPERIMENTS"]); return` |
 
 ---
 
-#### FR-T5-06 (M): 탭5 탭 진입 시 history.json 재로드
+#### FR-T4-06 (M): 탭4 진입 시 history.json 재로드
 
 | 항목 | 내용 |
 |------|------|
-| **설명** | 탭5 진입 시마다 history.json을 재로드하여 탭4 완료 직후의 실험도 즉시 반영한다 |
-| **구현** | 탭5 함수 최상단에서 `experiments = load_history()` 호출 후 `session_state.experiments` 갱신 |
+| **설명** | 탭4 진입 시마다 history.json을 재로드하여 탭3 완료 직후의 실험도 즉시 반영한다 |
+| **구현** | 탭4 함수 최상단에서 `experiments = load_history()` 호출 후 `session_state.experiments` 갱신 |
 
 ---
 
-#### FR-T5-07 (S): 다중 실험 비교 차트
+#### FR-T4-07 (S): 다중 실험 비교 차트
 
 | 항목 | 내용 |
 |------|------|
@@ -611,15 +587,15 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 
 ---
 
-#### FR-T5-08 (S): 저장 완료 정보 출력
+#### FR-T4-08 (S): 저장 완료 정보 출력
 
 | 항목 | 내용 |
 |------|------|
-| **설명** | 모델 저장 완료 시 경로·파일명·용량을 명확히 출력한다 (FR-T5-04 완료 메시지와 동일) |
+| **설명** | 모델 저장 완료 시 경로·파일명·용량을 명확히 출력한다 (FR-T4-04 완료 메시지와 동일) |
 
 ---
 
-#### FR-T5-09 (S): 중단 실험 시각적 구분
+#### FR-T4-09 (S): 중단 실험 시각적 구분
 
 | 항목 | 내용 |
 |------|------|
@@ -628,21 +604,21 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 
 ---
 
-### B.7 탭6 — 이상 영역 시각화
+### B.6 탭5 — 이상 영역 시각화
 
 ---
 
-#### FR-T6-01 (M): 탭6 Guard
+#### FR-T5-01 (M): 탭5 Guard
 
 | 항목 | 내용 |
 |------|------|
-| **설명** | selected_experiment_id가 None이면 탭6 핵심 기능을 차단한다 |
+| **설명** | selected_experiment_id가 None이면 탭5 핵심 기능을 차단한다 |
 | **조건** | `selected_experiment_id is None` |
 | **처리** | `st.warning(MSG["NO_SELECTED_EXP"]); return` |
 
 ---
 
-#### FR-T6-02 (M): 테스트 이미지 목록 테이블
+#### FR-T5-02 (M): 테스트 이미지 목록 테이블
 
 | 항목 | 내용 |
 |------|------|
@@ -656,7 +632,7 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 
 ---
 
-#### FR-T6-03 (M): Threshold 슬라이더 실시간 갱신
+#### FR-T5-03 (M): Threshold 슬라이더 실시간 갱신
 
 | 항목 | 내용 |
 |------|------|
@@ -668,7 +644,7 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 
 ---
 
-#### FR-T6-04 (M): 3분할 시각화
+#### FR-T5-04 (M): 3분할 시각화
 
 | 항목 | 내용 |
 |------|------|
@@ -682,7 +658,7 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 
 ---
 
-#### FR-T6-05 (M): PNG 저장
+#### FR-T5-05 (M): PNG 저장
 
 | 항목 | 내용 |
 |------|------|
@@ -693,7 +669,7 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 
 ---
 
-#### FR-T6-06 (S): 결함 유형 필터 드롭다운
+#### FR-T5-06 (S): 결함 유형 필터 드롭다운
 
 | 항목 | 내용 |
 |------|------|
@@ -704,7 +680,7 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 
 ---
 
-#### FR-T6-07 (S): 이미지별 Anomaly Score 요약 표시
+#### FR-T5-07 (S): 이미지별 Anomaly Score 요약 표시
 
 | 항목 | 내용 |
 |------|------|
@@ -713,7 +689,7 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 
 ---
 
-#### FR-T6-08 (S): FP/FN 표시
+#### FR-T5-08 (S): FP/FN 표시
 
 | 항목 | 내용 |
 |------|------|
@@ -732,23 +708,21 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 | FR ID | Read 키 | Write 키 |
 |-------|---------|----------|
 | FR-T1-01~06 | - | `dataset_path`, `dataset_meta` |
-| FR-T2-01~07 | `dataset_path`, `dataset_meta` | `preprocessing_config` |
-| FR-T3-01~10 | `preprocessing_config` | `model_config`, `device_info` |
-| FR-T4-01~08 | `dataset_path`, `preprocessing_config`, `model_config`, `device_info` | `experiments[exp_id]`, `current_run_status`, `current_exp_id` |
-| FR-T5-01~09 | `experiments` | `selected_experiment_id` |
-| FR-T6-01~08 | `selected_experiment_id`, `experiments`, `dataset_meta` | `anomaly_map_threshold` |
+| FR-T2-01~15 | `dataset_path`, `dataset_meta` | `preprocessing_config`, `model_config`, `device_info` |
+| FR-T3-01~08 | `dataset_path`, `preprocessing_config`, `model_config`, `device_info` | `experiments[exp_id]`, `current_run_status`, `current_exp_id` |
+| FR-T4-01~09 | `experiments` | `selected_experiment_id` |
+| FR-T5-01~08 | `selected_experiment_id`, `experiments`, `dataset_meta` | `anomaly_map_threshold` |
 
 ### C.2 파일 I/O 의존성 매핑
 
 | FR ID | 읽기 파일 | 쓰기 파일 |
 |-------|-----------|-----------|
-| FR-T2-05 | `./configs.yaml` (선택적) | `./configs.yaml` (preprocessing 섹션) |
-| FR-T3-08 | `./configs.yaml` (선택적) | `./configs.yaml` (model 섹션) |
-| FR-T4-05 | - | `./experiments/history.json`, `./models/{exp_id}/model_state_dict.pth`, `./models/{exp_id}/configs.yaml`, `./logs/{exp_id}.log` |
-| FR-T4-06 | - | `./experiments/history.json` |
-| FR-T5-01 | `./experiments/history.json` | - |
-| FR-T5-03 | - | `./experiments/history.json` (삭제) |
-| FR-T5-04 | `./models/{exp_id}/model_state_dict.pth` | 지정 경로 |
+| FR-T2-05 | `./configs.yaml` (선택적) | `./configs.yaml` (preprocessing 섹션 + model 섹션) |
+| FR-T3-05 | - | `./experiments/history.json`, `./models/{exp_id}/model_state_dict.pth`, `./models/{exp_id}/configs.yaml`, `./logs/{exp_id}.log` |
+| FR-T3-06 | - | `./experiments/history.json` |
+| FR-T4-01 | `./experiments/history.json` | - |
+| FR-T4-03 | - | `./experiments/history.json` (삭제) |
+| FR-T4-04 | `./models/{exp_id}/model_state_dict.pth` | 지정 경로 |
 
 ---
 
@@ -766,7 +740,7 @@ N/A — REST API 없음. 내부 인터페이스는 00_Global_Context_Document.md
 N/A — 이 문서는 기능 명세 범위이다.
       학습 루프, 모델 초기화, 메트릭 계산 알고리즘의 상세 구현은
       08_AI_ML_Integration.md에서 다룬다.
-      여기서는 FR-T4 탭에서 ML 기능을 트리거하는 UI 계약만 정의한다.
+      여기서는 FR-T3 탭에서 ML 기능을 트리거하는 UI 계약만 정의한다.
 ```
 
 ---
@@ -780,10 +754,10 @@ N/A — 이 문서는 기능 명세 범위이다.
 | 항목 | 요구사항 | 관련 FR |
 |------|----------|---------|
 | **미리보기 갱신 속도** | 탭2 파라미터 변경 후 미리보기 갱신 ≤ 2초 | FR-T2-04 |
-| **테이블 로드 속도** | 실험 ≤ 100개 기준 탭5 테이블 초기 렌더링 ≤ 1초 | FR-T5-01 |
-| **Threshold 슬라이더 응답** | 슬라이더 조작 후 테이블 갱신 ≤ 0.5초 (재추론 없이 기존 scores 재계산만) | FR-T6-03 |
-| **configs.yaml 쓰기 안전성** | R-ATOMIC-01 (임시 파일 → rename) | FR-T2-05, FR-T3-08 |
-| **history.json 쓰기 안전성** | R-ATOMIC-01 | FR-T4-05, FR-T4-06, FR-T5-03 |
+| **테이블 로드 속도** | 실험 ≤ 100개 기준 탭4 테이블 초기 렌더링 ≤ 1초 | FR-T4-01 |
+| **Threshold 슬라이더 응답** | 슬라이더 조작 후 테이블 갱신 ≤ 0.5초 (재추론 없이 기존 scores 재계산만) | FR-T5-03 |
+| **configs.yaml 쓰기 안전성** | R-ATOMIC-01 (임시 파일 → rename) | FR-T2-05 |
+| **history.json 쓰기 안전성** | R-ATOMIC-01 | FR-T3-05, FR-T3-06, FR-T4-03 |
 
 ---
 
@@ -798,14 +772,14 @@ FR별 로그 이벤트 매핑:
 | FR-T1-01 (성공) | `dataset_validated` | INFO |
 | FR-T1-01 (실패) | `dataset_validation_failed` | ERROR |
 | FR-T2-05 | `preprocessing_config_saved` | INFO |
-| FR-T3-08 | `model_config_saved` | INFO |
-| FR-T4-03 (시작) | `training_started` | INFO |
-| FR-T4-04 (step) | `training_step` | INFO |
-| FR-T4-05 (완료) | `training_completed` | INFO |
-| FR-T4-06 (중단) | `training_stopped` | WARNING |
-| FR-T4-05 (실패) | `training_failed` | ERROR |
-| FR-T5-04 (저장) | `model_saved` | INFO |
-| FR-T5-03 (삭제) | `experiment_deleted` | WARNING |
+| FR-T2-05 | `model_config_saved` | INFO |
+| FR-T3-03 (시작) | `training_started` | INFO |
+| FR-T3-04 (step) | `training_step` | INFO |
+| FR-T3-05 (완료) | `training_completed` | INFO |
+| FR-T3-06 (중단) | `training_stopped` | WARNING |
+| FR-T3-05 (실패) | `training_failed` | ERROR |
+| FR-T4-04 (저장) | `model_saved` | INFO |
+| FR-T4-03 (삭제) | `experiment_deleted` | WARNING |
 
 ---
 
@@ -813,7 +787,7 @@ FR별 로그 이벤트 매핑:
 
 ### H.1 FR 완료 기준 체크리스트
 
-모든 M 항목(39개)을 구현하고 아래 체크리스트를 통과해야 MVP 완료로 판정한다.
+모든 M 항목(39개)을 구현하고 아래 체크리스트를 통과해야 MVP 완료로 판정한다. (탭2+탭3 통합으로 전체 FR 수 52개, M 39개 유지)
 
 #### 탭1
 
@@ -824,57 +798,56 @@ FR별 로그 이벤트 매핑:
 - [ ] FR-T1-05: 결함 클래스 수 ≤ 4 시 1행, > 4 시 다음 행으로 wrap
 - [ ] FR-T1-06: channels == 1 시 MSG["GRAYSCALE_DETECT"] 표시
 
-#### 탭2
+#### 탭2 (전처리 영역)
 
 - [ ] FR-T2-01: HE 선택 시 슬라이더 DOM 미존재
 - [ ] FR-T2-02: 모든 슬라이더 범위 내 값만 허용
 - [ ] FR-T2-03: image_size 32의 배수 아닌 값 입력 시 st.error()
 - [ ] FR-T2-04: 슬라이더 변경 후 2초 이내 미리보기 갱신
-- [ ] FR-T2-05: [전처리 설정 저장] 후 session_state.preprocessing_config 갱신
+- [ ] FR-T2-05: [설정 저장] 후 session_state.preprocessing_config 및 session_state.model_config 갱신
+
+#### 탭2 (모델 영역)
+
+- [ ] FR-T2-08: PatchCore 선택 시 EfficientAD 파라미터 DOM 미존재
+- [ ] FR-T2-10: ae_loss_weight 슬라이더 0.0~1.0 범위 정상 동작
+- [ ] FR-T2-14: torch.cuda.is_available() 결과 사이드바에 반영
 
 #### 탭3
 
-- [ ] FR-T3-01: PatchCore 선택 시 EfficientAD 파라미터 DOM 미존재
-- [ ] FR-T3-03: ae_loss_weight 슬라이더 0.0~1.0 범위 정상 동작
-- [ ] FR-T3-07: torch.cuda.is_available() 결과 사이드바에 반영
-- [ ] FR-T3-08: [모델 설정 저장] 후 session_state.model_config 갱신
+- [ ] FR-T3-03: 학습 중 [학습 시작] disabled
+- [ ] FR-T3-04: 500 step마다 Loss 차트 갱신
+- [ ] FR-T3-04: 로그 텍스트 최신 100줄 유지
+- [ ] FR-T3-05: 완료 후 ./models/{exp_id}/ 에 .pth + configs.yaml 존재
+- [ ] FR-T3-06: 중지 후 history.json에 status="중단" 레코드 존재
 
 #### 탭4
 
-- [ ] FR-T4-03: 학습 중 [학습 시작] disabled
-- [ ] FR-T4-04: 500 step마다 Loss 차트 갱신
-- [ ] FR-T4-04: 로그 텍스트 최신 100줄 유지
-- [ ] FR-T4-05: 완료 후 ./models/{exp_id}/ 에 .pth + configs.yaml 존재
-- [ ] FR-T4-06: 중지 후 history.json에 status="중단" 레코드 존재
+- [ ] FR-T4-01: 탭4 진입 시 history.json 재로드 반영
+- [ ] FR-T4-02: ROC Curve AUC 값 범례에 표시
+- [ ] FR-T4-02: Anomaly Score 분포에 threshold 수직선 표시
+- [ ] FR-T4-03: 삭제 확인 팝업 후 삭제, ./models/{exp_id}/ 제거
+- [ ] FR-T4-04: 저장 후 경로·파일명·용량 출력
 
 #### 탭5
 
-- [ ] FR-T5-01: 탭5 진입 시 history.json 재로드 반영
-- [ ] FR-T5-02: ROC Curve AUC 값 범례에 표시
-- [ ] FR-T5-02: Anomaly Score 분포에 threshold 수직선 표시
-- [ ] FR-T5-03: 삭제 확인 팝업 후 삭제, ./models/{exp_id}/ 제거
-- [ ] FR-T5-04: 저장 후 경로·파일명·용량 출력
-
-#### 탭6
-
-- [ ] FR-T6-02: 테이블에 FP/FN/TP/TN 분류 표시
-- [ ] FR-T6-03: 슬라이더 변경 후 0.5초 이내 테이블 갱신
-- [ ] FR-T6-04: GT 없는 이미지에 빈 마스크 표시
-- [ ] FR-T6-05: PNG 다운로드 버튼 정상 동작
+- [ ] FR-T5-02: 테이블에 FP/FN/TP/TN 분류 표시
+- [ ] FR-T5-03: 슬라이더 변경 후 0.5초 이내 테이블 갱신
+- [ ] FR-T5-04: GT 없는 이미지에 빈 마스크 표시
+- [ ] FR-T5-05: PNG 다운로드 버튼 정상 동작
 
 ### H.2 Given-When-Then 시나리오
 
-#### TC-FR-T3-03: ae_loss_weight 저장 검증
+#### TC-FR-T2-10: ae_loss_weight 저장 검증
 
 ```
-Given:  탭3에서 EfficientAD 선택됨
+Given:  탭2 모델 영역에서 EfficientAD 선택됨
         ae_loss_weight=0.5 초기 상태
-When:   ae_loss_weight 슬라이더를 0.73으로 변경 후 [모델 설정 저장] 클릭
+When:   ae_loss_weight 슬라이더를 0.73으로 변경 후 [설정 저장] 클릭
 Then:   st.session_state.model_config["params"]["ae_loss_weight"] == 0.73
         학습 루프에서 ST 비중은 (1 - 0.73) = 0.27 이 자동 적용됨
 ```
 
-#### TC-FR-T4-05: 학습 완료 후 파일 검증
+#### TC-FR-T3-05: 학습 완료 후 파일 검증
 
 ```
 Given:  dataset_path, preprocessing_config, model_config 모두 설정됨
@@ -889,10 +862,10 @@ Then:   history.json 에 status="completed" 레코드 1개 추가됨
         experiment.metrics.auc >= 0.0 (값 존재 확인)
 ```
 
-#### TC-FR-T6-03: Threshold 슬라이더 실시간 갱신
+#### TC-FR-T5-03: Threshold 슬라이더 실시간 갱신
 
 ```
-Given:  탭6에서 실험 선택됨, 이미지 목록 테이블 표시 중
+Given:  탭5에서 실험 선택됨, 이미지 목록 테이블 표시 중
         initial_threshold = 0.5
         테이블 첫 번째 이미지 score = 0.6 → 초기 판정 "NG"
 When:   Threshold 슬라이더를 0.7로 변경한다
@@ -902,18 +875,18 @@ Then:   0.5초 이내 테이블 재렌더링
         session_state.anomaly_map_threshold == 0.7
 ```
 
-#### TC-FR-T5-03: 실험 삭제 안전성
+#### TC-FR-T4-03: 실험 삭제 안전성
 
 ```
 Given:  history.json 에 실험 2개 존재 (exp_A, exp_B)
         selected_experiment_id = "exp_A"
         ./models/exp_A/ 디렉토리 존재
-When:   탭5에서 exp_A 선택 후 [실험 삭제] → [확인] 클릭
+When:   탭4에서 exp_A 선택 후 [실험 삭제] → [확인] 클릭
 Then:   history.json 에 exp_A 레코드 없음, exp_B 레코드 유지
         session_state.selected_experiment_id == None
         ./models/exp_A/ 디렉토리 없음
         ./logs/exp_A.log 없음
-        탭6 진입 시 MSG["NO_SELECTED_EXP"] 표시
+        탭5 진입 시 MSG["NO_SELECTED_EXP"] 표시
 ```
 
 ---
@@ -922,7 +895,7 @@ Then:   history.json 에 exp_A 레코드 없음, exp_B 레코드 유지
 
 ```
 N/A — 전체 구현 순서·WBS·소요 시간은 14_Deployment_and_Release_Plan.md에서 다룬다.
-      이 문서의 FR ID(FR-T1-01 ~ FR-T6-08)는
+      이 문서의 FR ID(FR-T1-01 ~ FR-T5-08)는
       14_Deployment_and_Release_Plan.md의 WBS 작업 항목으로 직접 매핑된다.
 ```
 

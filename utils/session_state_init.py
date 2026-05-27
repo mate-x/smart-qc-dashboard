@@ -17,16 +17,18 @@ SESSION_STATE_SCHEMA: dict = {
 
     # 탭4 Write
     "experiments": {},              # dict[str, dict]  key: experiment_id
-    "current_run_status": "idle",   # "idle" | "running" | "stopped" | "completed"
+    "current_run_status": "idle",   # "idle" | "running" | "paused" | "stopped" | "completed"
     "current_exp_id": None,         # str | None — 현재 실행 중인 실험 ID
 
     # 탭4 내부 상태 (접두사 _ = 탭4 전용)
     "_stop_event": None,            # threading.Event | None
+    "_pause_event": None,           # threading.Event | None — 일시정지 제어
     "_result_queue": None,          # queue.Queue | None
     "_worker": None,                # TrainingWorker | None  — 단일 워커 보장(07 PRD §8.2)
     "_progress": None,              # dict | None  {"step", "total", "loss", "elapsed"}
     "_log_lines": [],               # list[str]  최대 100줄
     "_loss_history": [],            # list[dict]  {"step": int, "loss": float}
+    "_last_ckpt_path": None,        # str | None — 가장 최근 저장된 체크포인트 경로
 
     # 탭5 Write
     "selected_experiment_id": None, # str | None

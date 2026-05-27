@@ -95,7 +95,8 @@
 │  ┌──────────────────────────────────────────────────────────────┐   │
 │  │              학습 비동기 레이어 (ADR-02)                         │   │
 │  │   TrainingWorker Thread  ←→  queue.Queue  ←→  메인 스레드 UI  │   │
-│  │   threading.Event (stop_event)                               │   │
+│  │   threading.Event (stop_event, pause_event)                  │   │
+│  │   utils/checkpoint_manager.py  (일시정지 시 .ckpt 저장)         │   │
 │  └──────────────────────────┬───────────────────────────────────┘   │
 └────────────────────────────┬┘────────────────────────────────────────┘
                              │ Python function call
@@ -203,7 +204,7 @@ def _handle_events():
 | `tab1_data_folder.py` | `render()` | 경로 입력, MVTec AD 검증, dataset_meta 구성, 트리/테이블/썸네일 렌더링 |
 | `tab2_preprocessing.py` | `render()` | 전처리 라디오, 파라미터 UI, 미리보기, preprocessing_config 저장 |
 | `tab3_model_params.py` | `render()` | 모델 라디오, 파라미터 UI, 디바이스 감지, model_config 저장 |
-| `tab4_training.py` | `render()` | 실험명 입력, 학습 시작/중지, Progress Bar, Loss 곡선, 로그 |
+| `tab4_training.py` | `render()` | 실험명 입력, 학습 시작/일시정지/재시작/중지, Progress Bar, Loss 곡선, 로그, 체크포인트 재시작 섹션 |
 | `tab5_history.py` | `render()` | 히스토리 테이블, 상세 결과 차트, 비교 차트, 모델 저장, 삭제 |
 | `tab6_anomaly_map.py` | `render()` | 이미지 목록 테이블, Threshold 슬라이더, 3분할 시각화, PNG 저장 |
 | `inspection/inspection_app.py` | `render()` | 비전검사 대시보드 진입점. render() 함수 제공. active_dashboard == "inspection" 시 app.py에서 호출 |
@@ -550,10 +551,12 @@ app.py
 ─────────────────────────────────────────────────────────────────────
 [학습 시작 버튼 클릭]
   stop_event = threading.Event()
+  pause_event = threading.Event()
   result_queue = queue.Queue()
   worker = TrainingWorker(
       config=...,
       stop_event=stop_event,
+      pause_event=pause_event,
       result_queue=result_queue
   )
   worker.daemon = True
@@ -568,24 +571,37 @@ app.py
 [매 rerun 사이클]                           if stop_event.is_set():
   while not result_queue.empty():            result_queue.put({"type":"stopped"})
     msg = result_queue.get_nowait()          return
-    if msg["type"] == "progress":          loss = train_step()
-      update_progress_bar(msg)             if step % 500 == 0:
+    if msg["type"] == "progress":          if pause_event.is_set():
+      update_progress_bar(msg)               save_checkpoint(...)  # .ckpt 저장
     elif msg["type"] == "log":               result_queue.put({
-      append_log(msg)                          "type":"progress",
-    elif msg["type"] == "completed":           "step": step, ...
-      handle_completion(msg)               })
-      break                             result_queue.put({"type":"log", ...})
-    elif msg["type"] == "error":
-      handle_error(msg)                [학습 완료]
-      break                            result_queue.put({
-    elif msg["type"] == "stopped":       "type":"completed",
-      handle_stopped()                   "y_true": [...],
-      break                             "scores": [...],
-  time.sleep(0.3)                        "model": model_object
-  st.rerun()                           })
+      append_log(msg)                          "type":"paused",
+    elif msg["type"] == "paused":              "ckpt_path": str(path)
+      handle_paused(msg)               })
+      # rerun 중단 (paused 상태)           while pause_event.is_set():
+    elif msg["type"] == "completed":           time.sleep(0.5)  # 재개 대기
+      handle_completion(msg)           loss = train_step()
+      break                            if step % 100 == 0:
+    elif msg["type"] == "error":           result_queue.put({
+      handle_error(msg)                    "type":"progress",
+      break                                "step": step, ...
+    elif msg["type"] == "stopped":     })
+      handle_stopped()             result_queue.put({"type":"log", ...})
+      break
+  time.sleep(0.3)                  [학습 완료]
+  st.rerun()                       result_queue.put({
+                                     "type":"completed", ...
+[⏸ 일시정지 버튼 클릭]             })
+  pause_event.set()
+  # 다음 rerun에서 "paused" 메시지 처리
 
-[학습 중지 버튼 클릭]
+[▶ 재시작 버튼 클릭]
+  pause_event.clear()
+  session_state.current_run_status = "running"
+  st.rerun()  # 자동 rerun 재개
+
+[⏹ 학습 중지 버튼 클릭]
   stop_event.set()
+  pause_event.clear()  # 일시정지 중이면 해제
   # 다음 rerun에서 "stopped" 메시지 처리
 ```
 
@@ -594,10 +610,12 @@ app.py
 | 규칙 | 설명 |
 |------|------|
 | **R-THREAD-01** | `st.session_state` Write는 메인 스레드에서만 수행한다. TrainingWorker는 절대 session_state에 직접 쓰지 않는다. |
-| **R-THREAD-02** | 메인 스레드와 백그라운드 스레드의 유일한 통신 수단은 `result_queue`(Queue)와 `stop_event`(Event)이다. |
+| **R-THREAD-02** | 메인 스레드와 백그라운드 스레드의 유일한 통신 수단은 `result_queue`(Queue), `stop_event`(Event), `pause_event`(Event)이다. |
 | **R-THREAD-03** | `worker.daemon = True`로 설정하여 Streamlit 프로세스 종료 시 워커 스레드도 함께 종료된다. |
 | **R-THREAD-04** | `result_queue.get_nowait()`를 사용한다. `get(block=True)`는 메인 스레드를 블로킹하므로 금지. |
 | **R-THREAD-05** | 메인 스레드는 `time.sleep(0.3)` 후 `st.rerun()`으로 UI를 갱신한다. sleep 시간은 0.3초 고정. |
+| **R-THREAD-06** | `paused` 상태에서는 자동 rerun을 중단한다. `pause_event.clear()` 후 `st.rerun()`으로 학습 루프를 재개한다. |
+| **R-THREAD-07** | 동일 pause_event 세트 내 체크포인트는 `_ckpt_saved` 플래그로 1회만 저장한다. |
 
 #### B.5.3 session_state 학습 관련 키
 

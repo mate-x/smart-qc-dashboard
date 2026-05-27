@@ -57,10 +57,10 @@
 
 | 기능 영역 | 포함 항목 |
 |-----------|-----------|
-| 데이터 검증 | MVTec AD 폴더 구조 검증, 이미지 수 카운트, 썸네일 렌더링, Grayscale 자동 감지 |
+| 데이터 검증 | MVTec AD 폴더 구조 검증, OK/NG 폴더 형식 자동 감지 및 80/20 자동 분할, 이미지 수 카운트, 썸네일 렌더링, Grayscale 자동 감지 |
 | 전처리 | None / Homomorphic Filter / HE / CLAHE 선택, Resize+Padding 고정, 정규화 선택 |
 | 모델 설정 | EfficientAD (small/medium), PatchCore (WideResNet50/ResNet18/ResNet50) 파라미터 GUI |
-| 학습 실행 | 학습 루프, Progress Bar, 실시간 Loss 곡선, 학습 중지, 실험 히스토리 저장 |
+| 학습 실행 | 학습 루프, Progress Bar, 실시간 Loss 곡선, 학습 중지, 일시정지/재시작, 체크포인트 저장/재시작, 실험 히스토리 저장 |
 | 결과 비교 | Confusion Matrix, ROC Curve, Anomaly Score 분포, 다중 실험 비교 차트 |
 | 시각화 | 3분할 Anomaly Map (원본/GT/Heatmap), Threshold 슬라이더, PNG 저장 |
 | 모델 저장 | state_dict + configs.yaml 고정 포맷 |
@@ -118,8 +118,9 @@
 
 ```
 Step 1 [탭1]  데이터 폴더 경로 입력
-              → MVTec AD 구조 검증
+              → MVTec AD 구조 검증 (또는 OK/NG 형식 자동 감지)
               → 폴더 트리, 이미지 수, 썸네일 확인
+              → OK/NG 형식 감지 시 80/20 자동 분할 안내 배너 표시
               → session_state.dataset_path, dataset_meta 저장
 
 Step 2 [탭2]  전처리 방식 선택 (None / Homomorphic / HE / CLAHE)
@@ -203,11 +204,17 @@ Step 6 [탭6]  선택된 실험의 테스트 이미지 목록 확인
 | EC-05 | `ground_truth/` 디렉토리 없음 | 해당 클래스 GT를 빈 마스크(전체 0)로 처리, 탭6 Heatmap은 정상 렌더링 |
 | EC-06 | CUDA 미사용 가능 환경 | CPU fallback, 사이드바에 "CPU" 표시, 학습 진행은 허용 |
 | EC-07 | 학습 중 [학습 중지] 클릭 | 즉시 중단 신호 전달, 데이터 폐기, status="중단"으로 history.json 기록 |
+| EC-12 | 학습 중 [⏸ 일시정지] 클릭 | 현재 step 완료 후 체크포인트 저장, `current_run_status = "paused"`, history.json 기록 안 함 |
+| EC-13 | 일시정지 중 [⏹ 학습 중지] 클릭 | `pause_event.clear()` 후 `stop_event.set()`, 학습 스레드가 stop_event 감지하여 종료, status="중단" 기록 |
+| EC-14 | 체크포인트 파일 손상/호환 불가 | `st.error()` 표시, 재시작 불가 안내, 체크포인트 삭제 버튼 제공 |
+| EC-15 | 체크포인트 재시작 시 experiment_id 충돌 | 새 ID 자동 생성 후 재시작, 사용자에게 `st.info()`로 안내 |
 | EC-08 | configs.yaml 없는 상태에서 불러오기 | 빈 dict 반환, 현재 UI 상태 유지 (오류 발생 금지) |
 | EC-09 | 동일 experiment_id 중복 | uuid4().hex[:4]의 충돌 확률 = 1/65536. 충돌 시 재생성 1회 (최대 2회 시도) |
 | EC-10 | 모델 저장 중 디스크 공간 부족 | `shutil.disk_usage()`로 사전 확인, 여유 < 500MB면 `st.warning()` + 저장 중단 |
 | EC-11 | 탭6에서 GT 마스크 이미지 크기 불일치 | Anomaly Map 크기 기준으로 GT 마스크를 `cv2.resize()` 후 표시 |
 | EC-12 | history.json 파싱 오류 | `st.error()` + 빈 실험 목록 표시, 파일 덮어쓰기 금지 |
+| EC-16 | OK/NG 형식에서 OK 또는 NG 디렉토리 중 하나만 존재 | `st.error(ERR_INVALID_FOLDER_STRUCTURE)` + dataset_path = None 유지 |
+| EC-17 | OK/NG 형식에서 OK 이미지 수 < 5개 | `st.warning()` 표시 (분할 후 학습 데이터 부족 경고), 학습 진행은 허용 |
 
 ### B.6 실패 시나리오
 
@@ -369,6 +376,8 @@ N/A - 이 시스템은 REST API 서버를 포함하지 않는다.
 | AC-08 | 잘못된 폴더 경로 입력 시 탭4 진입 차단 + 경고 메시지 표시 | 수동 테스트 |
 | AC-09 | [학습 중지] 클릭 후 history.json에 status="중단" 기록 확인 | 파일 내용 검증 |
 | AC-10 | 모델 저장 후 `./models/{exp_id}/` 디렉토리에 `.pth`와 `configs.yaml` 존재 확인 | 파일 존재 검증 |
+| AC-11 | [⏸ 일시정지] 클릭 후 `./models/checkpoints/{exp_id}_step{N}.ckpt` 파일 존재 확인 | 파일 존재 검증 |
+| AC-12 | 체크포인트에서 재시작 후 중단 지점 이후 step부터 학습 로그 출력 확인 | 수동 테스트 |
 
 ### H.2 Given-When-Then 시나리오 (제품 수준)
 

@@ -155,18 +155,35 @@ top_k_ratio              FLOAT     NOT NULL   0.0 ~ 1.0 / 기본값: 0.1
 ```
 session_state.dataset_meta 필드 구조
 
-필드명            타입      Nullable   제약조건
-─────────────────────────────────────────────────────
-dataset_path      STRING    NOT NULL   검증된 절대경로
-train_good_count  INTEGER   NOT NULL   train/good/ 이미지 수
-test_counts       OBJECT    NOT NULL   {"good": int, "<defect_class>": int, ...}
-gt_counts         OBJECT    NOT NULL   {"<defect_class>": int, ...}
-total_test_count  INTEGER   NOT NULL   test_counts 합계
-channels          INTEGER   NOT NULL   1 (Grayscale) | 3 (RGB)
-defect_classes    ARRAY     NOT NULL   결함 클래스 이름 문자열 배열, test/ 하위 디렉토리명 기준
-supported_formats ARRAY     NOT NULL   실제 발견된 포맷 배열, 예: [".jpg", ".png"]
-has_invalid_files BOOLEAN   NOT NULL   지원 포맷 외 파일 존재 여부
+필드명              타입      Nullable   제약조건
+─────────────────────────────────────────────────────────────────────
+dataset_path        STRING    NOT NULL   검증된 절대경로
+dataset_format      ENUM      NOT NULL   "mvtec" | "oking"
+train_good_count    INTEGER   NOT NULL   학습에 사용되는 정상 이미지 수
+                                          MVTec: train/good/ 이미지 수
+                                          OK/NG: OK 이미지의 앞 80% 수
+test_counts         OBJECT    NOT NULL   {"good": int, "<defect_class>": int, ...}
+                                          OK/NG: {"good": OK 뒤 20%, "<ng_key>": NG 전체}
+gt_counts           OBJECT    NOT NULL   {"<defect_class>": int, ...}
+                                          OK/NG 형식은 항상 {} (GT 마스크 없음)
+total_test_count    INTEGER   NOT NULL   test_counts 합계
+channels            INTEGER   NOT NULL   1 (Grayscale) | 3 (RGB)
+defect_classes      ARRAY     NOT NULL   결함 클래스 이름 문자열 배열
+                                          MVTec: test/ 하위 디렉토리명 기준 (good 포함)
+                                          OK/NG: NG 폴더명 (없으면 빈 배열)
+supported_formats   ARRAY     NOT NULL   실제 발견된 포맷 배열, 예: [".jpg", ".png"]
+has_invalid_files   BOOLEAN   NOT NULL   지원 포맷 외 파일 존재 여부 (OK/NG는 항상 False)
+
+─── OK/NG 형식 전용 필드 (dataset_format == "oking" 일 때만 존재) ───
+_oking_ok_dir       STRING    NOT NULL   OK 계열 폴더명 (예: "OK", "good")
+_oking_ng_dir       STRING    NULLABLE   NG 계열 폴더명. NG 없으면 None
+_oking_ok_count     INTEGER   NOT NULL   OK 폴더 전체 이미지 수
+_oking_ng_count     INTEGER   NOT NULL   NG 폴더 이미지 수 (없으면 0)
+_train_ratio        FLOAT     NOT NULL   학습/테스트 분할 비율 (기본값: 0.8)
 ```
+
+**OK 계열 폴더 인식 별칭**: `ok`, `good`, `normal`, `pass`, `neg` (대소문자 무관)
+**NG 계열 폴더 인식 별칭**: `ng`, `bad`, `defect`, `fail`, `abnormal`, `anomaly`, `pos` (대소문자 무관)
 
 ---
 
@@ -421,8 +438,18 @@ SESSION_STATE_SCHEMA = {
 
     # 탭4 Write
     "experiments": {},              # dict[str, dict] — key: experiment_id
-    "current_run_status": "idle",   # "idle" | "running" | "stopped" | "completed"
+    "current_run_status": "idle",   # "idle" | "running" | "paused" | "stopped" | "completed"
     "current_exp_id": None,         # str | None — 현재 실행 중인 실험 ID
+
+    # 탭4 내부 상태 (접두사 _ = 탭4 전용)
+    "_stop_event": None,            # threading.Event | None
+    "_pause_event": None,           # threading.Event | None — 일시정지 제어
+    "_result_queue": None,          # queue.Queue | None
+    "_worker": None,                # TrainingWorker | None
+    "_progress": None,              # dict | None  {"step", "total", "loss", "elapsed"}
+    "_log_lines": [],               # list[str]  최대 100줄
+    "_loss_history": [],            # list[dict]  {"step": int, "loss": float}
+    "_last_ckpt_path": None,        # str | None — 가장 최근 저장된 체크포인트 경로
 
     # 탭5 Write
     "selected_experiment_id": None, # str | None
@@ -449,7 +476,7 @@ def init_session_state():
 | `model_config` | 탭3 | 탭4 | `dict \| None` | None이면 탭4 진입 차단 + 안내 메시지 |
 | `device_info` | 탭3 | 탭4 | `dict \| None` | None이면 CPU fallback |
 | `experiments` | 탭4 | 탭5, 탭6 | `dict` | 빈 dict이면 탭5/탭6 안내 메시지 |
-| `current_run_status` | 탭4 | 탭4 UI | `str` | 항상 유효한 ENUM 값 |
+| `current_run_status` | 탭4 | 탭4 UI | `str` | 항상 유효한 ENUM 값 (`"idle"` \| `"running"` \| `"paused"` \| `"stopped"` \| `"completed"`) |
 | `selected_experiment_id` | 탭5 | 탭6 | `str \| None` | None이면 탭6 안내 메시지 |
 | `anomaly_map_threshold` | 탭6 | 탭6 내부 | `float \| None` | None이면 model_config.threshold_value 사용 |
 
@@ -546,6 +573,8 @@ INSP_MSG = {
 | `ERR_MODEL_CONFIG_MISSING` | 모델 설정 없음 | 탭3 미완료 상태에서 탭4 접근 |
 | `ERR_MODEL_INIT_FAILED` | 모델 초기화 실패 | CUDA OOM 또는 Anomalib 오류 |
 | `ERR_TRAINING_INTERRUPTED` | 학습 강제 중단 | 사용자 [학습 중지] 클릭 |
+| `ERR_CHECKPOINT_SAVE_FAILED` | 체크포인트 저장 실패 | 디스크 공간 부족 또는 권한 없음 |
+| `ERR_CHECKPOINT_LOAD_FAILED` | 체크포인트 로드 실패 | 파일 손상 또는 호환 불가 |
 | `ERR_CONFIG_LOAD_FAILED` | YAML 파싱 실패 | 잘못된 configs.yaml 형식 |
 | `ERR_MODEL_SAVE_FAILED` | 모델 저장 실패 | 디스크 공간 부족 또는 권한 없음 |
 | `ERR_EXPERIMENT_NOT_FOUND` | 실험 ID 미존재 | 삭제된 실험에 접근 시 |
@@ -653,7 +682,12 @@ def reset_inspection_state():
 | **model_state_dict** | PyTorch `torch.save(model.state_dict(), ...)` 형식으로 저장된 모델 가중치 파일. |
 | **완료 상태** | `status == "completed"`. 학습이 정상 종료되고 metrics, model_path, configs_path 모두 존재하는 상태. |
 | **중단 상태** | `status == "중단"`. 사용자가 [학습 중지]를 클릭하여 중단된 상태. metrics, model_path, configs_path 모두 NULL. |
-| **결함 클래스** | MVTec AD `test/` 하위 디렉토리명. `good`은 결함 없음. 그 외(crack, scratch 등)는 결함. |
+| **일시정지 상태** | `current_run_status == "paused"`. 사용자가 [⏸ 일시정지]를 클릭하여 체크포인트 저장 후 학습 스레드가 대기 중인 상태. history.json에는 기록되지 않으며 [▶ 재시작]으로 학습을 재개할 수 있다. |
+| **체크포인트** | 일시정지 시 저장되는 중간 학습 상태 파일. `./models/checkpoints/{exp_id}_step{N}.ckpt`. 모델 가중치, 옵티마이저/스케줄러 state dict, 진행 step, loss_history 등을 포함한다. |
+| **결함 클래스** | MVTec AD `test/` 하위 디렉토리명. `good`은 결함 없음. 그 외(crack, scratch 등)는 결함. OK/NG 형식에서는 NG 폴더명이 유일한 결함 클래스. |
+| **OK/NG 형식** | `OK/`(또는 `good/`, `normal/` 등) + `NG/`(또는 `bad/`, `defect/` 등) 구조의 단순 이진 분류 데이터셋. MVTec AD `train/good/`, `test/` 구조 없이 사용 가능. |
+| **dataset_format** | `dataset_meta`의 필드. `"mvtec"` (MVTec AD 형식) 또는 `"oking"` (OK/NG 폴더 형식). |
+| **OK/NG 자동 분할** | OK 이미지를 고정 시드(random_seed)로 셔플 후 80%는 학습, 20%는 테스트(정상)로 사용. NG 이미지는 전부 테스트(결함). |
 | **지원 이미지 포맷** | `.jpg`, `.png`, `.bmp` 세 가지. 확장자 대소문자 구분 없이 처리. |
 | **Resize+Padding** | 원본 비율 유지하여 `image_size×image_size`로 리사이즈 후 부족한 영역을 검정(0)으로 패딩. `resize_mode`는 항상 "padding"으로 고정. |
 | **모델 탐색 대시보드** | AI/ML 엔지니어용. EfficientAD/PatchCore 학습·비교·자산화 전용. 탭1~6. `active_dashboard == "explorer"`. |
@@ -760,9 +794,11 @@ smart-qc-dashboard/
 │   ├── messages.py                 # MSG + INSP_MSG 상수 (3.4절)
 │   ├── metrics.py                  # Accuracy/Precision/Recall/F1/F2/AUC 계산
 │   ├── model_factory.py            # EfficientAD/PatchCore Anomalib 래퍼
-│   ├── image_utils.py              # 전처리, Resize+Padding, 채널 변환
 │   ├── storage.py                  # history.json R/W, 모델 저장
-│   └── cache_manager.py            # Anomaly Map LRU 캐시
+│   ├── cache_manager.py            # Anomaly Map LRU 캐시
+│   ├── checkpoint_manager.py       # 체크포인트 저장/로드/목록/삭제 (일시정지 기능)
+│   ├── dataset_converter.py        # OK/NG 폴더 탐지(detect_ok_ng_dirs), 이미지 수 카운트
+│   └── image_utils.py              # 전처리, Resize+Padding, 채널 변환
 │
 ├── components/
 │   └── sidebar.py                  # 대시보드 전환 버튼 (수정됨)
@@ -819,9 +855,13 @@ smart-qc-dashboard/
   Step 1. dataset_path, preprocessing_config, model_config None 체크 → 차단
   Step 2. 실험명 입력 (자동 생성 또는 사용자 입력)
   Step 3. [학습 시작] 클릭 → current_run_status = "running"
+  Step 3b. (또는) 체크포인트에서 [재시작] 클릭 → _handle_resume_training() → current_run_status = "running"
   Step 4. 백그라운드 스레드 + Queue로 학습 루프 실행
-  Step 5. 메인 스레드: st.empty() + 주기적 rerun으로 Progress Bar, Loss 곡선 갱신
-  Step 6. [학습 중지] 클릭 → 중단 신호 → current_run_status = "stopped"
+  Step 5. 메인 스레드: 주기적 rerun으로 Progress Bar, Loss 곡선 갱신
+  Step 5b. [⏸ 일시정지] 클릭 → pause_event.set() → 워커가 체크포인트 저장 후 "paused" 메시지 전송
+  Step 5c. current_run_status = "paused" → 자동 rerun 중단, 체크포인트 경로 표시
+  Step 5d. [▶ 재시작] 클릭 → pause_event.clear() → current_run_status = "running" → 학습 재개
+  Step 6. [⏹ 학습 중지] 클릭 → stop_event.set() + pause_event.clear() → current_run_status = "stopped"
   Step 7a. 완료: metrics 계산 → experiments[exp_id] Write → history.json Append → model 저장
   Step 7b. 중단: experiments[exp_id] Write (status="중단") → history.json Append
   Step 8. 완료/중단 알림 표시

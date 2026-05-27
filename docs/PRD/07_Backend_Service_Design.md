@@ -175,7 +175,8 @@ def _handle_start_training(experiment_name: str) -> None:
     )
 
     # ── 동시성 객체 생성 ──────────────────────────────────────────────────────
-    stop_event = threading.Event()
+    stop_event  = threading.Event()
+    pause_event = threading.Event()   # 일시정지 제어
     result_queue = queue.Queue()
 
     # ── TrainingWorker 생성 및 시작 ────────────────────────────────────────────
@@ -186,24 +187,27 @@ def _handle_start_training(experiment_name: str) -> None:
         dataset_path=dataset_path,
         device=device_info["device"],
         stop_event=stop_event,
+        pause_event=pause_event,
         result_queue=result_queue
     )
     worker.daemon = True   # R-THREAD-03: Streamlit 프로세스 종료 시 함께 종료
     worker.start()
 
     # ── session_state 갱신 (메인 스레드 전용 — ADR-04) ──────────────────────────
-    st.session_state["current_run_status"] = "running"
-    st.session_state["current_exp_id"] = exp_id
-    st.session_state["_stop_event"] = stop_event
-    st.session_state["_result_queue"] = result_queue
-    st.session_state["_worker"] = worker
+    st.session_state["current_run_status"]   = "running"
+    st.session_state["current_exp_id"]       = exp_id
+    st.session_state["_stop_event"]          = stop_event
+    st.session_state["_pause_event"]         = pause_event
+    st.session_state["_result_queue"]        = result_queue
+    st.session_state["_worker"]              = worker
+    st.session_state["_last_ckpt_path"]      = None
     st.session_state["_progress"] = {
         "step": 0,
         "total": _get_total_steps(model_config),
         "loss": None,
         "elapsed": 0.0
     }
-    st.session_state["_log_lines"] = []
+    st.session_state["_log_lines"]  = []
     st.session_state["_loss_history"] = []
 
     st.rerun()   # running UI로 전환
@@ -247,30 +251,58 @@ import torch
 class TrainingWorker(threading.Thread):
     """
     백그라운드 학습 스레드.
-    외부 → 내부 통신: stop_event.set()
+    외부 → 내부 통신: stop_event.set(), pause_event.set()/clear()
     내부 → 외부 통신: result_queue.put(QueueMessage)
     """
 
     def __init__(
         self,
         experiment_id: str,
-        model_config: dict,           # 00_Global §1.7 model_config 스키마
-        preprocessing_config: dict,   # 00_Global §1.6 preprocessing_config 스키마
-        dataset_path: str,            # MVTec AD 데이터셋 루트 경로
-        device: str,                  # "cuda" | "cpu"
+        model_config: dict,              # 00_Global §1.7 model_config 스키마
+        preprocessing_config: dict,      # 00_Global §1.6 preprocessing_config 스키마
+        dataset_path: str,               # MVTec AD 데이터셋 루트 경로
+        device: str,                     # "cuda" | "cpu"
         stop_event: threading.Event,
-        result_queue: queue.Queue
+        result_queue: queue.Queue,
+        pause_event: threading.Event | None = None,  # 일시정지 제어
+        # EfficientAD resume 파라미터
+        start_step: int = 0,
+        student_state_dict: dict | None = None,
+        autoencoder_state_dict: dict | None = None,
+        optimizer_st_state_dict: dict | None = None,
+        optimizer_ae_state_dict: dict | None = None,
+        scheduler_st_state_dict: dict | None = None,
+        scheduler_ae_state_dict: dict | None = None,
+        loss_history: list | None = None,
+        # PatchCore resume 파라미터
+        start_batch_idx: int = 0,
+        accumulated_features: "torch.Tensor | None" = None,
     ) -> None:
         super().__init__(name=f"TrainingWorker-{experiment_id}")
 
         # 외부 주입 파라미터
-        self.experiment_id = experiment_id
-        self.model_config = model_config
+        self.experiment_id        = experiment_id
+        self.model_config         = model_config
         self.preprocessing_config = preprocessing_config
-        self.dataset_path = dataset_path
-        self.device = device
-        self.stop_event = stop_event
-        self.result_queue = result_queue
+        self.dataset_path         = dataset_path
+        self.device               = device
+        self.stop_event           = stop_event
+        self.result_queue         = result_queue
+        self.pause_event          = pause_event if pause_event is not None else threading.Event()
+
+        # EfficientAD resume
+        self.start_step               = start_step
+        self.student_state_dict       = student_state_dict
+        self.autoencoder_state_dict   = autoencoder_state_dict
+        self.optimizer_st_state_dict  = optimizer_st_state_dict
+        self.optimizer_ae_state_dict  = optimizer_ae_state_dict
+        self.scheduler_st_state_dict  = scheduler_st_state_dict
+        self.scheduler_ae_state_dict  = scheduler_ae_state_dict
+        self.loss_history: list       = list(loss_history) if loss_history else []
+
+        # PatchCore resume
+        self.start_batch_idx      = start_batch_idx
+        self.accumulated_features = accumulated_features
 
         # 내부 상태 (run() 실행 중 설정)
         self._model = None          # EfficientAd | Patchcore — 학습 완료 후 설정
@@ -285,6 +317,7 @@ class TrainingWorker(threading.Thread):
 | `_model` | 모델 초기화 완료 후 | `"completed"` 메시지 전송 후 메인 스레드에서 `del msg["model"]` |
 | `_start_time` | `run()` 진입 직후 | 스레드 종료 시 자동 소멸 |
 | `_log_writer` | `run()` 진입 직후 open | `run()` 종료 전 `finally` 블록에서 `close()` |
+| `pause_event` | `__init__` 시 주입 또는 기본 생성 | 스레드 종료 시 자동 소멸 |
 
 ### 4.3 run() 골격 구조
 
@@ -433,7 +466,47 @@ self._write_log(
   └─ 2. _reset_run_state()
 ```
 
-### 6.4 _show_last_result() — 알림 지연 표시
+### 6.4 일시정지 후처리 순서 (메인 스레드)
+
+```
+[paused 메시지 수신]
+  │
+  ├─ 1. session_state["current_run_status"] = "paused"
+  │
+  ├─ 2. session_state["_last_ckpt_path"] = msg["ckpt_path"]
+  │
+  └─ 3. (자동 rerun 중단 — paused 상태에서 st.rerun() 호출하지 않음)
+         UI: st.warning("⏸ 일시정지됨 — 체크포인트 저장 완료") + 경로 표시
+```
+
+> **참고**: `paused` 메시지는 종료 메시지가 아니므로 `_drain_queue()`에서 True를 반환하지 않는다.
+> 드레인 루프는 계속 진행되며, 이후 `running` 상태 rerun 사이클은 `paused` 감지 후 sleep 없이 즉시 종료된다.
+
+### 6.5 체크포인트 재시작 핸들러 (`_handle_resume_training`)
+
+```
+[체크포인트에서 재시작 버튼 클릭]
+  │
+  ├─ 1. load_checkpoint(ckpt_path) → ckpt dict
+  │
+  ├─ 2. 기존 experiment_id 충돌 확인 (history.json)
+  │       충돌 시 새 ID 생성
+  │
+  ├─ 3. session_state["model_config"], ["preprocessing_config"], ["dataset_path"] 복원
+  │
+  ├─ 4. stop_event = threading.Event(), pause_event = threading.Event() 생성
+  │
+  ├─ 5. TrainingWorker 생성 (resume 파라미터 전달)
+  │       EfficientAD: start_step, student/autoencoder/optimizer/scheduler state dicts, loss_history
+  │       PatchCore: start_batch_idx, accumulated_features
+  │
+  ├─ 6. worker.start()
+  │
+  └─ 7. session_state 갱신 (_last_ckpt_path, _progress 체크포인트 기준값으로 초기화)
+         st.rerun() → running UI로 전환
+```
+
+### 6.6 _show_last_result() — 알림 지연 표시
 
 ```
 [다음 rerun — status="idle" 렌더 경로]
@@ -498,6 +571,67 @@ def _build_experiment_record(
 
     return record
 ```
+
+---
+
+## 6b. checkpoint_manager 모듈 명세
+
+> `utils/checkpoint_manager.py` — 일시정지 기능의 영속 레이어
+
+### 6b.1 공개 함수
+
+| 함수 | 시그니처 | 설명 |
+|------|----------|------|
+| `save_checkpoint` | `(data: dict, exp_id: str, label: int) -> Path` | 체크포인트를 `.ckpt`로 저장하고 경로 반환 |
+| `load_checkpoint` | `(path: str \| Path) -> dict` | 체크포인트 파일 로드 후 dict 반환 |
+| `list_checkpoints` | `() -> list[Path]` | 저장된 `.ckpt` 파일을 수정시간 역순으로 반환 |
+| `delete_checkpoint` | `(path: str \| Path) -> bool` | 체크포인트 파일 삭제. 성공 시 True |
+
+### 6b.2 저장 경로 규칙
+
+```
+CHECKPOINT_DIR = Path("./models/checkpoints")
+파일명: {exp_id}_step{label}.ckpt
+  - EfficientAD: label = 현재 step 번호
+  - PatchCore:   label = 현재 batch_idx
+```
+
+### 6b.3 체크포인트 데이터 스키마
+
+**공통 필드** (EfficientAD / PatchCore 모두):
+```
+experiment_id        str
+model_type           "efficientad" | "patchcore"
+model_config         dict  (00_Global §1.7)
+preprocessing_config dict  (00_Global §1.6)
+dataset_path         str
+created_at           str   (ISO 8601, KST)
+```
+
+**EfficientAD 추가 필드**:
+```
+step                     int
+total_steps              int
+loss_history             list[dict]   {"step": int, "loss": float}
+student_state_dict       dict
+autoencoder_state_dict   dict
+optimizer_st_state_dict  dict
+optimizer_ae_state_dict  dict
+scheduler_st_state_dict  dict
+scheduler_ae_state_dict  dict
+```
+
+**PatchCore 추가 필드**:
+```
+batch_idx              int
+total_batches          int
+accumulated_features   torch.Tensor  (shape: [N, feature_dim])
+```
+
+### 6b.4 저장 메커니즘
+
+`torch.save(data, path)` — PyTorch 직렬화 사용. Tensor 포함 가능.
+로드 시 `torch.load(path, map_location="cpu", weights_only=False)`.
 
 ---
 

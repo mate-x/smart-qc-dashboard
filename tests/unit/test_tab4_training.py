@@ -407,7 +407,7 @@ class TestRUi02:
         """running UI에 [학습 중지] 버튼 존재."""
         ss = _make_ss()
         labels = self._collect_buttons(t4._render_running_ui, ss)
-        assert "학습 중지" in labels
+        assert any("학습 중지" in label for label in labels)
 
     def test_idle_ui_has_start_button(self):
         """idle UI에 [학습 시작] 버튼 존재."""

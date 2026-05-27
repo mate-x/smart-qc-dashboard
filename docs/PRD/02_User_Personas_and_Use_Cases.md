@@ -139,7 +139,7 @@
 
 ```
 액터:      P-01
-전제조건:  MVTec AD 스타일 데이터셋이 로컬 경로에 존재한다
+전제조건:  MVTec AD 또는 OK/NG 형식 데이터셋이 로컬 경로에 존재한다
 성공 종료: session_state.dataset_path 에 검증된 경로 저장, dataset_meta 구성 완료
 실패 종료: dataset_path = None 유지, 오류 메시지 표시
 
@@ -147,20 +147,42 @@
   1. 사용자가 탭1의 텍스트 입력 필드에 데이터셋 루트 경로를 입력한다
   2. 시스템이 입력 즉시(on_change) 아래 검증을 수행한다
      2a. 경로 존재 확인 → 실패 시 ERR_DATASET_NOT_FOUND
-     2b. train/good/ 하위 이미지 ≥ 1개 확인 → 실패 시 ERR_INVALID_FOLDER_STRUCTURE
-     2c. test/ 하위 디렉토리 ≥ 1개 확인 → 실패 시 ERR_INVALID_FOLDER_STRUCTURE
+     2b. MVTec AD 구조 우선 감지:
+         - train/good/ 하위 이미지 ≥ 1개 확인
+         - test/ 하위 디렉토리 ≥ 1개 확인
+     2c. MVTec AD 구조 실패 시 → OK/NG 형식 감지 (detect_ok_ng_dirs()):
+         - OK 별칭 디렉토리 탐지 (ok/good/normal/pass/neg 등)
+         - NG 별칭 디렉토리 탐지 (ng/bad/defect/fail/abnormal/anomaly 등)
+     2d. 두 형식 모두 실패 시 → ERR_INVALID_FOLDER_STRUCTURE
   3. 시스템이 dataset_meta를 구성한다 (1.5절 스키마)
+     [MVTec AD 형식 (_build_dataset_meta_mvtec)]
      3a. 폴더별 이미지 수 카운트 (지원 포맷만)
      3b. 채널 수 감지 (첫 번째 이미지 기준)
      3c. 결함 클래스 목록 추출 (test/ 하위 디렉토리명)
+     [OK/NG 형식 (_build_dataset_meta_oking)]
+     3d. OK/NG 이미지 수 카운트
+     3e. 채널 수 감지 (첫 번째 이미지 기준)
+     3f. train_ratio=0.8, random_seed=42 기준 자동 분할 비율 기록
+         (실제 분할은 학습 시 mvtec_dataset.py에서 수행)
   4. 시스템이 폴더 트리를 텍스트로 렌더링한다
+     (MVTec AD: train/test/gt 구조 / OK/NG: OK·NG 디렉토리 구조)
   5. 시스템이 클래스별 이미지 수 테이블을 렌더링한다
+     (OK/NG 형식: GT 마스크 컬럼 없음)
   6. 시스템이 각 클래스 대표 이미지 썸네일을 렌더링한다
+     (MVTec AD: 결함 클래스별 4열 / OK/NG: OK·NG 2열)
   7. Grayscale 감지 시 st.info(MSG["GRAYSCALE_DETECT"]) 표시
+  8. OK/NG 형식 감지 시 분할 비율 안내 배너 표시
+     (st.info: "OK/NG 형식 감지됨. 학습 시 OK 이미지를 80% 학습 / 20% 테스트로 자동 분할합니다.")
 
 대안 플로우:
   2a-1. 지원 포맷 외 파일 존재 → st.warning() 표시 후 주 플로우 계속 진행
-  2b-1. ground_truth/ 없음 → 가정 A-10 적용, 빈 마스크로 처리하며 계속 진행
+  2b-1. ground_truth/ 없음 (MVTec AD) → 가정 A-10 적용, 빈 마스크로 처리하며 계속 진행
+  2c-1. OK/NG 형식에서 OK 또는 NG 디렉토리 중 하나만 존재
+        → 두 디렉토리 모두 필요, ERR_INVALID_FOLDER_STRUCTURE
+  경로 변경 감지 (_handle_path_change):
+  - 입력 경로가 이전 dataset_path와 다르면
+    preprocessing_config, model_config, device_info 를 None으로 초기화
+    (탭2~탭3 재설정 필요)
 
 사전 오류:
   경로 입력 후 2초 이내 반응 없으면 → 로딩 스피너 표시 (st.spinner)

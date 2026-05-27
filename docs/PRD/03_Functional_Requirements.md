@@ -139,12 +139,24 @@
 
 | 항목 | 내용 |
 |------|------|
-| **설명** | 텍스트 입력으로 데이터셋 루트 경로를 받아 MVTec AD 구조를 검증한다 |
-| **Streamlit 컴포넌트** | `st.text_input(label="데이터셋 경로 (Dataset Path)", key="input_dataset_path")` |
-| **트리거** | 입력값 변경 시 (`on_change` 또는 Enter) |
-| **검증 순서** | 1. `Path(input).exists()` → False면 `st.error(ERR_DATASET_NOT_FOUND)`, `dataset_path = None`, 종료 <br> 2. `Path(input, "train", "good").is_dir()` → False면 `st.error(ERR_INVALID_FOLDER_STRUCTURE)`, 종료 <br> 3. `Path(input, "test").is_dir()` → False면 `st.error(ERR_INVALID_FOLDER_STRUCTURE)`, 종료 <br> 4. `train/good/` 하위 지원 포맷 이미지 수 == 0 → `st.error("train/good/ 에 유효한 이미지가 없습니다.")`, 종료 <br> 5. 검증 통과 → `dataset_path = input`, `dataset_meta` 구성 후 Write |
+| **설명** | 텍스트 입력으로 데이터셋 루트 경로를 받아 MVTec AD 또는 OK/NG 폴더 구조를 자동 감지·검증한다 |
+| **Streamlit 컴포넌트** | `st.text_input(label="데이터셋 경로 (Dataset Path)", key="input_dataset_path")` + `st.button("경로 확인", type="primary")` |
+| **트리거** | [경로 확인] 버튼 클릭 |
+| **검증 순서** | 1. `Path(input).exists()` → False면 `st.error(ERR_DATASET_NOT_FOUND)`, 종료 <br> 2. `train/good/` 없으면 OK/NG 폴더 탐지 시도 (`detect_ok_ng_dirs()`) <br>&nbsp;&nbsp;2a. OK 계열 폴더 발견 → OK/NG 형식으로 검증 진행 <br>&nbsp;&nbsp;2b. 미발견 → `st.error("지원하지 않는 폴더 구조")`, 종료 <br> 3. MVTec 형식이면: `test/` 존재 여부, `train/good/` 이미지 존재 여부 확인 <br> 4. OK/NG 형식이면: OK 폴더 내 유효 이미지 수 > 0 확인 <br> 5. 검증 통과 → `_handle_path_change()` 호출 후 `dataset_path`, `dataset_meta` Write |
 | **지원 포맷 판별** | `suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp"}` |
-| **출력** | 검증 성공 시 `st.success("데이터셋 구조 검증 완료.")` |
+| **출력** | MVTec: `st.success("MVTec AD 형식 데이터셋 확인 완료.")` <br> OK/NG: `st.success("OK/NG 형식 데이터셋 확인 완료. (OK N장 / NG N장)")` |
+
+---
+
+#### FR-T1-01b (M): 데이터셋 변경 시 하위 설정 초기화
+
+| 항목 | 내용 |
+|------|------|
+| **설명** | 새 경로가 기존 `dataset_path`와 다를 때 전처리/모델 설정을 초기화한다 |
+| **구현 위치** | `tabs/tab1_data_folder.py._handle_path_change(new_path)` |
+| **초기화 대상** | `preprocessing_config = None`, `model_config = None`, `device_info = None` |
+| **조건** | `new_path != st.session_state.get("dataset_path")` 일 때만 초기화 |
+| **목적** | 이전 데이터셋 기준으로 설정된 전처리/모델 파라미터가 새 데이터셋에 적용되는 것을 방지 |
 
 ---
 
@@ -152,12 +164,22 @@
 
 | 항목 | 내용 |
 |------|------|
-| **설명** | 검증 통과한 경로에서 dataset_meta를 구성하여 session_state에 저장한다 |
-| **구현 위치** | `tabs/tab1_data_folder.py` 내 `build_dataset_meta(path: str) -> dict` 함수 |
-| **구성 항목** | 00_Global_Context 1.5절 `dataset_meta` 스키마 전체 |
-| **채널 감지** | `PIL.Image.open(첫_번째_이미지).mode` <br> · mode == "L" → `channels = 1` <br> · mode in {"RGB", "RGBA"} → `channels = 3` <br> · 그 외 → `channels = 3` (기본값) |
-| **결함 클래스 추출** | `test/` 하위 디렉토리명 목록. `good` 포함. |
-| **Write** | `st.session_state.dataset_meta = build_dataset_meta(path)` |
+| **설명** | 검증 통과한 경로에서 `dataset_format`에 따라 알맞은 `dataset_meta`를 구성하여 session_state에 저장한다 |
+| **구현 위치** | `tabs/tab1_data_folder.py` 내 `_build_dataset_meta_mvtec()` / `_build_dataset_meta_oking()` |
+| **MVTec 구성** | `train/good/` 이미지 수, `test/` 클래스별 이미지 수, `ground_truth/` GT 마스크 수, 채널, 포맷, invalid 파일 수 |
+| **OK/NG 구성** | OK 이미지 80% → `train_good_count`, OK 나머지 20% → `test_counts["good"]`, NG 전체 → `test_counts[ng_key]` <br> `_oking_*` 전용 필드 포함 |
+| **채널 감지** | `PIL.Image.open(첫_번째_이미지).mode` → `"L"` → 1, 그 외 → 3 |
+| **Write** | `st.session_state["dataset_meta"] = meta` |
+
+---
+
+#### FR-T1-02b (M): OK/NG 형식 안내 배너
+
+| 항목 | 내용 |
+|------|------|
+| **설명** | OK/NG 형식으로 로드된 경우 분할 비율 및 사용 방식을 안내한다 |
+| **표시 조건** | `dataset_meta["dataset_format"] == "oking"` |
+| **내용** | `st.info("OK/NG 형식으로 로드됩니다. OK N장 중 80% (M장)을 학습에, 나머지 K장을 테스트(정상)에 사용합니다. NG N장은 테스트(불량)로 사용합니다.")` |
 
 ---
 
@@ -167,8 +189,8 @@
 |------|------|
 | **설명** | 데이터셋 폴더 구조를 들여쓰기 텍스트로 렌더링한다 |
 | **Streamlit 컴포넌트** | `st.code(tree_text, language=None)` |
-| **렌더링 깊이** | 최대 3단계 (`dataset_root/train/good/`, `dataset_root/test/{class}/`, `dataset_root/ground_truth/{class}/`) |
-| **출력 형식 예시** | `📂 screw/` <br>&nbsp;&nbsp;`📂 train/` <br>&nbsp;&nbsp;&nbsp;&nbsp;`📂 good/ (320장)` <br>&nbsp;&nbsp;`📂 test/` <br>&nbsp;&nbsp;&nbsp;&nbsp;`📂 good/ (41장)` <br>&nbsp;&nbsp;&nbsp;&nbsp;`📂 thread_side/ (15장)` |
+| **MVTec 렌더링** | 최대 3단계 (`train/good/`, `test/{class}/`, `ground_truth/{class}/`) |
+| **OK/NG 렌더링** | `📂 OK/ (N장 전체)` → 학습/테스트 자동 분할 안내 표시 <br> `📂 NG/ (N장)` → 테스트(불량) 표시 |
 
 ---
 
@@ -179,8 +201,8 @@
 | **설명** | train/test/ground_truth 별 클래스별 이미지 수를 테이블로 표시한다 |
 | **Streamlit 컴포넌트** | `st.dataframe(df, use_container_width=True)` |
 | **테이블 컬럼** | 클래스명 / 학습(train) 수 / 테스트(test) 수 / GT 마스크 수 |
-| **train 행** | `good` 클래스만 존재, `train_good_count` 값 |
-| **test 행** | `test_counts` 딕셔너리의 모든 클래스 |
+| **MVTec** | `good` 행에 `train_good_count`, 결함 클래스 행에 `test_counts` 값 |
+| **OK/NG** | `good(정상)` 행에 `train_good_count`, NG 클래스 행에 `test_counts[ng_key]` 값. GT 마스크 열은 모두 0 |
 | **합계 행** | 각 열의 합계 |
 
 ---
@@ -189,11 +211,11 @@
 
 | 항목 | 내용 |
 |------|------|
-| **설명** | 각 결함 클래스의 대표 이미지(첫 번째 파일)를 썸네일로 표시한다 |
+| **설명** | 각 클래스의 대표 이미지(첫 번째 파일)를 썸네일로 표시한다 |
 | **Streamlit 컴포넌트** | `st.image(image, caption="{class_name}", width=150)` |
-| **레이아웃** | `st.columns(min(len(defect_classes), 4))` — 최대 4열, 초과 시 다음 행으로 wrap |
-| **이미지 처리** | `PIL.Image.open(path).resize((150, 150), Image.LANCZOS)` |
-| **Grayscale 처리** | channels == 1이면 `image.convert("RGB")` 후 표시 |
+| **MVTec 레이아웃** | `st.columns(min(len(defect_classes), 4))` — 최대 4열, 초과 시 다음 행으로 wrap |
+| **OK/NG 레이아웃** | OK 폴더 썸네일 + NG 폴더 썸네일 (`st.columns(2)`) |
+| **이미지 처리** | `PIL.Image.open(path).convert("RGB").resize((150, 150), Image.LANCZOS)` |
 
 ---
 
@@ -472,10 +494,14 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 | 항목 | 내용 |
 |------|------|
 | **[학습 시작] 버튼** | `st.button("🚀 학습 시작", type="primary", disabled=(current_run_status == "running"))` |
-| **[학습 중지] 버튼** | `st.button("⏹ 학습 중지", type="secondary", disabled=(current_run_status != "running"))` |
-| **상태 표시** | `current_run_status == "running"` → `st.warning("학습 진행 중입니다...")` |
-| **[학습 시작] 동작** | 1. `current_run_status = "running"` <br> 2. `threading.Thread(target=training_worker, args=(queue, config), daemon=True).start()` <br> 3. 메인 루프 진입 (FR-T4-04) |
-| **[학습 중지] 동작** | 1. `stop_event.set()` (threading.Event) <br> 2. 백그라운드 스레드가 stop_event 감지 후 종료 <br> 3. FR-T4-06 중단 처리 실행 |
+| **[학습 중지] 버튼** | `st.button("⏹ 학습 중지", type="secondary", disabled=(current_run_status != "running"))`. running/paused 상태에서 `[⏸ 일시정지]`, `[▶ 재시작]`과 `st.columns(3)` 3열로 배치 |
+| **[⏸ 일시정지] 버튼** | running/paused 상태에서만 렌더링. `disabled=(status == "paused")` |
+| **[▶ 재시작] 버튼** | running/paused 상태에서만 렌더링. `disabled=(status == "running")` |
+| **상태 표시** | `running` → `st.info("🔄 학습이 진행 중입니다.")` / `paused` → `st.warning("⏸ 일시정지됨 — 체크포인트 저장 완료")` |
+| **[학습 시작] 동작** | 1. `stop_event = threading.Event()`, `pause_event = threading.Event()` 생성 <br> 2. `TrainingWorker(..., stop_event=stop_event, pause_event=pause_event).start()` <br> 3. `current_run_status = "running"` |
+| **[학습 중지] 동작** | 1. `stop_event.set()` + `pause_event.clear()` (일시정지 중이면 해제 후 스레드가 stop_event 감지) <br> 2. 백그라운드 스레드 종료 <br> 3. FR-T4-06 중단 처리 실행 |
+| **[⏸ 일시정지] 동작** | 1. `pause_event.set()` <br> 2. 워커가 현재 step 완료 후 체크포인트 저장 → Queue에 `{"type": "paused", "ckpt_path": str}` 전송 <br> 3. `_handle_paused()` → `current_run_status = "paused"` |
+| **[▶ 재시작] 동작** | 1. `pause_event.clear()` <br> 2. `current_run_status = "running"` + `st.rerun()` → 학습 루프 재개 |
 
 ---
 
@@ -533,6 +559,35 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 |------|------|
 | **설명** | 중단 시 히스토리에 "중단" 상태 레코드를 남긴다 (FR-T4-06과 동일, Should 항목으로 명시) |
 | **표시** | 탭5 테이블에서 status="중단" 행은 회색 텍스트로 렌더링 |
+
+---
+
+#### FR-T4-09 (M): 일시정지 및 체크포인트 저장
+
+| 항목 | 내용 |
+|------|------|
+| **설명** | [⏸ 일시정지] 클릭 시 현재 학습 상태를 체크포인트 파일로 저장하고 학습 스레드를 대기 상태로 전환한다 |
+| **체크포인트 저장 위치** | `./models/checkpoints/{exp_id}_step{N}.ckpt` |
+| **EfficientAD 저장 내용** | `step`, `total_steps`, `model_type`, `model_config`, `preprocessing_config`, `dataset_path`, `student_state_dict`, `autoencoder_state_dict`, `optimizer_st_state_dict`, `optimizer_ae_state_dict`, `scheduler_st_state_dict`, `scheduler_ae_state_dict`, `loss_history`, `created_at` |
+| **PatchCore 저장 내용** | `batch_idx`, `total_batches`, `model_type`, `model_config`, `preprocessing_config`, `dataset_path`, `accumulated_features` (Tensor), `created_at` |
+| **저장 메커니즘** | `torch.save(data, path)` — `utils/checkpoint_manager.save_checkpoint()` |
+| **대기 메커니즘** | 체크포인트 저장 완료 후 Queue에 `{"type": "paused", "ckpt_path": str}` 전송 → `pause_event.is_set()` 동안 `time.sleep(0.5)` 루프로 대기 |
+| **UI 전환** | `current_run_status = "paused"` → 자동 rerun 중단 → `st.warning("⏸ 일시정지됨")` + 체크포인트 경로 표시 |
+| **중복 저장 방지** | 동일 pause_event 세트 내 `_ckpt_saved` 플래그로 체크포인트 1회만 저장 |
+
+---
+
+#### FR-T4-10 (M): 체크포인트에서 재시작
+
+| 항목 | 내용 |
+|------|------|
+| **설명** | idle 상태에서 저장된 체크포인트 목록을 표시하고, 선택한 체크포인트부터 학습을 재개한다 |
+| **체크포인트 목록** | `utils/checkpoint_manager.list_checkpoints()` — `.ckpt` 파일을 수정시간 역순으로 반환 |
+| **UI 구성** | `st.expander("⏩ 체크포인트에서 재시작 (N개 저장됨)")` 내 `st.selectbox` + 메타 정보 `st.caption` + `[▶ 이 체크포인트에서 재시작]` / `[🗑 삭제]` 버튼 |
+| **EfficientAD 재시작** | `start_step`, 모델/옵티마이저/스케줄러 state dict, `loss_history`를 `TrainingWorker`에 전달하여 중단 지점부터 재개 |
+| **PatchCore 재시작** | `start_batch_idx`, `accumulated_features`를 `TrainingWorker`에 전달하여 이미 추출된 특징부터 재개 |
+| **ID 충돌 방지** | 체크포인트의 `experiment_id`가 history.json에 이미 존재하면 새 ID 자동 생성 |
+| **삭제** | `[🗑 삭제]` 클릭 → `delete_checkpoint(path)` → `st.rerun()` |
 
 ---
 
@@ -1069,6 +1124,8 @@ FR별 로그 이벤트 매핑:
 | FR-T4-05 (완료) | `training_completed` | INFO |
 | FR-T4-06 (중단) | `training_stopped` | WARNING |
 | FR-T4-05 (실패) | `training_failed` | ERROR |
+| FR-T4-09 (일시정지) | `training_paused` | INFO |
+| FR-T4-10 (재시작) | `training_resumed` | INFO |
 | FR-T5-04 (저장) | `model_saved` | INFO |
 | FR-T5-03 (삭제) | `experiment_deleted` | WARNING |
 
@@ -1122,6 +1179,10 @@ FR별 로그 이벤트 매핑:
 - [ ] FR-T4-04: 로그 텍스트 최신 100줄 유지
 - [ ] FR-T4-05: 완료 후 ./models/{exp_id}/ 에 .pth + configs.yaml 존재
 - [ ] FR-T4-06: 중지 후 history.json에 status="중단" 레코드 존재
+- [ ] FR-T4-09: 일시정지 후 ./models/checkpoints/{exp_id}_step{N}.ckpt 파일 존재
+- [ ] FR-T4-09: 일시정지 상태에서 자동 rerun 중단 및 체크포인트 경로 표시
+- [ ] FR-T4-10: 체크포인트 목록 정상 표시 (idle 상태)
+- [ ] FR-T4-10: 체크포인트에서 재시작 시 중단 지점부터 학습 재개
 
 #### 탭5
 

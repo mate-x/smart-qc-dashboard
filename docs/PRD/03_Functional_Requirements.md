@@ -72,7 +72,7 @@
 | **설명** | 앱 최초 실행 시 session_state를 초기화하고 전체 레이아웃을 구성한다 |
 | **트리거** | `app.py` 실행 (Streamlit 프로세스 시작) |
 | **구현 위치** | `app.py` |
-| **동작** | 1. `utils/session_state_init.py`의 `init_session_state()` 호출 (00_Global_Context 3.1절 스키마 기준) <br> 2. `st.set_page_config(page_title="비전검사 대시보드", layout="wide")` <br> 3. `components/sidebar.py`의 사이드바 렌더링 <br> 4. `st.tabs(["📁 데이터", "(이모지 미확정) 전처리 및 모델 설정", "🚀 학습", "📊 히스토리", "🔍 Anomaly Map"])` 로 5탭 렌더링 <br> 5. 각 탭 내부에서 해당 `tabs/tab{n}_*.py` 함수 호출 |
+| **동작** | 1. `utils/session_state_init.py`의 `init_session_state()` 호출 (00_Global_Context 3.1절 스키마 기준) <br> 2. `st.set_page_config(page_title="비전검사 대시보드", layout="wide")` <br> 3. `components/sidebar.py`의 사이드바 렌더링 <br> 4. `st.tabs(["📁 데이터", "⚙️ 전처리 및 모델 설정", "🚀 학습", "📊 히스토리", "🔍 Anomaly Map"])` 로 5탭 렌더링 <br> 5. 각 탭 내부에서 해당 `tabs/tab{n}_*.py` 함수 호출 |
 | **멱등성** | Streamlit rerun 발생 시 `init_session_state()`는 이미 설정된 키를 덮어쓰지 않는다 |
 
 ---

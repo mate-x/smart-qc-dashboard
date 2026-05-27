@@ -46,7 +46,7 @@ def generate_created_at() -> str:
 # ── 탭 진입점 ─────────────────────────────────────────────────────────────────
 
 def render() -> None:
-    st.header("탭4. 학습 시작 + 학습 로그")
+    st.header("탭3. 학습 시작 + 학습 로그")
 
     if not _guard():
         return
@@ -94,7 +94,7 @@ def _guard() -> bool:
             _reset_run_state()
             st.info(
                 "새로고침으로 인해 학습 상태를 확인할 수 없습니다. "
-                "새로 학습을 시작하거나 탭5에서 히스토리를 확인하세요."
+                "새로 학습을 시작하거나 탭4에서 히스토리를 확인하세요."
             )
 
     missing = False
@@ -120,7 +120,7 @@ def _render_idle_ui() -> None:
         "실험명 (비워두면 자동 생성)",
         max_chars=64,
         placeholder="예: EfficientAD CLAHE clip2.0 실험",
-        key="tab4_experiment_name",
+        key="tab3_experiment_name",
     )
 
     if st.button("학습 시작", type="primary"):
@@ -185,7 +185,7 @@ def _render_running_ui() -> None:
 
     log_lines = st.session_state.get("_log_lines") or []
     log_text = "\n".join(log_lines[-50:])
-    st.text_area("학습 로그", value=log_text, height=200, disabled=True, key="tab4_log_area")
+    st.text_area("학습 로그", value=log_text, height=200, disabled=True, key="tab3_log_area")
 
     if st.button("학습 중지", type="secondary"):
         stop_event: threading.Event | None = st.session_state.get("_stop_event")

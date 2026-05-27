@@ -2,8 +2,9 @@
 
 > **참조 기준**: [00_Global_Context_Document.md](./00_Global_Context_Document.md)
 > **선행 문서**: [04_System_Architecture.md](./04_System_Architecture.md)
-> **버전**: v1.0
+> **버전**: v1.1
 > **작성일**: 2026-05-08
+> **수정일**: 2026-05-26 — v1.1: 비전검사 추론 전용 모드 및 test_pool 레이블 규칙 추가 (B.10절)
 > **중요**: 이 문서는 ML 구현의 Single Source of Truth다. Anomalib API 클래스명·파라미터 매핑·알고리즘 수식은 이 문서에서 확정되며, `model_factory.py`, `training_worker.py`, `image_utils.py` 구현 시 이 문서와 100% 일치해야 한다.
 >
 > ⚠️ **[2026-05-09 정오표 적용]**: 05/06/07 문서 작성 후 아래 항목이 수정됐다. 구현 시 본문보다 **Z절 정오표**를 우선 적용한다.
@@ -30,6 +31,7 @@
   - [B.7 추론 및 Anomaly Map 생성](#b7-추론-및-anomaly-map-생성)
   - [B.8 Anomaly Score 정규화 및 Threshold 계산](#b8-anomaly-score-정규화-및-threshold-계산)
   - [B.9 메트릭 계산](#b9-메트릭-계산)
+  - [B.10 비전검사 추론 전용 모드 (v1.1)](#b10-비전검사-추론-전용-모드-v11)
 - [C. System & Data Design](#c-system--data-design)
 - [D. API Contracts](#d-api-contracts)
 - [E. AI/ML Details](#e-aiml-details)
@@ -1260,6 +1262,133 @@ def compute_roc_curve(
     except ValueError:
         return np.array([0.0, 1.0]), np.array([0.0, 1.0]), 0.0
 ```
+
+---
+
+---
+
+### B.10 비전검사 추론 전용 모드 (v1.1)
+
+> 이 절은 비전검사 대시보드에서의 ML 추론 사용 방식을 명세한다.
+> 학습 파이프라인(B.4~B.6)과 달리, 추론 전용 모드는 그라디언트 계산·데이터 증강 없이
+> 단일 이미지를 처리한다.
+
+#### B.10.1 추론 전용 설계 원칙
+
+| 원칙 | 내용 |
+|------|------|
+| **DA-05 준수** | 검사 추론에도 학습과 동일한 `apply_preprocessing()` 파이프라인을 적용한다 |
+| **R-INSP-04** | `model_factory.py`의 `run_inference()`는 읽기 전용으로만 사용한다 (모델 수정 금지) |
+| **R-INSP-06** | 검사 대시보드는 `st.cache_resource`로 모델을 캐시하고, 모델 교체 시만 캐시를 무효화한다 |
+| **그라디언트 금지** | 검사 추론은 반드시 `torch.no_grad()` 컨텍스트 내에서 실행한다 |
+
+#### B.10.2 단일 이미지 추론 파이프라인
+
+검사 대시보드에서 이미지 1장의 추론은 아래 순서로 진행된다.
+
+```
+이미지 경로 (image_path)
+  │
+  ├─ apply_preprocessing(image_path, preprocessing_config)
+  │    → image_tensor: torch.Tensor (C, H, W), float32, 정규화 완료
+  │
+  ├─ image_tensor.unsqueeze(0)
+  │    → (1, C, H, W)
+  │
+  ├─ run_inference(model, image_tensor)
+  │    → anomaly_map: np.ndarray (H, W), float32
+  │
+  ├─ anomaly_score = float(np.max(anomaly_map))
+  │    (이미지 레벨 스코어 — 패치 이상도의 최댓값)
+  │
+  └─ verdict = "불량" if anomaly_score >= threshold else "양품"
+```
+
+#### B.10.3 이미지 레벨 Score 계산
+
+| 모델 | Score 계산 방식 | 비고 |
+|------|----------------|------|
+| EfficientAD | `np.max(anomaly_map)` | Student-Teacher 차이 + AE 오차 맵의 픽셀 최댓값 |
+| PatchCore | `np.max(anomaly_map)` | 패치 KNN 거리 맵의 픽셀 최댓값 |
+
+두 모델 모두 `np.max(anomaly_map)`을 이미지 레벨 Score로 사용한다.
+이는 `_run_full_test_inference()`의 `_get_pred_score()` 구현과 일관된다.
+
+#### B.10.4 test_pool 레이블 규칙 (A-17)
+
+비전검사 대시보드의 test_pool은 학습에 사용된 모델의 데이터셋 `test/` 디렉토리에서 구성된다.
+레이블 규칙은 `MVTecDataset`의 split="test" 로직과 동일하다.
+
+| 디렉토리 | 레이블 | 판정 기준 |
+|----------|--------|----------|
+| `test/good/` | `"양품"` | 정상 이미지 |
+| `test/{결함_클래스}/` | `"불량"` | 클래스명이 `"good"`이 아닌 경우 |
+
+> **참고**: test_pool의 `gt_label`은 UI 표시에 사용되지 않는다. 검사 판정은 오직
+> `anomaly_score >= threshold` 조건으로만 이루어진다 (R-INSP-07).
+> gt_label은 향후 성능 측정 목적을 위해 저장만 한다.
+
+```python
+# inspection/utils/test_sampler.py
+# 05_Data_Model §13.3 build_test_pool() 구현과 동일한 레이블 규칙
+
+import random
+from pathlib import Path
+
+SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".bmp"}
+
+def build_test_pool(dataset_path: str) -> list[tuple[str, str]]:
+    """
+    dataset_path/test/ 하위 이미지를 스캔하여 (image_path, gt_label) 리스트 반환.
+    결과는 한 번 shuffle됨.
+    """
+    test_root = Path(dataset_path) / "test"
+    pool: list[tuple[str, str]] = []
+
+    for cls_dir in test_root.iterdir():
+        if not cls_dir.is_dir():
+            continue
+        label = "양품" if cls_dir.name == "good" else "불량"
+        for img_path in cls_dir.iterdir():
+            if img_path.suffix.lower() in SUPPORTED_EXTS:
+                pool.append((str(img_path), label))
+
+    random.shuffle(pool)
+    return pool
+
+
+def sample_from_pool() -> tuple[str, str]:
+    """
+    현재 pool_index 위치의 항목 반환.
+    pool 소진 시 reshuffle 후 index 리셋.
+    반환: (image_path, gt_label)
+    """
+    import streamlit as st
+
+    pool: list = st.session_state["insp_test_pool"]
+    idx: int   = st.session_state["insp_pool_index"]
+
+    if idx >= len(pool):
+        random.shuffle(pool)
+        st.session_state["insp_test_pool"] = pool
+        st.session_state["insp_pool_index"] = 0
+        idx = 0
+
+    item = pool[idx]
+    st.session_state["insp_pool_index"] = idx + 1
+    return item  # (image_path, gt_label)
+```
+
+#### B.10.5 추론 전용 모드 vs 학습 모드 비교
+
+| 항목 | 학습 모드 (B.4~B.6) | 추론 전용 모드 (B.10) |
+|------|--------------------|-----------------------|
+| 그라디언트 | 필요 (backward()) | 불필요 (torch.no_grad()) |
+| 배치 크기 | model_config.batch_size | 1 (단일 이미지) |
+| 데이터 로더 | MVTecDataset + DataLoader | 직접 파일 로드 |
+| 결과 저장 | history.json + model .pth | session_state only |
+| 스레드 | BackgroundThread (TrainingWorker) | 메인 스레드 (Streamlit rerun 패턴) |
+| 메모리 해제 | 완료 후 del + empty_cache() | 캐시 유지 (모델 교체 시 clear()) |
 
 ---
 

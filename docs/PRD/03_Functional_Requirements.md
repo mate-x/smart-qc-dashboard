@@ -2,8 +2,9 @@
 
 > **참조 기준**: [00_Global_Context_Document.md](./00_Global_Context_Document.md)
 > **선행 문서**: [01_Product_Overview.md](./01_Product_Overview.md), [02_User_Personas_and_Use_Cases.md](./02_User_Personas_and_Use_Cases.md)
-> **버전**: v1.0
+> **버전**: v1.1
 > **작성일**: 2026-05-08
+> **수정일**: 2026-05-26 — v1.1: 비전검사 대시보드 기능 요구사항 추가 (B.8절)
 > **후속 문서**: [04_System_Architecture.md](./04_System_Architecture.md)
 
 ---
@@ -28,6 +29,7 @@
   - [B.5 탭4 — 학습 시작 + 학습 로그](#b5-탭4--학습-시작--학습-로그)
   - [B.6 탭5 — 실험 히스토리 + 결과 상세 + 모델 저장](#b6-탭5--실험-히스토리--결과-상세--모델-저장)
   - [B.7 탭6 — 이상 영역 시각화](#b7-탭6--이상-영역-시각화)
+  - [B.8 비전검사 대시보드 (INSP) — v1.1 추가](#b8-비전검사-대시보드-insp--v11-추가)
 - [C. System & Data Design](#c-system--data-design)
 - [D. API Contracts](#d-api-contracts)
 - [E. AI/ML Details](#e-aiml-details)
@@ -46,6 +48,8 @@
 
 ### A.2 FR 전체 목록 요약
 
+#### 모델 탐색 대시보드 (기존)
+
 | 영역 | FR 수 (M) | FR 수 (S) | 합계 |
 |------|-----------|-----------|------|
 | 공통 (CMN) | 4 | 0 | 4 |
@@ -55,7 +59,19 @@
 | 탭4 | 6 | 2 | 8 |
 | 탭5 | 6 | 3 | 9 |
 | 탭6 | 5 | 3 | 8 |
-| **합계** | **39** | **14** | **53** |
+| **소계** | **39** | **14** | **53** |
+
+#### 비전검사 대시보드 (v1.1 추가)
+
+| 영역 | FR 수 (M) | FR 수 (S) | 합계 |
+|------|-----------|-----------|------|
+| 검사 공통 (INSP-CMN) | 3 | 0 | 3 |
+| 검사 탭1 — 실시간 검사 | 6 | 0 | 6 |
+| 검사 탭2 — 검사 이력 및 통계 | 3 | 1 | 4 |
+| 검사 탭3 — 딥러닝 모델 교체 | 3 | 0 | 3 |
+| **소계** | **15** | **1** | **16** |
+
+**전체 합계**: M=54, S=15, 합계=69
 
 ---
 
@@ -723,11 +739,240 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 
 ---
 
+---
+
+## B.8 비전검사 대시보드 (INSP) — v1.1 추가
+
+> 이 절의 모든 FR은 `active_dashboard == "inspection"` 상태에서만 실행된다.
+> session_state 키는 `insp_` 네임스페이스를 사용한다 (R-INSP-01).
+> 데이터 스키마: [00_Global_Context_Document.md 1.10~1.11절](./00_Global_Context_Document.md)
+
+---
+
+### B.8.1 검사 공통 기능 (INSP-CMN)
+
+---
+
+#### FR-INSP-CMN-01 (M): 대시보드 전환 사이드바
+
+| 항목 | 내용 |
+|------|------|
+| **설명** | 사이드바에 두 대시보드 전환 버튼을 렌더링한다. 데이터셋·디바이스 정보 섹션은 표시하지 않는다 |
+| **구현 위치** | `components/sidebar.py` (v1.1 업데이트) |
+| **렌더링** | `🔬 모델 탐색 대시보드` 버튼 + `🏭 비전검사 대시보드` 버튼 (항상 표시) |
+| **활성 상태** | 현재 `active_dashboard` 값과 일치하는 버튼에 `type="primary"`, 나머지는 `type="secondary"` |
+| **전환 동작** | 버튼 클릭 시 `st.session_state.active_dashboard = <대상>`, `st.rerun()` 즉시 호출 |
+| **Streamlit 컴포넌트** | `st.sidebar.button(label, use_container_width=True, type=...)` |
+
+---
+
+#### FR-INSP-CMN-02 (M): 검사 세션 초기화
+
+| 항목 | 내용 |
+|------|------|
+| **설명** | 앱 최초 실행 시 검사 대시보드용 session_state 키를 초기화한다 |
+| **구현 위치** | `utils/session_state_init.py`의 `init_session_state()` 내부 |
+| **초기화 키** | 00_Global_Context_Document.md 1.11절 `INSPECTION_SESSION_SCHEMA` 전체 |
+| **멱등성** | 이미 존재하는 키는 덮어쓰지 않는다 (`if key not in st.session_state:`) |
+| **`active_dashboard` 초기값** | `"explorer"` |
+
+---
+
+#### FR-INSP-CMN-03 (M): 모델 미선택 Guard
+
+| 항목 | 내용 |
+|------|------|
+| **설명** | `insp_active_model`이 None인 경우 검사 탭1·탭2의 핵심 기능을 차단하고 안내 메시지를 표시한다 |
+| **차단 조건** | `st.session_state.insp_active_model is None` |
+| **처리** | `st.info(INSP_MSG["NO_MODEL"]); return` |
+| **예외** | 탭3 (모델 교체) 은 Guard 없이 항상 렌더링한다 |
+| **INSP_MSG["NO_MODEL"]** | `"검사에 사용할 모델이 선택되지 않았습니다. 탭3에서 모델을 선택하세요."` |
+
+---
+
+### B.8.2 검사 탭1 — 실시간 검사 (INSP-T1)
+
+---
+
+#### FR-INSP-T1-01 (M): 수동 검사 실행
+
+| 항목 | 내용 |
+|------|------|
+| **설명** | 버튼 클릭 시 test_pool에서 이미지 1개를 샘플링하여 추론을 실행하고 결과를 저장한다 |
+| **Streamlit 컴포넌트** | `st.button("🔍 수동 검사 (1개 검사)", type="primary", disabled=insp_auto_active)` |
+| **비활성화 조건** | `insp_auto_active == True` (자동 검사 중에는 수동 검사 불가) |
+| **동작 순서** | 1. `sample_from_pool()` 호출 → `(image_path, gt_label)` 획득 <br> 2. `run_inference(image_path)` 호출 → `(anomaly_score, anomaly_map)` 획득 <br> 3. `verdict = "불량" if anomaly_score >= threshold else "양품"` 계산 <br> 4. `inspection_record` 구성 (00_Global_Context 1.10절 스키마) <br> 5. `insp_records.append(record)`, `insp_seq_counter += 1` <br> 6. `insp_last_result = record`, `insp_last_anomaly_map = anomaly_map` 저장 <br> 7. `st.rerun()` |
+| **threshold** | `insp_active_model["threshold"]` 사용 |
+| **Guard** | FR-INSP-CMN-03 통과한 경우에만 실행 |
+
+---
+
+#### FR-INSP-T1-02 (M): 자동 검사 실행 및 중지
+
+| 항목 | 내용 |
+|------|------|
+| **설명** | 자동 검사 버튼 클릭 시 3초 간격으로 검사를 반복한다. 불량 감지 또는 중지 버튼 클릭 시 중단한다 |
+| **[자동 검사 시작] 버튼** | `st.button("▶ 자동 검사 (3초마다 1개)", type="secondary", disabled=insp_auto_active)` |
+| **[자동 검사 중지] 버튼** | `st.button("⏹ 자동 검사 중지", type="secondary", disabled=not insp_auto_active)` |
+| **자동 검사 시작 동작** | `insp_auto_active = True`, `st.rerun()` |
+| **자동 검사 루프** | `insp_auto_active == True`인 경우: FR-INSP-T1-01 검사 1회 실행 → `time.sleep(3)` → `st.rerun()` |
+| **자동 검사 중지 동작** | `insp_auto_active = False`, `st.rerun()` |
+| **불량 감지 시 자동 중지** | `verdict == "불량"` AND `insp_auto_active == True` → `insp_auto_active = False`, `insp_defect_popup = True` |
+| **구현 위치** | `inspection/tabs/insp_tab1_realtime.py` |
+
+---
+
+#### FR-INSP-T1-03 (M): 검사 결과 3열 표시
+
+| 항목 | 내용 |
+|------|------|
+| **설명** | 검사 결과를 판정결과 / 원본 이미지 / Anomaly Map 3열로 표시한다 |
+| **레이아웃** | `col1, col2, col3 = st.columns(3)` |
+| **col1 — 판정결과** | `st.metric("판정 결과", verdict)` <br> 양품: 초록색 텍스트 (`st.success`), 불량: 빨간색 텍스트 (`st.error`) <br> Anomaly Score: `st.metric("Anomaly Score", f"{score:.4f}")` |
+| **col2 — 원본 이미지** | `st.image(image_path, caption=image_name, use_container_width=True)` |
+| **col3 — Anomaly Map** | Anomaly Map을 jet colormap으로 변환 후 `st.image(heatmap, caption="Anomaly Map", use_container_width=True)` |
+| **초기 상태** | `insp_last_result is None`인 경우 `st.info(INSP_MSG["NO_MODEL"])` 또는 "검사 버튼을 눌러 시작하세요." 표시 |
+
+---
+
+#### FR-INSP-T1-04 (M): 검사 결과 유지
+
+| 항목 | 내용 |
+|------|------|
+| **설명** | 이전 검사 결과는 새 검사가 완료될 때까지 3열 레이아웃에 유지된다 |
+| **구현 방식** | `insp_last_result`와 `insp_last_anomaly_map`을 session_state에 저장하고, rerun 시 해당 값으로 UI를 렌더링한다 |
+| **초기화 조건** | 모델 교체 시 (FR-INSP-T3-02) 에만 `insp_last_result = None` 리셋 |
+
+---
+
+#### FR-INSP-T1-05 (M): 불량 감지 팝업
+
+| 항목 | 내용 |
+|------|------|
+| **설명** | 불량 감지 시 팝업을 표시하고, 사용자가 확인하면 팝업을 닫고 자동 검사를 재개할 수 있다 |
+| **팝업 트리거** | `insp_defect_popup == True` |
+| **팝업 구현** | `st.error(INSP_MSG["DEFECT_DETECTED"])` + `[확인 및 재개]` 버튼 + `[검사 종료]` 버튼 |
+| **INSP_MSG["DEFECT_DETECTED"]** | `"불량이 감지되었습니다! 자동 검사가 중지되었습니다."` |
+| **[확인 및 재개] 동작** | `insp_defect_popup = False`, `insp_auto_active = True`, `st.rerun()` |
+| **[검사 종료] 동작** | `insp_defect_popup = False`, `insp_auto_active = False`, `st.rerun()` |
+| **자동 검사 중 팝업 우선** | 팝업이 열린 동안 자동 검사 루프를 실행하지 않는다 (`if insp_defect_popup: 팝업만 렌더링; return`) |
+
+---
+
+#### FR-INSP-T1-06 (M): test_pool 관리
+
+| 항목 | 내용 |
+|------|------|
+| **설명** | 검사에 사용할 이미지 풀을 모델 데이터셋에서 구성하고, 순서를 관리한다 |
+| **pool 빌드 조건** | `insp_test_pool is None` (모델 최초 선택 시, 또는 모델 교체 시) |
+| **pool 빌드 로직** | `build_test_pool(dataset_path)` 호출 — 05_Data_Model_and_Storage_Strategy.md 13.3절 코드 기준 |
+| **샘플링** | `insp_pool_index` 위치의 항목 반환 후 `insp_pool_index += 1` |
+| **풀 소진 처리** | `insp_pool_index >= len(insp_test_pool)` 시 `random.shuffle(insp_test_pool)`, `insp_pool_index = 0` |
+| **구현 위치** | `inspection/utils/test_sampler.py`의 `sample_from_pool()` 함수 |
+
+---
+
+### B.8.3 검사 탭2 — 검사 이력 및 통계 (INSP-T2)
+
+---
+
+#### FR-INSP-T2-01 (M): 검사 이력 테이블
+
+| 항목 | 내용 |
+|------|------|
+| **설명** | 현재 세션의 검사 이력을 5열 테이블로 표시한다 |
+| **데이터 소스** | `st.session_state.insp_records` (session_state, 파일 I/O 없음) |
+| **테이블 컬럼** | 번호(seq) / 시각(inspected_at) / 이미지명(image_name) / 판정결과(verdict) / Anomaly Score(anomaly_score) |
+| **정렬** | `seq` 내림차순 (최신 검사 상단) |
+| **판정결과 색상** | "불량" → 빨간색, "양품" → 초록색 (Pandas DataFrame 스타일 적용) |
+| **Streamlit 컴포넌트** | `st.dataframe(df, use_container_width=True)` |
+| **Guard** | FR-INSP-CMN-03 통과 필요 |
+
+---
+
+#### FR-INSP-T2-02 (M): KPI 카드
+
+| 항목 | 내용 |
+|------|------|
+| **설명** | 검사 통계 KPI 카드 4개를 테이블 하단에 표시한다 |
+| **레이아웃** | `st.columns(4)` |
+| **KPI 항목** | col1: `st.metric("총 검사", total)` <br> col2: `st.metric("양품", good_count)` <br> col3: `st.metric("불량", defect_count)` <br> col4: `st.metric("불량률", f"{defect_rate:.1%}")` |
+| **불량률 계산** | `defect_count / total if total > 0 else 0.0` (A-20: 0 나누기 방어) |
+| **갱신 조건** | `insp_records` 변경 시 Streamlit 자동 rerun으로 갱신 |
+
+---
+
+#### FR-INSP-T2-03 (M): 검사 이력 없음 Guard
+
+| 항목 | 내용 |
+|------|------|
+| **설명** | 검사 기록이 없으면 안내 메시지만 표시한다 |
+| **조건** | `len(st.session_state.insp_records) == 0` |
+| **처리** | `st.info("아직 검사 기록이 없습니다. 탭1에서 검사를 시작하세요.")` → KPI 카드는 0 값으로 표시 |
+
+---
+
+#### FR-INSP-T2-04 (S): 검사 이력 CSV 내보내기
+
+| 항목 | 내용 |
+|------|------|
+| **설명** | 현재 세션의 검사 이력을 CSV 파일로 내보낸다 |
+| **Streamlit 컴포넌트** | `st.download_button("📥 CSV 내보내기", data=csv_bytes, file_name=f"inspection_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", mime="text/csv")` |
+| **CSV 컬럼** | 번호, 시각, 이미지명, 판정결과, Anomaly Score (5열, 05_Data_Model 13.5절 기준) |
+| **비활성화 조건** | `len(insp_records) == 0` 시 버튼 `disabled=True` |
+| **인코딩** | UTF-8 with BOM (`encoding="utf-8-sig"`) — Excel 한글 깨짐 방지 |
+
+---
+
+### B.8.4 검사 탭3 — 딥러닝 모델 교체 (INSP-T3)
+
+---
+
+#### FR-INSP-T3-01 (M): 완료된 실험 목록 표시
+
+| 항목 | 내용 |
+|------|------|
+| **설명** | history.json에서 `status == "completed"` 실험만 필터링하여 테이블로 표시한다 |
+| **데이터 로드** | `load_history()` 호출 — R-INSP-04 (읽기 전용 접근) |
+| **필터** | `status == "completed"` 조건 |
+| **테이블 컬럼** | 실험명 / 모델 타입 / F1 Score / AUC / 실행 시각 |
+| **기본 정렬** | F1 Score 내림차순 (높은 성능 모델 우선) |
+| **현재 적용 모델 표시** | `insp_active_model`과 일치하는 행에 "✅ 현재 적용 중" 표시 |
+| **Streamlit 컴포넌트** | `st.dataframe(df, use_container_width=True, selection_mode="single-row", on_select="rerun")` |
+
+---
+
+#### FR-INSP-T3-02 (M): 모델 적용 버튼 + 세션 초기화
+
+| 항목 | 내용 |
+|------|------|
+| **설명** | 선택된 실험의 모델을 검사 모델로 적용하고 검사 세션을 초기화한다 |
+| **Streamlit 컴포넌트** | `st.button("✅ 이 모델로 검사 시작", type="primary", disabled=(selected_row is None))` |
+| **초기화 순서 (R-INSP-05)** | 1. `insp_records = []` <br> 2. `insp_seq_counter = 0` <br> 3. `insp_last_result = None` <br> 4. `insp_last_anomaly_map = None` <br> 5. `insp_auto_active = False` <br> 6. `insp_defect_popup = False` <br> 7. `insp_test_pool = build_test_pool(dataset_path)` <br> 8. `insp_pool_index = 0` <br> 9. `insp_active_model = {experiment_id, model_path, threshold, dataset_path}` <br> 10. `st.session_state['insp_model_cache'] = None` (캐시 무효화) <br> 11. `st.rerun()` |
+| **threshold 값** | `experiment.threshold_value` 사용 |
+| **dataset_path** | `experiment.dataset_path` 사용 |
+| **경고 메시지** | `st.warning("모델을 교체하면 현재 세션의 모든 검사 이력이 삭제됩니다.")` — 버튼 위에 표시 |
+
+---
+
+#### FR-INSP-T3-03 (M): 완료된 실험 없음 Guard
+
+| 항목 | 내용 |
+|------|------|
+| **설명** | completed 실험이 없으면 안내 메시지를 표시한다 |
+| **조건** | `len([e for e in load_history() if e["status"] == "completed"]) == 0` |
+| **처리** | `st.info(INSP_MSG["NO_COMPLETED_EXP"])` |
+| **INSP_MSG["NO_COMPLETED_EXP"]** | `"사용 가능한 완료된 실험이 없습니다. 모델 탐색 대시보드에서 학습을 먼저 완료하세요."` |
+
+---
+
 ## C. System & Data Design
 
 모든 데이터 스키마는 [00_Global_Context_Document.md 1절](./00_Global_Context_Document.md#1-core-data-model)에서 확정된 것을 그대로 사용한다. 이 문서에서 재정의하지 않는다.
 
 ### C.1 FR별 session_state 의존성 매핑
+
+#### 모델 탐색 대시보드
 
 | FR ID | Read 키 | Write 키 |
 |-------|---------|----------|
@@ -737,6 +982,24 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 | FR-T4-01~08 | `dataset_path`, `preprocessing_config`, `model_config`, `device_info` | `experiments[exp_id]`, `current_run_status`, `current_exp_id` |
 | FR-T5-01~09 | `experiments` | `selected_experiment_id` |
 | FR-T6-01~08 | `selected_experiment_id`, `experiments`, `dataset_meta` | `anomaly_map_threshold` |
+
+#### 비전검사 대시보드 (v1.1)
+
+| FR ID | Read 키 | Write 키 |
+|-------|---------|----------|
+| FR-INSP-CMN-01 | `active_dashboard` | `active_dashboard` |
+| FR-INSP-CMN-02 | - | 전체 `insp_*` 키 (초기화) |
+| FR-INSP-CMN-03 | `insp_active_model` | - |
+| FR-INSP-T1-01 | `insp_active_model`, `insp_test_pool`, `insp_pool_index` | `insp_records`, `insp_seq_counter`, `insp_last_result`, `insp_last_anomaly_map`, `insp_pool_index` |
+| FR-INSP-T1-02 | `insp_auto_active`, `insp_defect_popup` | `insp_auto_active`, `insp_defect_popup` |
+| FR-INSP-T1-03~04 | `insp_last_result`, `insp_last_anomaly_map` | - |
+| FR-INSP-T1-05 | `insp_defect_popup` | `insp_defect_popup`, `insp_auto_active` |
+| FR-INSP-T1-06 | `insp_test_pool`, `insp_pool_index` | `insp_test_pool`, `insp_pool_index` |
+| FR-INSP-T2-01~03 | `insp_records` | - |
+| FR-INSP-T2-04 | `insp_records` | - (CSV 다운로드) |
+| FR-INSP-T3-01 | `insp_active_model` | - |
+| FR-INSP-T3-02 | - | 전체 `insp_*` 키 (리셋), `insp_active_model` |
+| FR-INSP-T3-03 | - | - |
 
 ### C.2 파일 I/O 의존성 매핑
 
@@ -793,6 +1056,8 @@ N/A — 이 문서는 기능 명세 범위이다.
 
 FR별 로그 이벤트 매핑:
 
+#### 모델 탐색 대시보드
+
 | FR ID | 이벤트명 | 레벨 |
 |-------|---------|------|
 | FR-T1-01 (성공) | `dataset_validated` | INFO |
@@ -806,6 +1071,17 @@ FR별 로그 이벤트 매핑:
 | FR-T4-05 (실패) | `training_failed` | ERROR |
 | FR-T5-04 (저장) | `model_saved` | INFO |
 | FR-T5-03 (삭제) | `experiment_deleted` | WARNING |
+
+#### 비전검사 대시보드 (v1.1)
+
+| FR ID | 이벤트명 | 레벨 |
+|-------|---------|------|
+| FR-INSP-T3-02 | `insp_model_applied` | INFO |
+| FR-INSP-T1-01 | `insp_inspection_started_manual` | INFO |
+| FR-INSP-T1-02 (시작) | `insp_inspection_started_auto` | INFO |
+| FR-INSP-T1-02 (중지) | `insp_inspection_stopped_auto` | INFO |
+| FR-INSP-T1-05 (감지) | `insp_defect_detected` | WARNING |
+| FR-INSP-T1-06 (소진) | `insp_pool_reshuffled` | INFO |
 
 ---
 
@@ -914,6 +1190,62 @@ Then:   history.json 에 exp_A 레코드 없음, exp_B 레코드 유지
         ./models/exp_A/ 디렉토리 없음
         ./logs/exp_A.log 없음
         탭6 진입 시 MSG["NO_SELECTED_EXP"] 표시
+```
+
+---
+
+#### 비전검사 대시보드 (v1.1)
+
+- [ ] FR-INSP-CMN-01: 사이드바 전환 버튼 2개 렌더링, active 버튼 type="primary"
+- [ ] FR-INSP-CMN-03: insp_active_model is None 시 탭1·탭2에서 Guard 메시지 표시
+- [ ] FR-INSP-T1-01: 수동 검사 버튼 클릭 → insp_records에 1개 추가
+- [ ] FR-INSP-T1-02: 자동 검사 중 불량 감지 → auto_active=False, defect_popup=True
+- [ ] FR-INSP-T1-03: 검사 결과 3열 레이아웃 정상 렌더링
+- [ ] FR-INSP-T1-05: 팝업에서 [확인 및 재개] 클릭 → auto_active=True
+- [ ] FR-INSP-T1-06: pool 소진 시 reshuffle 후 pool_index=0 리셋
+- [ ] FR-INSP-T2-01: insp_records 5열 테이블 렌더링
+- [ ] FR-INSP-T2-02: KPI 카드 4개 정상 계산 (불량률 total=0 시 0.0%)
+- [ ] FR-INSP-T3-01: completed 실험만 표시, F1 내림차순 정렬
+- [ ] FR-INSP-T3-02: 모델 적용 시 insp_records=[], insp_active_model 설정
+- [ ] FR-INSP-T3-03: completed 실험 없음 시 안내 메시지 표시
+
+#### TC-INSP-T1-02: 불량 감지 시 자동 검사 중지
+
+```
+Given:  insp_auto_active = True
+        insp_active_model 설정됨
+When:   자동 검사 루프 중 verdict == "불량" 결과 획득
+Then:   insp_auto_active == False
+        insp_defect_popup == True
+        탭1에 팝업 메시지 표시
+        자동 검사 루프 중단 (sleep 없이 팝업 렌더링)
+```
+
+#### TC-INSP-T3-02: 모델 교체 후 이력 초기화
+
+```
+Given:  insp_records에 검사 기록 5개 존재
+        insp_active_model = "exp_A"
+When:   탭3에서 "exp_B" 선택 후 [이 모델로 검사 시작] 클릭
+Then:   insp_records == []
+        insp_active_model["experiment_id"] == "exp_B"
+        insp_test_pool != None (exp_B 데이터셋 기준으로 재빌드)
+        insp_pool_index == 0
+        insp_last_result == None
+```
+
+#### TC-INSP-T2-02: KPI 카드 계산 정확성
+
+```
+Given:  insp_records = [
+          {verdict: "양품"}, {verdict: "불량"}, {verdict: "양품"},
+          {verdict: "불량"}, {verdict: "불량"}
+        ]
+When:   탭2 렌더링
+Then:   총 검사 = 5
+        양품 = 2
+        불량 = 3
+        불량률 = "60.0%"
 ```
 
 ---

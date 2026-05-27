@@ -2,8 +2,9 @@
 
 > **참조 기준**: [00_Global_Context_Document.md](./00_Global_Context_Document.md) §7 Observability Standards
 > **선행 문서**: [07_Backend_Service_Design.md](./07_Backend_Service_Design.md), [11_Non_Functional_Requirements.md](./11_Non_Functional_Requirements.md)
-> **버전**: v1.0
+> **버전**: v1.1
 > **작성일**: 2026-05-09
+> **수정일**: 2026-05-26
 > **중요**: 00절 §7의 로그 포맷·필수 이벤트·알림 조건을 기준으로, 구현에 필요한 로그 모듈 명세·파일 관리 정책·운영 확인 절차를 확정한다.
 
 ---
@@ -449,6 +450,121 @@ rm ./logs/*.log
 ```
 
 > 탭5에서 실험을 삭제하면 해당 로그 파일도 자동 삭제됨 (C.3 참조).
+
+---
+
+---
+
+## G. 비전검사 대시보드 로그 이벤트 (v1.1)
+
+### G.1 비전검사 필수 로그 이벤트
+
+00절 §7 기준 — 비전검사 대시보드에서 발생하는 7개 로그 이벤트 구현 명세:
+
+| 이벤트명 | 레벨 | 호출 위치 | `data` 필드 |
+|---------|------|---------|------------|
+| `insp_model_applied` | INFO | `insp_tab3_model._apply_model()` 성공 시 | `{"experiment_id": str, "model_type": str}` |
+| `insp_inspection_started_manual` | INFO | `insp_tab1_realtime._run_single_inspection()` 수동 버튼 클릭 시 | `{"image_name": str}` |
+| `insp_inspection_started_auto` | INFO | `insp_tab1_realtime._start_auto_inspection()` 자동 검사 시작 시 | `{"interval_s": float}` |
+| `insp_inspection_stopped_auto` | INFO | `insp_tab1_realtime._stop_auto_inspection()` 자동 검사 중지 시 | `{"total_inspected": int}` |
+| `insp_defect_detected` | WARNING | 판정 결과가 NG(불량)인 경우 | `{"anomaly_score": float, "threshold": float, "image_name": str}` |
+| `insp_pool_reshuffled` | INFO | `test_sampler.sample_from_pool()` 풀 소진 후 재섞기 시 | `{"pool_size": int}` |
+
+> 참고: `insp_inspection_result_recorded` 이벤트는 매 검사마다 발생하므로 필요 시 선택적으로 추가할 수 있으나, 기본 구현에서는 `insp_defect_detected`(WARNING)만 필수로 기록한다.
+
+### G.2 비전검사 이벤트 호출 예시
+
+```python
+# inspection/tabs/insp_tab1_realtime.py
+
+from utils.logger import log_info, log_warning
+
+def _run_single_inspection(image_name: str) -> dict:
+    log_info(
+        "insp_inspection_started_manual",
+        f"수동 검사 시작: {image_name}",
+        tab="insp_tab1",
+        data={"image_name": image_name},
+    )
+
+    # 추론 수행 ...
+    result = _infer(image_name)
+
+    if result["verdict"] == "NG":
+        log_warning(
+            "insp_defect_detected",
+            f"불량 감지: {image_name} (score={result['anomaly_score']:.4f})",
+            tab="insp_tab1",
+            data={
+                "anomaly_score": result["anomaly_score"],
+                "threshold": st.session_state["insp_threshold"],
+                "image_name": image_name,
+            },
+        )
+    return result
+
+
+def _start_auto_inspection(interval_s: float = 3.0) -> None:
+    log_info(
+        "insp_inspection_started_auto",
+        "자동 검사 시작",
+        tab="insp_tab1",
+        data={"interval_s": interval_s},
+    )
+
+
+def _stop_auto_inspection() -> None:
+    log_info(
+        "insp_inspection_stopped_auto",
+        "자동 검사 중지",
+        tab="insp_tab1",
+        data={"total_inspected": st.session_state.get("insp_seq", 0)},
+    )
+```
+
+```python
+# inspection/tabs/insp_tab3_model.py
+
+def _apply_model(exp: dict) -> None:
+    # ... 모델 적용 로직 ...
+    log_info(
+        "insp_model_applied",
+        f"모델 적용 완료: {exp['experiment_id']}",
+        tab="insp_tab3",
+        data={
+            "experiment_id": exp["experiment_id"],
+            "model_type": exp.get("model_type", "unknown"),
+        },
+    )
+```
+
+```python
+# inspection/utils/test_sampler.py
+
+def sample_from_pool(pool: list, used: set) -> tuple[str, set]:
+    remaining = [p for p in pool if p not in used]
+    if not remaining:
+        # 풀 소진 — 재섞기
+        log_info(
+            "insp_pool_reshuffled",
+            "테스트 풀 소진 — 재섞기",
+            tab="insp_tab1",
+            data={"pool_size": len(pool)},
+        )
+        used = set()
+        remaining = pool[:]
+    selected = random.choice(remaining)
+    used.add(selected)
+    return selected, used
+```
+
+### G.3 비전검사 UI 알림 조건
+
+| 조건 | Streamlit 함수 | 메시지 |
+|------|---------------|--------|
+| 적용된 모델 없음 | `st.warning()` | `INSP_MSG["NO_MODEL"]` |
+| 완료된 실험 없음 | `st.info()` | `INSP_MSG["NO_COMPLETED_EXP"]` |
+| 불량 감지 (팝업) | `st.error()` + 자동검사 중지 | `INSP_MSG["DEFECT_DETECTED"]` |
 
 ---
 

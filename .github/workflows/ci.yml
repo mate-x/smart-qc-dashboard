@@ -38,7 +38,7 @@ jobs:
 
       - name: Run unit tests (fast, no ML)
         run: |
-          pytest tests/unit/ tests/integration/ -m "not slow" -v --tb=short \
+          pytest tests/unit/ tests/integration/ tests/inspection/ -m "not slow" -v --tb=short \
             --cov=utils --cov-report=xml --cov-report=term-missing
 
       - name: Upload coverage report

@@ -2,8 +2,9 @@
 
 > **참조 기준**: [00_Global_Context_Document.md](./00_Global_Context_Document.md)
 > **선행 문서**: [09_Infrastructure_and_Cloud.md](./09_Infrastructure_and_Cloud.md)
-> **버전**: v1.0
+> **버전**: v1.1
 > **작성일**: 2026-05-09
+> **수정일**: 2026-05-26
 > **중요**: 이 시스템은 단일 사용자 로컬 실행 대시보드다. 클라우드·멀티테넌시·외부 API 연동이 없으므로 보안 요구사항의 범위는 **로컬 파일시스템 보호**와 **Streamlit 기본 보안 설정**에 한정된다.
 
 ---
@@ -360,6 +361,62 @@ services:
 □ Streamlit 포트가 localhost 바인딩인지 확인
 □ eval(), exec(), yaml.load(), pickle.load() 코드에 없음
 □ 하드코딩된 패스워드/API 키 없음 (grep -r "password\|api_key\|secret")
+```
+
+---
+
+---
+
+## H. 비전검사 대시보드 보안 고려사항 (v1.1)
+
+### H.1 접근 제어 (A-15: 접근 제어 없음)
+
+00절 §9 A-15 원칙에 따라 비전검사 대시보드와 모델 탐색 대시보드 사이에 별도 접근 제어가 없다. 사이드바의 🔬 모델 탐색 / 🏭 비전검사 버튼은 단순 화면 전환 기능이며 인증·인가를 구현하지 않는다.
+
+| 항목 | 내용 |
+|------|------|
+| 대시보드 간 접근 제어 | 없음 (A-15) |
+| 사이드바 버튼 | 인증 없는 화면 전환 |
+| 이유 | 단일 사용자 로컬 환경 — 멀티테넌시 불필요 |
+
+### H.2 테스트 데이터셋 경로 검증
+
+비전검사 탭3(딥러닝 모델 교체)에서 검사에 사용할 모델을 적용할 때, 해당 모델이 학습된 데이터셋 경로가 유효한 MVTec AD 형식인지 검증한다. 이 검증은 기존 `validate_dataset_path()` (§B.1) 와 동일한 규칙을 따른다.
+
+```python
+# inspection/tabs/insp_tab3_model.py — 모델 적용 시
+from utils.path_validator import validate_dataset_path
+
+def _apply_model(exp: dict) -> None:
+    dataset_path = exp.get("dataset_path", "")
+    try:
+        validated = validate_dataset_path(dataset_path)
+    except ValueError as e:
+        st.error(str(e))
+        return
+    # 모델 적용 및 test_sampler 초기화
+```
+
+### H.3 세션 전용 저장소 — 파일시스템 접근 없음
+
+비전검사 대시보드의 모든 검사 데이터는 `st.session_state`에만 저장되며, 파일시스템에 기록되지 않는다.
+
+| 자산 | 저장 위치 | 파일시스템 기록 |
+|------|---------|--------------|
+| 검사 기록 (`insp_records`) | session_state | 없음 |
+| 검사 카운터 (`insp_seq`) | session_state | 없음 |
+| 현재 적용 모델 (`insp_model`) | session_state | 없음 |
+| 테스트 풀 (`insp_test_pool`) | session_state | 없음 |
+
+앱 재시작 또는 모델 교체 시 모든 `insp_` 키가 초기화된다 (00절 §R-INSP-03). 이 설계는 파일시스템 경로 탈출(T-01)이나 디스크 과부하(T-02) 위협이 비전검사 기능에는 적용되지 않음을 의미한다.
+
+### H.4 보안 체크리스트 추가 항목
+
+```
+□ 비전검사 탭3 모델 적용 시 validate_dataset_path() 호출 확인
+□ insp_ session_state 키에 파일 경로 외 외부 입력 없음 확인
+□ _load_insp_model() 에서 torch.load(weights_only=True) 적용 확인
+□ 대시보드 전환 버튼에 인증 로직 추가하지 않음 (A-15 준수)
 ```
 
 ---

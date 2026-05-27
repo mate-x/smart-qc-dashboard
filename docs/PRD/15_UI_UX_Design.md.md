@@ -489,7 +489,7 @@ model:
 │                                                             │
 │  실험 이름                                                   │
 │  [__________________________________]  (max 64자)           │
-│  key:"tab4_experiment_name"                                 │
+│  key:"tab3_experiment_name"                                 │
 │  placeholder: "예: EfficientAD CLAHE clip2.0 실험"          │
 │                                                             │
 │  ▶ 현재 학습 설정 요약  ← st.expander                        │
@@ -526,7 +526,7 @@ model:
 │  │  Validation running...                          │      │
 │  │  ...                                            │      │
 │  └──────────────────────────────────────────────────┘      │
-│  ← st.text_area(disabled=True, key="tab4_log_area")        │
+│  ← st.text_area(disabled=True, key="tab3_log_area")        │
 │    (최근 50줄 표시, 최대 100줄 누적)                         │
 │                                                             │
 │  [학습 중지]  ← st.button (secondary)                       │
@@ -636,7 +636,7 @@ model:
 │  ── 필터 및 제어 ──────────────────────────────────────── │
 │                                                             │
 │  결함 유형 필터:  [전체 ▼]                                   │
-│  ← st.selectbox(key="tab6_class_filter",                    │
+│  ← st.selectbox(key="tab5_class_filter",                    │
 │                 options=["전체"] + defect_classes)          │
 │                                                             │
 │  Threshold                                                  │

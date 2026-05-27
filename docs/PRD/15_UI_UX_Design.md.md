@@ -858,10 +858,10 @@ smart-qc-dashboard/
 ├── tabs/
 │   ├── __init__.py
 │   ├── tab1_data_folder.py         # 데이터셋 검증
-│   ├── (통합 파일, 파일명 미확정)  # 구 tab2+tab3 통합 (전처리 및 모델 설정)
-│   ├── (파일명 미확정)             # 구 tab4 → 탭3 (학습 실행/모니터링)
-│   ├── (파일명 미확정)             # 구 tab5 → 탭4 (실험 히스토리)
-│   └── (파일명 미확정)             # 구 tab6 → 탭5 (이상 영역 시각화)
+│   ├── tab2_config.py              # 탭2 (전처리 및 모델 설정)
+│   ├── tab3_training.py            # 탭3 (학습 실행/모니터링)
+│   ├── tab4_history.py             # 탭4 (실험 히스토리)
+│   └── tab5_anomaly_map.py         # 탭5 (이상 영역 시각화)
 ├── utils/
 │   ├── __init__.py
 │   ├── env_init.py                 # 필수 디렉토리 초기화

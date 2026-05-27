@@ -1269,8 +1269,8 @@ def compute_roc_curve(
 
 | 이벤트 | 파일 경로 | 형식 | 수행 위치 |
 |--------|-----------|------|-----------|
-| 학습 완료 — 모델 저장 | `./models/{exp_id}/model_state_dict.pth` | `torch.save(model.state_dict(), ...)` | `(파일명 미확정)` (메인 스레드) |
-| 학습 완료 — 설정 저장 | `./models/{exp_id}/configs.yaml` | `shutil.copy("./configs.yaml", ...)` | `(파일명 미확정)` (메인 스레드) |
+| 학습 완료 — 모델 저장 | `./models/{exp_id}/model_state_dict.pth` | `torch.save(model.state_dict(), ...)` | `tab3_training.py` (메인 스레드) |
+| 학습 완료 — 설정 저장 | `./models/{exp_id}/configs.yaml` | `shutil.copy("./configs.yaml", ...)` | `tab3_training.py` (메인 스레드) |
 | 학습 로그 | `./logs/{exp_id}.log` | 텍스트, 탭 구분자 | `training_worker.py` (백그라운드) |
 | 추론용 모델 로드 | `./models/{exp_id}/model_state_dict.pth` | `torch.load(...)` | `model_factory.load_model_for_inference()` |
 
@@ -1281,7 +1281,7 @@ def compute_roc_curve(
 `result_queue`를 통해 전달된 `anomaly_maps` (dict[str → np.ndarray])는 크기가 클 수 있다. 탭5 세션 내 캐시 방식:
 
 ```python
-# tabs/(파일명 미확정) — 완료 처리 시
+# tabs/tab3_training.py — 완료 처리 시
 msg = result_queue.get_nowait()   # type == "completed"
 
 # session_state에 저장 (탭5에서 재사용)
@@ -1452,7 +1452,7 @@ Then:   반환값 ≈ np.percentile(normal_scores, 95)
 | 4 | `utils/model_factory.py` EfficientAD 파트 (B.4절) | mvtec_dataset.py | B (EfficientAD 배경) |
 | 5 | `utils/model_factory.py` PatchCore 파트 (B.5절) | mvtec_dataset.py | C (PatchCore 배경) |
 | 6 | `utils/training_worker.py` (B.6절) | model_factory.py | B+C 공동 |
-| 7 | `(파일명 미확정)` (03_FR B.4절) | training_worker.py | B+C |
+| 7 | `tab3_training.py` (03_FR B.4절) | training_worker.py | B+C |
 
 ---
 
@@ -1651,7 +1651,7 @@ for section, data in [
 
 **본문 (삭제):**
 ```python
-# (파일명 미확정) completed 핸들러 — 사용 금지
+# tab3_training.py completed 핸들러 — 사용 금지
 st.session_state[f"_anomaly_maps_{exp_id}"] = msg["anomaly_maps"]
 ```
 
@@ -1659,7 +1659,7 @@ st.session_state[f"_anomaly_maps_{exp_id}"] = msg["anomaly_maps"]
 ```python
 from utils.cache_manager import set_anomaly_map_cache
 
-# (파일명 미확정) _handle_terminal() 내부 — completed 분기
+# tab3_training.py _handle_terminal() 내부 — completed 분기
 def _handle_terminal(msg: dict) -> None:
     if msg["type"] == "completed":
         set_anomaly_map_cache(

@@ -415,7 +415,7 @@ def _cleanup_dir(path: Path) -> None:
 ### 6.3 호출자 처리 패턴
 
 ```python
-# tabs/(파일명 미확정) — 메인 스레드의 완료 처리 부분
+# tabs/tab3_training.py — 메인 스레드의 완료 처리 부분
 
 try:
     save_completed_experiment(exp_id, model, record)
@@ -597,7 +597,7 @@ def validate_imagenet_penalty_dir() -> tuple[bool, int]:
 ### 9.4 탭3 검증 로직
 
 ```python
-# tabs/(파일명 미확정) — [학습 시작] 버튼 클릭 핸들러
+# tabs/tab3_training.py — [학습 시작] 버튼 클릭 핸들러
 
 if model_config["model_type"] == "efficientad":
     ok, count = validate_imagenet_penalty_dir()

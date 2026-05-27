@@ -177,13 +177,13 @@ class TrainingWorker(threading.Thread):
 | `dataset_validation_failed` | `tab1._validate_dataset()` 실패 시 | `{"error_code": str, "path": str}` |
 | `preprocessing_config_saved` | `tab2._save_preprocessing()` | `{"method": str, "image_size": int}` |
 | `model_config_saved` | `tab2._save_model_config()` | `{"model_type": str, "device": str}` |
-| `training_started` | `(파일명 미확정)._handle_start_training()` | `{"experiment_id": str, "model_type": str, "train_steps": int}` |
+| `training_started` | `tab3_training.py._handle_start_training()` | `{"experiment_id": str, "model_type": str, "train_steps": int}` |
 | `training_step` | `TrainingWorker` 내 매 N step | `{"step": int, "total_steps": int, "loss": float, "elapsed_s": float}` |
-| `training_completed` | `(파일명 미확정)._handle_terminal()` completed 분기 | `{"experiment_id": str, "duration_s": int, "auc": float}` |
-| `training_stopped` | `(파일명 미확정)._handle_terminal()` stopped 분기 | `{"experiment_id": str, "step": int}` |
-| `training_failed` | `(파일명 미확정)._handle_terminal()` error 분기 | `{"experiment_id": str, "traceback": str}` |
-| `model_saved` | `(파일명 미확정)._save_model()` | `{"experiment_id": str, "path": str, "size_mb": float}` |
-| `experiment_deleted` | `(파일명 미확정)._delete_experiment()` | `{"experiment_id": str}` |
+| `training_completed` | `tab3_training.py._handle_terminal()` completed 분기 | `{"experiment_id": str, "duration_s": int, "auc": float}` |
+| `training_stopped` | `tab3_training.py._handle_terminal()` stopped 분기 | `{"experiment_id": str, "step": int}` |
+| `training_failed` | `tab3_training.py._handle_terminal()` error 분기 | `{"experiment_id": str, "traceback": str}` |
+| `model_saved` | `tab4_history.py._save_model()` | `{"experiment_id": str, "path": str, "size_mb": float}` |
+| `experiment_deleted` | `tab4_history.py._delete_experiment()` | `{"experiment_id": str}` |
 
 `training_step` 이벤트 주기 (00절 §9 A-08):
 - EfficientAD: 매 500 step마다 → `queue.put({"type": "progress", "step": N, "loss": float, ...})`
@@ -218,7 +218,7 @@ class TrainingWorker(threading.Thread):
 ### C.3 실험 삭제 시 로그 파일 처리
 
 ```python
-# (파일명 미확정)._delete_experiment() 내부
+# tab4_history.py._delete_experiment() 내부
 def _delete_experiment(experiment_id: str) -> None:
     # history.json에서 제거
     history = load_history()

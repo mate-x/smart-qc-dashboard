@@ -35,10 +35,10 @@
 
 | 서비스 | 위치 | 핵심 결정 사항 |
 |--------|------|----------------|
-| ID 생성 | `utils/training_worker.py` 또는 `tabs/(파일명 미확정)` | experiment_id 생성 코드 확정 |
-| 학습 시작 | `tabs/(파일명 미확정)._handle_start_training()` | 버튼 클릭부터 worker.start()까지 전체 순서 |
+| ID 생성 | `utils/training_worker.py` 또는 `tabs/tab3_training.py` | experiment_id 생성 코드 확정 |
+| 학습 시작 | `tabs/tab3_training.py._handle_start_training()` | 버튼 클릭부터 worker.start()까지 전체 순서 |
 | TrainingWorker 초기화 | `utils/training_worker.py.TrainingWorker.__init__()` | 생성자 파라미터와 인스턴스 변수 전체 |
-| 이상 감지 서비스 | `tabs/(파일명 미확정)` + `utils/model_factory.py` | 모델 재로드·추론·캐시·시각화 파이프라인 |
+| 이상 감지 서비스 | `tabs/tab5_anomaly_map.py` + `utils/model_factory.py` | 모델 재로드·추론·캐시·시각화 파이프라인 |
 
 ### 이 문서가 다루지 않는 것 (참조 문서)
 
@@ -68,7 +68,7 @@
 ### 2.2 생성 코드 (확정)
 
 ```python
-# tabs/(파일명 미확정) 또는 utils/training_worker.py
+# tabs/tab3_training.py 또는 utils/training_worker.py
 
 import uuid
 from datetime import datetime, timezone, timedelta
@@ -121,7 +121,7 @@ def generate_created_at() -> str:
 ### 3.2 학습 시작 핸들러 전체 구현
 
 ```python
-# tabs/(파일명 미확정)
+# tabs/tab3_training.py
 
 def _handle_start_training(experiment_name: str) -> None:
     """
@@ -449,7 +449,7 @@ self._write_log(
 ### 6.5 _build_experiment_record() 구현
 
 ```python
-# tabs/(파일명 미확정)
+# tabs/tab3_training.py
 
 def _build_experiment_record(
     exp_id: str,
@@ -590,7 +590,7 @@ def load_model_for_inference(
 ### 7.3 일괄 추론 서비스 (_run_batch_inference)
 
 ```python
-# tabs/(파일명 미확정) 또는 utils/model_factory.py
+# tabs/tab5_anomaly_map.py 또는 utils/model_factory.py
 
 def run_batch_inference(
     model: object,
@@ -628,7 +628,7 @@ def run_batch_inference(
 ### 7.4 Threshold 슬라이더 연동
 
 ```python
-# tabs/(파일명 미확정)
+# tabs/tab5_anomaly_map.py
 
 def _render_threshold_section(anomaly_map: np.ndarray) -> float:
     """
@@ -666,7 +666,7 @@ def _render_threshold_section(anomaly_map: np.ndarray) -> float:
 ### 7.5 3분할 시각화 구성
 
 ```python
-# tabs/(파일명 미확정)
+# tabs/tab5_anomaly_map.py
 
 def _render_triplet(
     path: str,
@@ -781,7 +781,7 @@ def _save_triplet_png(triplet: PIL.Image.Image, source_path: str) -> None:
 ### 7.6 탭5에서 모델 로드 시점 (캐시 MISS 처리)
 
 ```python
-# tabs/(파일명 미확정) — render() 상단
+# tabs/tab5_anomaly_map.py — render() 상단
 
 def render() -> None:
     _guard()  # selected_experiment_id is None → st.stop()
@@ -848,7 +848,7 @@ def render() -> None:
 ### 8.1 중복 학습 시작 방지
 
 ```python
-# tabs/(파일명 미확정) — _render_idle_ui()
+# tabs/tab3_training.py — _render_idle_ui()
 
 def _render_idle_ui() -> None:
     """
@@ -867,7 +867,7 @@ def _render_idle_ui() -> None:
 ```
 
 ```python
-# tabs/(파일명 미확정) — _render_running_ui()
+# tabs/tab3_training.py — _render_running_ui()
 
 def _render_running_ui() -> None:
     """

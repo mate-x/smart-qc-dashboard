@@ -309,12 +309,12 @@ def _run_impl(self) -> None:
 
 ## 5. tab3 Queue 소비 알고리즘
 
-> 04.B.5에서 메인 스레드의 rerun 사이클을 개략적으로 기술했으나, (파일명 미확정) 구현자가 직접 참조할 수 있는 수준의 알고리즘을 이 절에서 확정한다.
+> 04.B.5에서 메인 스레드의 rerun 사이클을 개략적으로 기술했으나, tab3_training.py 구현자가 직접 참조할 수 있는 수준의 알고리즘을 이 절에서 확정한다.
 
 ### 5.1 전체 polling loop 구조
 
 ```python
-# tabs/(파일명 미확정)
+# tabs/tab3_training.py
 
 def render() -> None:
     _guard()
@@ -583,7 +583,7 @@ def _render_running_ui() -> None:
 ### 6.3 미아 스레드(orphan thread) 처리
 
 ```python
-# tabs/(파일명 미확정) — render() 최상위 guard
+# tabs/tab3_training.py — render() 최상위 guard
 
 def _guard() -> None:
     """

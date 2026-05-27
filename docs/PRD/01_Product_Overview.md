@@ -421,9 +421,9 @@ Then:   st.error(ERR_DATASET_NOT_FOUND) 표시
 | Day 1 오전 1h | 09:00~10:00 | B | session_state_init.py 구현 |
 | Day 1 오전 1h | 09:00~10:00 | C | config_manager.py, configs_template.yaml |
 | Day 1 오전 2h | 10:00~12:00 | A | 탭1 구현 (폴더 검증, 트리, 썸네일) |
-| Day 1 오전 2h | 10:00~12:00 | B | 통합 탭2 EfficientAD 모델 설정 파트 (파일명 미확정) |
-| Day 1 오전 2h | 10:00~12:00 | C | 통합 탭2 PatchCore 모델 설정 파트 (파일명 미확정) |
-| Day 1 오후 | 13:00~18:00 | A | 탭2 구현 (전처리·모델 설정 통합, 미리보기) (파일명 미확정) |
+| Day 1 오전 2h | 10:00~12:00 | B | 통합 탭2 EfficientAD 모델 설정 파트 (tab2_config.py) |
+| Day 1 오전 2h | 10:00~12:00 | C | 통합 탭2 PatchCore 모델 설정 파트 (tab2_config.py) |
+| Day 1 오후 | 13:00~18:00 | A | 탭2 구현 (전처리·모델 설정 통합, 미리보기) (tab2_config.py) |
 | Day 1 오후 | 13:00~18:00 | B | 탭3 EfficientAD 학습 루프 |
 | Day 1 오후 | 13:00~18:00 | C | 탭3 PatchCore 학습 루프 |
 | Day 2 오전 | 09:00~13:00 | A | 탭5 구현 |

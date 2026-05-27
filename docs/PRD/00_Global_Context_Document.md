@@ -511,10 +511,10 @@ smart-qc-dashboard/
 │
 ├── tabs/
 │   ├── tab1_data_folder.py
-│   ├── (통합 파일, 파일명 미확정)          # 구 tab2_preprocessing.py + tab3_model_params.py 통합
-│   ├── (파일명 미확정)                     # 구 tab4_training.py → 탭3
-│   ├── (파일명 미확정)                     # 구 tab5_history.py → 탭4
-│   └── (파일명 미확정)                     # 구 tab6_anomaly_map.py → 탭5
+│   ├── tab2_config.py
+│   ├── tab3_training.py
+│   ├── tab4_history.py
+│   └── tab5_anomaly_map.py
 │
 ├── utils/
 │   ├── session_state_init.py       # SESSION_STATE_SCHEMA 정의 (3.1절)

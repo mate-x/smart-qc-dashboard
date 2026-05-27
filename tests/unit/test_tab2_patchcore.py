@@ -1,7 +1,7 @@
 """
-탭3 PatchCore 파트 단위 테스트
+탭2 PatchCore 파트 단위 테스트
 
-PRD 03_Functional_Requirements.md H.2 TC-FR-T3-03 포함.
+PRD 03_Functional_Requirements.md H.2 TC-FR-T2-03 포함.
 순수 함수만 테스트 (Streamlit context 불필요).
 """
 
@@ -250,11 +250,11 @@ class TestApplyPatchcoreWidgets:
 
 
 # ─────────────────────────────────────────────
-# compute_threshold_ratio — FR-T3-10 정상/결함 비율 근사치
+# compute_threshold_ratio — FR-T2-10 정상/결함 비율 근사치
 # ─────────────────────────────────────────────
 
 class TestComputeThresholdRatio:
-    """FR-T3-10 (S): Threshold 기준 정상/결함 비율 실시간 표시 순수 함수 검증."""
+    """FR-T2-10 (S): Threshold 기준 정상/결함 비율 실시간 표시 순수 함수 검증."""
 
     def test_percentile_95_returns_0_95(self):
         normal, defect = compute_threshold_ratio("percentile", 95.0)

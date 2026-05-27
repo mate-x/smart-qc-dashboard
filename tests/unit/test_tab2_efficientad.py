@@ -1,7 +1,7 @@
 """
-탭3 EfficientAD 파트 단위 테스트
+탭2 EfficientAD 파트 단위 테스트
 
-PRD 03_Functional_Requirements.md FR-T3-03, FR-T3-04 관련.
+PRD 03_Functional_Requirements.md FR-T2-03, FR-T2-04 관련.
 순수 함수만 테스트 (Streamlit context 불필요).
 """
 
@@ -177,8 +177,8 @@ class TestBuildEfficientadParams:
         assert params["use_imagenet_penalty"] is False
         assert params["penalty_batch_size"] == 8
 
-    def test_tc_fr_t3_03_ae_0_73(self):
-        """PRD TC-FR-T3-03: ae=0.73 → ae_loss_weight 저장 검증."""
+    def test_tc_fr_t2_03_ae_0_73(self):
+        """PRD TC-FR-T2-03: ae=0.73 → ae_loss_weight 저장 검증."""
         params = _default_ead_params(ae_loss_weight=0.73)
         assert params["ae_loss_weight"] == pytest.approx(0.73)
 
@@ -363,11 +363,11 @@ class TestBuildModelConfigEfficientad:
 
 
 # ─────────────────────────────────────────────
-# compute_threshold_ratio — FR-T3-10 검증
+# compute_threshold_ratio — FR-T2-10 검증
 # ─────────────────────────────────────────────
 
 class TestComputeThresholdRatio:
-    """compute_threshold_ratio — FR-T3-10 정상/결함 비율 계산 검증."""
+    """compute_threshold_ratio — FR-T2-10 정상/결함 비율 계산 검증."""
 
     def test_percentile_95(self):
         normal, defect = compute_threshold_ratio("percentile", 95.0)
@@ -404,8 +404,8 @@ class TestComputeThresholdRatio:
             n, d = compute_threshold_ratio("absolute", val)
             assert (n, d) == (None, None), f"expected (None, None) for val={val}"
 
-    def test_tc_fr_t3_10_percentile_50(self):
-        """PRD TC-FR-T3-10: percentile=50 → normal=0.5, defect=0.5."""
+    def test_tc_fr_t2_10_percentile_50(self):
+        """PRD TC-FR-T2-10: percentile=50 → normal=0.5, defect=0.5."""
         normal, defect = compute_threshold_ratio("percentile", 50.0)
         assert normal == pytest.approx(0.5)
         assert defect == pytest.approx(0.5)

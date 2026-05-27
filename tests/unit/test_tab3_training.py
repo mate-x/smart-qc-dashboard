@@ -1,5 +1,5 @@
 """
-탭4 단위 테스트
+탭3 단위 테스트
 
 PRD 참조:
   06_API_Specification.md §5.2  (_handle_stopped, _drain_queue, _reset_run_state)
@@ -20,7 +20,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-import tabs.tab3_training as t4
+import tabs.tab3_training as t3
 from utils.messages import MSG
 
 
@@ -63,20 +63,20 @@ def _make_ss(**overrides) -> dict:
 
 
 class _SessionCtx:
-    """t4.st.session_state를 fake dict로 교체하는 컨텍스트 매니저."""
+    """t3.st.session_state를 fake dict로 교체하는 컨텍스트 매니저."""
 
     def __init__(self, ss: dict) -> None:
         self._ss = ss
         self._orig = None
 
     def __enter__(self) -> dict:
-        self._orig = getattr(t4.st, "session_state", None)
-        t4.st.session_state = self._ss
+        self._orig = getattr(t3.st, "session_state", None)
+        t3.st.session_state = self._ss
         return self._ss
 
     def __exit__(self, *_) -> None:
         if self._orig is not None:
-            t4.st.session_state = self._orig
+            t3.st.session_state = self._orig
 
 
 # ── TestResetRunState ──────────────────────────────────────────────────────────
@@ -87,7 +87,7 @@ class TestResetRunState:
     def _run(self, **overrides) -> dict:
         ss = _make_ss(**overrides)
         with _SessionCtx(ss):
-            t4._reset_run_state()
+            t3._reset_run_state()
         return ss
 
     def test_status_becomes_idle(self):
@@ -112,7 +112,7 @@ class TestResetRunState:
         ss = _make_ss()
         ss["_worker"] = mock_worker
         with _SessionCtx(ss):
-            t4._reset_run_state()
+            t3._reset_run_state()
         assert ss["_worker"] is None
 
 
@@ -124,7 +124,7 @@ class TestBuildExperimentRecordStopped:
     def _build(self, exp_id: str = EXP_ID, ss: dict | None = None) -> dict:
         ss = ss or _make_ss()
         with _SessionCtx(ss), patch("tabs.tab3_training.load_config", return_value=_EXP_CFG_MOCK):
-            return t4._build_experiment_record(exp_id, "중단", None, None)
+            return t3._build_experiment_record(exp_id, "중단", None, None)
 
     def test_status_is_stopped(self):
         assert self._build()["status"] == "중단"
@@ -172,8 +172,8 @@ class TestHandleStopped:
         with _SessionCtx(ss), \
              patch("tabs.tab3_training.load_config", return_value=_EXP_CFG_MOCK), \
              patch("tabs.tab3_training.append_experiment") as mock_append, \
-             patch.object(t4.st, "warning") as mock_warn:
-            t4._handle_stopped(msg)
+             patch.object(t3.st, "warning") as mock_warn:
+            t3._handle_stopped(msg)
         return ss, mock_append, mock_warn
 
     def test_append_experiment_called_once(self):
@@ -234,8 +234,8 @@ class TestHandleStopped:
         with _SessionCtx(ss), \
              patch("tabs.tab3_training.load_config", return_value={}), \
              patch("tabs.tab3_training.append_experiment"), \
-             patch.object(t4.st, "warning"):
-            t4._handle_stopped({"type": "stopped", "step": 0})
+             patch.object(t3.st, "warning"):
+            t3._handle_stopped({"type": "stopped", "step": 0})
         assert ss["current_run_status"] == "idle"
 
     def test_state_reset_even_when_append_raises(self):
@@ -244,8 +244,8 @@ class TestHandleStopped:
         with _SessionCtx(ss), \
              patch("tabs.tab3_training.load_config", return_value=_EXP_CFG_MOCK), \
              patch("tabs.tab3_training.append_experiment", side_effect=RuntimeError("I/O")), \
-             patch.object(t4.st, "warning"):
-            t4._handle_stopped({"type": "stopped", "step": 0})
+             patch.object(t3.st, "warning"):
+            t3._handle_stopped({"type": "stopped", "step": 0})
         assert ss["current_run_status"] == "idle"
 
 
@@ -264,10 +264,10 @@ class TestDrainQueueStopHandling:
         with _SessionCtx(ss), \
              patch("tabs.tab3_training.load_config", return_value=_EXP_CFG_MOCK), \
              patch("tabs.tab3_training.append_experiment"), \
-             patch.object(t4.st, "warning"), \
-             patch.object(t4.st, "error"), \
-             patch.object(t4.st, "success"):
-            t4._drain_queue()
+             patch.object(t3.st, "warning"), \
+             patch.object(t3.st, "error"), \
+             patch.object(t3.st, "success"):
+            t3._drain_queue()
         return ss
 
     def test_stopped_message_resets_status(self):
@@ -286,9 +286,9 @@ class TestDrainQueueStopHandling:
         with _SessionCtx(ss), \
              patch("tabs.tab3_training.load_config", return_value=_EXP_CFG_MOCK), \
              patch("tabs.tab3_training.append_experiment"), \
-             patch.object(t4.st, "warning"), \
-             patch.object(t4.st, "error") as mock_err:
-            t4._drain_queue()
+             patch.object(t3.st, "warning"), \
+             patch.object(t3.st, "error") as mock_err:
+            t3._drain_queue()
 
         # error 핸들러 미호출 (두 번째 메시지는 드레인되지 않음)
         mock_err.assert_not_called()
@@ -317,7 +317,7 @@ class TestDrainQueueStopHandling:
         ss = _make_ss()
         ss["_result_queue"] = queue.Queue()
         with _SessionCtx(ss):
-            t4._drain_queue()
+            t3._drain_queue()
         assert ss["current_run_status"] == "running"
 
     def test_none_queue_no_crash(self):
@@ -325,7 +325,7 @@ class TestDrainQueueStopHandling:
         ss = _make_ss()
         ss["_result_queue"] = None
         with _SessionCtx(ss):
-            t4._drain_queue()
+            t3._drain_queue()
         assert ss["current_run_status"] == "running"
 
 
@@ -342,9 +342,9 @@ class TestGuardOrphanThread:
         ss["_worker"] = mock_worker
         ss["_result_queue"] = None  # 새로고침 후 Queue 참조 소멸 시뮬레이션
         with _SessionCtx(ss), \
-             patch.object(t4.st, "info"), \
-             patch.object(t4.st, "warning"):
-            t4._guard()
+             patch.object(t3.st, "info"), \
+             patch.object(t3.st, "warning"):
+            t3._guard()
         assert ss["current_run_status"] == "idle"
 
     def test_alive_worker_with_valid_queue_does_not_reset(self):
@@ -355,9 +355,9 @@ class TestGuardOrphanThread:
         ss["_worker"] = mock_worker
         # _result_queue는 _make_ss()에서 queue.Queue()로 설정됨
         with _SessionCtx(ss), \
-             patch.object(t4.st, "info"), \
-             patch.object(t4.st, "warning"):
-            t4._guard()
+             patch.object(t3.st, "info"), \
+             patch.object(t3.st, "warning"):
+            t3._guard()
         assert ss["current_run_status"] == "running"
 
     def test_dead_worker_does_not_trigger_reset(self):
@@ -368,11 +368,93 @@ class TestGuardOrphanThread:
         ss["_worker"] = mock_worker
         ss["_result_queue"] = None
         with _SessionCtx(ss), \
-             patch.object(t4.st, "info"), \
-             patch.object(t4.st, "warning"):
-            t4._guard()
+             patch.object(t3.st, "info"), \
+             patch.object(t3.st, "warning"):
+            t3._guard()
         # 죽은 worker는 orphan 아님 → _reset_run_state 미호출
         assert ss["current_run_status"] == "running"
+
+
+# ── TestGuardMissingState ──────────────────────────────────────────────────────
+
+class TestGuardMissingState:
+    """_guard() — 3개 선행 조건 누락 시 False 반환 및 경고 출력 (ADR-04, FR-CMN-03).
+
+    Guard 체인: 탭2 guard(dataset_meta) → 탭3 guard(dataset_path + preprocessing_config + model_config)
+    구 탭3(model_params) guard(preprocessing_config is None 단독 체크)는 제거됨.
+    """
+
+    def _run(self, ss: dict) -> tuple[bool, list[str]]:
+        """_guard() 실행 후 (반환값, 수집된 경고 메시지 목록) 반환."""
+        warnings: list[str] = []
+
+        def fake_warning(msg: str, **_kw) -> None:
+            warnings.append(msg)
+
+        with _SessionCtx(ss), \
+             patch.object(t3.st, "warning", side_effect=fake_warning), \
+             patch.object(t3.st, "info"):
+            result = t3._guard()
+        return result, warnings
+
+    def test_all_present_returns_true(self):
+        """선행 조건 3개 모두 충족 시 True 반환."""
+        ss = _make_ss(current_run_status="idle")
+        result, _ = self._run(ss)
+        assert result is True
+
+    def test_dataset_path_none_returns_false(self):
+        """dataset_path 누락 → False."""
+        ss = _make_ss(current_run_status="idle")
+        ss["dataset_path"] = None
+        result, _ = self._run(ss)
+        assert result is False
+
+    def test_preprocessing_config_none_returns_false(self):
+        """preprocessing_config 누락 → False."""
+        ss = _make_ss(current_run_status="idle")
+        ss["preprocessing_config"] = None
+        result, _ = self._run(ss)
+        assert result is False
+
+    def test_model_config_none_returns_false(self):
+        """model_config 누락 → False."""
+        ss = _make_ss(current_run_status="idle")
+        ss["model_config"] = None
+        result, _ = self._run(ss)
+        assert result is False
+
+    def test_dataset_path_none_shows_no_dataset_msg(self):
+        """MSG["NO_DATASET"] 경고가 출력돼야 한다."""
+        ss = _make_ss(current_run_status="idle")
+        ss["dataset_path"] = None
+        _, warnings = self._run(ss)
+        assert any(MSG["NO_DATASET"] in w for w in warnings)
+
+    def test_preprocessing_config_none_shows_no_preprocessing_msg(self):
+        """MSG["NO_PREPROCESSING"] 경고가 출력돼야 한다."""
+        ss = _make_ss(current_run_status="idle")
+        ss["preprocessing_config"] = None
+        _, warnings = self._run(ss)
+        assert any(MSG["NO_PREPROCESSING"] in w for w in warnings)
+
+    def test_model_config_none_shows_tab2_message(self):
+        """MSG["NO_MODEL_CONFIG"]는 '탭2에서' 문구 포함 (탭 번호 cascade 확인)."""
+        ss = _make_ss(current_run_status="idle")
+        ss["model_config"] = None
+        _, warnings = self._run(ss)
+        assert any(MSG["NO_MODEL_CONFIG"] in w for w in warnings)
+        assert any("탭2" in w for w in warnings)
+
+    def test_all_missing_returns_false_and_three_warnings(self):
+        """3개 조건 모두 누락 시 False 반환 + 경고 3개 출력."""
+        ss = _make_ss(current_run_status="idle")
+        ss["dataset_path"] = None
+        ss["preprocessing_config"] = None
+        ss["model_config"] = None
+        result, warnings = self._run(ss)
+        assert result is False
+        assert len(warnings) == 3
 
 
 # ── TestRUi02 — 버튼 렌더링 분리 ─────────────────────────────────────────────
@@ -389,38 +471,38 @@ class TestRUi02:
             return False
 
         with _SessionCtx(ss), \
-             patch.object(t4.st, "button", side_effect=fake_button), \
-             patch.object(t4.st, "info"), \
-             patch.object(t4.st, "progress"), \
-             patch.object(t4.st, "text_area"), \
-             patch.object(t4.st, "text_input", return_value=""):
+             patch.object(t3.st, "button", side_effect=fake_button), \
+             patch.object(t3.st, "info"), \
+             patch.object(t3.st, "progress"), \
+             patch.object(t3.st, "text_area"), \
+             patch.object(t3.st, "text_input", return_value=""):
             fn()
         return labels
 
     def test_running_ui_has_no_start_button(self):
         """running UI에 [학습 시작] 버튼 부재."""
         ss = _make_ss()
-        labels = self._collect_buttons(t4._render_running_ui, ss)
+        labels = self._collect_buttons(t3._render_running_ui, ss)
         assert "학습 시작" not in labels
 
     def test_running_ui_has_stop_button(self):
         """running UI에 [학습 중지] 버튼 존재."""
         ss = _make_ss()
-        labels = self._collect_buttons(t4._render_running_ui, ss)
+        labels = self._collect_buttons(t3._render_running_ui, ss)
         assert "학습 중지" in labels
 
     def test_idle_ui_has_start_button(self):
         """idle UI에 [학습 시작] 버튼 존재."""
         ss = _make_ss(current_run_status="idle")
         with patch("tabs.tab3_training._render_pretrain_summary"):
-            labels = self._collect_buttons(t4._render_idle_ui, ss)
+            labels = self._collect_buttons(t3._render_idle_ui, ss)
         assert "학습 시작" in labels
 
     def test_idle_ui_has_no_stop_button(self):
         """idle UI에 [학습 중지] 버튼 부재."""
         ss = _make_ss(current_run_status="idle")
         with patch("tabs.tab3_training._render_pretrain_summary"):
-            labels = self._collect_buttons(t4._render_idle_ui, ss)
+            labels = self._collect_buttons(t3._render_idle_ui, ss)
         assert "학습 중지" not in labels
 
 
@@ -430,35 +512,35 @@ class TestGenerateExperimentId:
     """R-NAMING-03 experiment_id 형식 (PRD 07 §2.1)."""
 
     def test_efficientad_prefix(self):
-        assert t4.generate_experiment_id("efficientad").startswith("efficientad_")
+        assert t3.generate_experiment_id("efficientad").startswith("efficientad_")
 
     def test_patchcore_prefix(self):
-        assert t4.generate_experiment_id("patchcore").startswith("patchcore_")
+        assert t3.generate_experiment_id("patchcore").startswith("patchcore_")
 
     def test_four_part_format(self):
-        eid = t4.generate_experiment_id("efficientad")
+        eid = t3.generate_experiment_id("efficientad")
         parts = eid.split("_")
         # "efficientad" + YYYYMMDD + HHMMSS + rand4
         assert len(parts) == 4
 
     def test_date_part_length_8(self):
-        eid = t4.generate_experiment_id("efficientad")
+        eid = t3.generate_experiment_id("efficientad")
         assert len(eid.split("_")[1]) == 8
 
     def test_time_part_length_6(self):
-        eid = t4.generate_experiment_id("efficientad")
+        eid = t3.generate_experiment_id("efficientad")
         assert len(eid.split("_")[2]) == 6
 
     def test_rand_part_is_4_char_lowercase_hex(self):
         """R-ID-01: uuid4().hex[:4] → 소문자 16진수 4자리."""
         for _ in range(10):
-            eid = t4.generate_experiment_id("efficientad")
+            eid = t3.generate_experiment_id("efficientad")
             rand_part = eid.split("_")[3]
             assert re.fullmatch(r"[0-9a-f]{4}", rand_part), f"rand_part={rand_part!r}"
 
     def test_uniqueness_across_calls(self):
         """10회 호출 중 최소 절반 이상 고유 (uuid4 덕분에 거의 항상)."""
-        ids = [t4.generate_experiment_id("efficientad") for _ in range(10)]
+        ids = [t3.generate_experiment_id("efficientad") for _ in range(10)]
         assert len(set(ids)) >= 5
 
 
@@ -507,10 +589,10 @@ class TestHandleCompleted:
              patch("tabs.tab3_training.save_completed_experiment",
                    side_effect=save_side) as mock_save, \
              patch("tabs.tab3_training.set_anomaly_map_cache") as mock_cache, \
-             patch.object(t4.st, "success") as mock_success, \
-             patch.object(t4.st, "warning") as mock_warn, \
-             patch.object(t4.st, "error") as mock_err:
-            t4._handle_completed(msg)
+             patch.object(t3.st, "success") as mock_success, \
+             patch.object(t3.st, "warning") as mock_warn, \
+             patch.object(t3.st, "error") as mock_err:
+            t3._handle_completed(msg)
         return ss, mock_thresh, mock_metrics, mock_save, mock_cache, mock_success, mock_warn, mock_err
 
     # ── step 1/2: threshold + metrics ─────────────────────────────────────────
@@ -583,7 +665,7 @@ class TestHandleCompleted:
         assert ss["_last_result"]["level"] == "success"
 
     def test_success_message_contains_auc(self):
-        """성공 메시지에 AUC 값 포함 (탭4 UI 알림 조건 — PRD 7.4절)."""
+        """성공 메시지에 AUC 값 포함 (탭3 UI 알림 조건 — PRD 7.4절)."""
         ss, *_ = self._run(self._make_msg())
         assert "0.9500" in ss["_last_result"]["text"]
 
@@ -637,10 +719,10 @@ class TestHandleCompleted:
              patch("tabs.tab3_training.check_disk_before_save"), \
              patch("tabs.tab3_training.save_completed_experiment"), \
              patch("tabs.tab3_training.set_anomaly_map_cache"), \
-             patch.object(t4.st, "success"), \
-             patch.object(t4.st, "warning"), \
-             patch.object(t4.st, "error"):
-            t4._handle_completed(self._make_msg())
+             patch.object(t3.st, "success"), \
+             patch.object(t3.st, "warning"), \
+             patch.object(t3.st, "error"):
+            t3._handle_completed(self._make_msg())
         mock_torch.cuda.empty_cache.assert_called_once()
 
     def test_cuda_empty_cache_not_called_for_cpu_device(self):
@@ -655,10 +737,10 @@ class TestHandleCompleted:
              patch("tabs.tab3_training.check_disk_before_save"), \
              patch("tabs.tab3_training.save_completed_experiment"), \
              patch("tabs.tab3_training.set_anomaly_map_cache"), \
-             patch.object(t4.st, "success"), \
-             patch.object(t4.st, "warning"), \
-             patch.object(t4.st, "error"):
-            t4._handle_completed(self._make_msg())
+             patch.object(t3.st, "success"), \
+             patch.object(t3.st, "warning"), \
+             patch.object(t3.st, "error"):
+            t3._handle_completed(self._make_msg())
         mock_torch.cuda.empty_cache.assert_not_called()
 
 
@@ -670,8 +752,8 @@ class TestHandleError:
     def _run(self, msg: dict, ss: dict | None = None):
         ss = ss or _make_ss()
         with _SessionCtx(ss), \
-             patch.object(t4.st, "error") as mock_err:
-            t4._handle_error(msg)
+             patch.object(t3.st, "error") as mock_err:
+            t3._handle_error(msg)
         return ss, mock_err
 
     def test_st_error_called_once(self):

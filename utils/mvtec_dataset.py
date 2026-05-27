@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 from pathlib import Path
 from typing import Literal
 
@@ -8,20 +9,24 @@ import torch
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 
+from utils.dataset_converter import detect_ok_ng_dirs
 from utils.image_utils import apply_preprocessing
 
 SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".bmp"}
+_DEFAULT_TRAIN_RATIO = 0.8
 
 
 class MVTecDataset(Dataset):
     """
-    MVTec AD 폴더 구조를 읽어 (image_tensor, label, mask_tensor, image_path) 반환.
+    MVTec AD 또는 OK/NG 폴더 구조를 읽어 (image_tensor, label, mask_tensor, image_path) 반환.
 
-    split == "train" : train/good/ 이미지만 로드, label=0, mask=None
-    split == "test"  : test/{class}/ 이미지 전체 로드,
-                       class == "good" → label=0
-                       class != "good" → label=1
-                       gt mask: ground_truth/{class}/{filename} (없으면 zeros)
+    MVTec 형식:
+      split == "train" : train/good/ 이미지만 로드, label=0
+      split == "test"  : test/{class}/ 이미지 전체 로드 (good→0, 나머지→1)
+
+    OK/NG 형식 (oking):
+      split == "train" : OK 이미지의 앞 80%를 train으로 사용, label=0
+      split == "test"  : OK 이미지의 뒤 20% (label=0) + NG 이미지 전부 (label=1)
     """
 
     def __init__(
@@ -29,12 +34,32 @@ class MVTecDataset(Dataset):
         dataset_path: str,
         split: Literal["train", "test"],
         preprocessing_config: dict,
+        random_seed: int = 42,
+        train_ratio: float = _DEFAULT_TRAIN_RATIO,
     ) -> None:
         self.preprocessing_config = preprocessing_config
+        self.random_seed = random_seed
+        self.train_ratio = train_ratio
         self.items: list[dict] = []
-        self._build_index(Path(dataset_path), split)
+        root = Path(dataset_path)
+        if self._is_oking_format(root):
+            self._build_index_oking(root, split)
+        else:
+            self._build_index_mvtec(root, split)
 
-    def _build_index(self, root: Path, split: str) -> None:
+    # ------------------------------------------------------------------
+    # Format detection
+    # ------------------------------------------------------------------
+
+    def _is_oking_format(self, root: Path) -> bool:
+        ok_dir, _ = detect_ok_ng_dirs(root)
+        return ok_dir is not None and not (root / "train" / "good").exists()
+
+    # ------------------------------------------------------------------
+    # MVTec index builder (original logic)
+    # ------------------------------------------------------------------
+
+    def _build_index_mvtec(self, root: Path, split: str) -> None:
         if split == "train":
             good_dir = root / "train" / "good"
             for p in sorted(good_dir.iterdir()):
@@ -61,6 +86,47 @@ class MVTecDataset(Dataset):
                         "label": label,
                         "mask_path": mask_path,
                     })
+
+    # ------------------------------------------------------------------
+    # OK/NG index builder
+    # ------------------------------------------------------------------
+
+    def _build_index_oking(self, root: Path, split: str) -> None:
+        ok_dir, ng_dir = detect_ok_ng_dirs(root)
+
+        ok_images = sorted(
+            p for p in ok_dir.iterdir()
+            if p.is_file() and p.suffix.lower() in SUPPORTED_EXTS
+        )
+        rng = random.Random(self.random_seed)
+        shuffled = list(ok_images)
+        rng.shuffle(shuffled)
+        split_idx = max(1, int(len(shuffled) * self.train_ratio))
+        train_images = shuffled[:split_idx]
+        test_good_images = shuffled[split_idx:]
+
+        ng_images: list[Path] = []
+        if ng_dir is not None:
+            ng_images = sorted(
+                p for p in ng_dir.iterdir()
+                if p.is_file() and p.suffix.lower() in SUPPORTED_EXTS
+            )
+
+        if split == "train":
+            for p in train_images:
+                self.items.append({"path": str(p), "label": 0, "mask_path": None})
+        else:
+            for p in test_good_images:
+                self.items.append({"path": str(p), "label": 0, "mask_path": None})
+            for p in ng_images:
+                self.items.append({"path": str(p), "label": 1, "mask_path": None})
+
+    # ------------------------------------------------------------------
+    # Kept for backwards compatibility (routes to MVTec builder)
+    # ------------------------------------------------------------------
+
+    def _build_index(self, root: Path, split: str) -> None:
+        self._build_index_mvtec(root, split)
 
     def __len__(self) -> int:
         return len(self.items)
@@ -99,8 +165,8 @@ def build_dataloaders(
     train_loader: shuffle=True, drop_last=True
     test_loader:  shuffle=False, batch_size=1
     """
-    train_ds = MVTecDataset(dataset_path, "train", preprocessing_config)
-    test_ds = MVTecDataset(dataset_path, "test", preprocessing_config)
+    train_ds = MVTecDataset(dataset_path, "train", preprocessing_config, random_seed=random_seed)
+    test_ds = MVTecDataset(dataset_path, "test", preprocessing_config, random_seed=random_seed)
 
     g = torch.Generator()
     g.manual_seed(random_seed)

@@ -359,6 +359,19 @@ def create_trainer(
     experiment_id: str,
     stop_event: threading.Event,
     result_queue: queue.Queue,
+    pause_event: "threading.Event | None" = None,
+    # EfficientAD resume
+    start_step: int = 0,
+    student_state_dict: "dict | None" = None,
+    autoencoder_state_dict: "dict | None" = None,
+    optimizer_st_state_dict: "dict | None" = None,
+    optimizer_ae_state_dict: "dict | None" = None,
+    scheduler_st_state_dict: "dict | None" = None,
+    scheduler_ae_state_dict: "dict | None" = None,
+    loss_history: "list | None" = None,
+    # PatchCore resume
+    start_batch_idx: int = 0,
+    accumulated_features: "torch.Tensor | None" = None,
 ) -> "TrainingWorker":
     """TrainingWorker 생성 후 반환. 실행은 호출자가 worker.start()로 수행."""
     from utils.training_worker import TrainingWorker
@@ -371,6 +384,17 @@ def create_trainer(
         device=device,
         stop_event=stop_event,
         result_queue=result_queue,
+        pause_event=pause_event,
+        start_step=start_step,
+        student_state_dict=student_state_dict,
+        autoencoder_state_dict=autoencoder_state_dict,
+        optimizer_st_state_dict=optimizer_st_state_dict,
+        optimizer_ae_state_dict=optimizer_ae_state_dict,
+        scheduler_st_state_dict=scheduler_st_state_dict,
+        scheduler_ae_state_dict=scheduler_ae_state_dict,
+        loss_history=loss_history,
+        start_batch_idx=start_batch_idx,
+        accumulated_features=accumulated_features,
     )
 
 

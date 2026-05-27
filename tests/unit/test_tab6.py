@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 from PIL import Image
 
-from tabs.tab6_anomaly_map import (
+from tabs.tab5_anomaly_map import (
     _build_csv_bytes,
     _build_table_rows,
     _build_zip_bytes,

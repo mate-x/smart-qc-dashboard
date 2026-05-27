@@ -20,7 +20,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-import tabs.tab4_training as t4
+import tabs.tab3_training as t4
 from utils.messages import MSG
 
 
@@ -123,7 +123,7 @@ class TestBuildExperimentRecordStopped:
 
     def _build(self, exp_id: str = EXP_ID, ss: dict | None = None) -> dict:
         ss = ss or _make_ss()
-        with _SessionCtx(ss), patch("tabs.tab4_training.load_config", return_value=_EXP_CFG_MOCK):
+        with _SessionCtx(ss), patch("tabs.tab3_training.load_config", return_value=_EXP_CFG_MOCK):
             return t4._build_experiment_record(exp_id, "중단", None, None)
 
     def test_status_is_stopped(self):
@@ -170,8 +170,8 @@ class TestHandleStopped:
     def _run(self, msg: dict, ss: dict | None = None):
         ss = ss or _make_ss()
         with _SessionCtx(ss), \
-             patch("tabs.tab4_training.load_config", return_value=_EXP_CFG_MOCK), \
-             patch("tabs.tab4_training.append_experiment") as mock_append, \
+             patch("tabs.tab3_training.load_config", return_value=_EXP_CFG_MOCK), \
+             patch("tabs.tab3_training.append_experiment") as mock_append, \
              patch.object(t4.st, "warning") as mock_warn:
             t4._handle_stopped(msg)
         return ss, mock_append, mock_warn
@@ -218,8 +218,8 @@ class TestHandleStopped:
 
     def test_step_nonzero_appears_in_warning(self):
         """step≠0이면 경고 메시지에 step 수가 포함됨."""
-        ss, _, _ = self._run({"type": "stopped", "step": 500})
-        assert "500" in ss["_last_result"]["text"]
+        ss, _, _ = self._run({"type": "stopped", "step": 100})
+        assert "100" in ss["_last_result"]["text"]
 
     def test_step_zero_no_step_suffix(self):
         """step=0이면 경고 메시지에 step 수 미포함."""
@@ -232,8 +232,8 @@ class TestHandleStopped:
         ss = _make_ss()
         ss["current_exp_id"] = ""
         with _SessionCtx(ss), \
-             patch("tabs.tab4_training.load_config", return_value={}), \
-             patch("tabs.tab4_training.append_experiment"), \
+             patch("tabs.tab3_training.load_config", return_value={}), \
+             patch("tabs.tab3_training.append_experiment"), \
              patch.object(t4.st, "warning"):
             t4._handle_stopped({"type": "stopped", "step": 0})
         assert ss["current_run_status"] == "idle"
@@ -242,8 +242,8 @@ class TestHandleStopped:
         """append_experiment RuntimeError 발생해도 _reset_run_state()는 실행됨."""
         ss = _make_ss()
         with _SessionCtx(ss), \
-             patch("tabs.tab4_training.load_config", return_value=_EXP_CFG_MOCK), \
-             patch("tabs.tab4_training.append_experiment", side_effect=RuntimeError("I/O")), \
+             patch("tabs.tab3_training.load_config", return_value=_EXP_CFG_MOCK), \
+             patch("tabs.tab3_training.append_experiment", side_effect=RuntimeError("I/O")), \
              patch.object(t4.st, "warning"):
             t4._handle_stopped({"type": "stopped", "step": 0})
         assert ss["current_run_status"] == "idle"
@@ -262,8 +262,8 @@ class TestDrainQueueStopHandling:
             q.put(m)
         ss["_result_queue"] = q
         with _SessionCtx(ss), \
-             patch("tabs.tab4_training.load_config", return_value=_EXP_CFG_MOCK), \
-             patch("tabs.tab4_training.append_experiment"), \
+             patch("tabs.tab3_training.load_config", return_value=_EXP_CFG_MOCK), \
+             patch("tabs.tab3_training.append_experiment"), \
              patch.object(t4.st, "warning"), \
              patch.object(t4.st, "error"), \
              patch.object(t4.st, "success"):
@@ -284,8 +284,8 @@ class TestDrainQueueStopHandling:
         ss["_result_queue"] = q
 
         with _SessionCtx(ss), \
-             patch("tabs.tab4_training.load_config", return_value=_EXP_CFG_MOCK), \
-             patch("tabs.tab4_training.append_experiment"), \
+             patch("tabs.tab3_training.load_config", return_value=_EXP_CFG_MOCK), \
+             patch("tabs.tab3_training.append_experiment"), \
              patch.object(t4.st, "warning"), \
              patch.object(t4.st, "error") as mock_err:
             t4._drain_queue()
@@ -412,14 +412,14 @@ class TestRUi02:
     def test_idle_ui_has_start_button(self):
         """idle UI에 [학습 시작] 버튼 존재."""
         ss = _make_ss(current_run_status="idle")
-        with patch("tabs.tab4_training._render_pretrain_summary"):
+        with patch("tabs.tab3_training._render_pretrain_summary"):
             labels = self._collect_buttons(t4._render_idle_ui, ss)
         assert "학습 시작" in labels
 
     def test_idle_ui_has_no_stop_button(self):
         """idle UI에 [학습 중지] 버튼 부재."""
         ss = _make_ss(current_run_status="idle")
-        with patch("tabs.tab4_training._render_pretrain_summary"):
+        with patch("tabs.tab3_training._render_pretrain_summary"):
             labels = self._collect_buttons(t4._render_idle_ui, ss)
         assert "학습 중지" not in labels
 
@@ -500,13 +500,13 @@ class TestHandleCompleted:
         ss = ss or _make_ss()
         save_side = raise_on_save
         with _SessionCtx(ss), \
-             patch("tabs.tab4_training.load_config", return_value=_EXP_CFG_MOCK), \
-             patch("tabs.tab4_training.compute_threshold", return_value=0.5) as mock_thresh, \
-             patch("tabs.tab4_training.compute_metrics", return_value=self._METRICS) as mock_metrics, \
-             patch("tabs.tab4_training.check_disk_before_save"), \
-             patch("tabs.tab4_training.save_completed_experiment",
+             patch("tabs.tab3_training.load_config", return_value=_EXP_CFG_MOCK), \
+             patch("tabs.tab3_training.compute_threshold", return_value=0.5) as mock_thresh, \
+             patch("tabs.tab3_training.compute_metrics", return_value=self._METRICS) as mock_metrics, \
+             patch("tabs.tab3_training.check_disk_before_save"), \
+             patch("tabs.tab3_training.save_completed_experiment",
                    side_effect=save_side) as mock_save, \
-             patch("tabs.tab4_training.set_anomaly_map_cache") as mock_cache, \
+             patch("tabs.tab3_training.set_anomaly_map_cache") as mock_cache, \
              patch.object(t4.st, "success") as mock_success, \
              patch.object(t4.st, "warning") as mock_warn, \
              patch.object(t4.st, "error") as mock_err:
@@ -629,14 +629,14 @@ class TestHandleCompleted:
         """device=="cuda"인 경우만 torch.cuda.empty_cache() 호출."""
         ss = _make_ss()
         ss["device_info"] = {"device": "cuda"}
-        with patch("tabs.tab4_training.torch") as mock_torch, \
+        with patch("tabs.tab3_training.torch") as mock_torch, \
              _SessionCtx(ss), \
-             patch("tabs.tab4_training.load_config", return_value=_EXP_CFG_MOCK), \
-             patch("tabs.tab4_training.compute_threshold", return_value=0.5), \
-             patch("tabs.tab4_training.compute_metrics", return_value=self._METRICS), \
-             patch("tabs.tab4_training.check_disk_before_save"), \
-             patch("tabs.tab4_training.save_completed_experiment"), \
-             patch("tabs.tab4_training.set_anomaly_map_cache"), \
+             patch("tabs.tab3_training.load_config", return_value=_EXP_CFG_MOCK), \
+             patch("tabs.tab3_training.compute_threshold", return_value=0.5), \
+             patch("tabs.tab3_training.compute_metrics", return_value=self._METRICS), \
+             patch("tabs.tab3_training.check_disk_before_save"), \
+             patch("tabs.tab3_training.save_completed_experiment"), \
+             patch("tabs.tab3_training.set_anomaly_map_cache"), \
              patch.object(t4.st, "success"), \
              patch.object(t4.st, "warning"), \
              patch.object(t4.st, "error"):
@@ -647,14 +647,14 @@ class TestHandleCompleted:
         """device=="cpu"이면 torch.cuda.empty_cache() 미호출."""
         ss = _make_ss()
         ss["device_info"] = {"device": "cpu"}
-        with patch("tabs.tab4_training.torch") as mock_torch, \
+        with patch("tabs.tab3_training.torch") as mock_torch, \
              _SessionCtx(ss), \
-             patch("tabs.tab4_training.load_config", return_value=_EXP_CFG_MOCK), \
-             patch("tabs.tab4_training.compute_threshold", return_value=0.5), \
-             patch("tabs.tab4_training.compute_metrics", return_value=self._METRICS), \
-             patch("tabs.tab4_training.check_disk_before_save"), \
-             patch("tabs.tab4_training.save_completed_experiment"), \
-             patch("tabs.tab4_training.set_anomaly_map_cache"), \
+             patch("tabs.tab3_training.load_config", return_value=_EXP_CFG_MOCK), \
+             patch("tabs.tab3_training.compute_threshold", return_value=0.5), \
+             patch("tabs.tab3_training.compute_metrics", return_value=self._METRICS), \
+             patch("tabs.tab3_training.check_disk_before_save"), \
+             patch("tabs.tab3_training.save_completed_experiment"), \
+             patch("tabs.tab3_training.set_anomaly_map_cache"), \
              patch.object(t4.st, "success"), \
              patch.object(t4.st, "warning"), \
              patch.object(t4.st, "error"):

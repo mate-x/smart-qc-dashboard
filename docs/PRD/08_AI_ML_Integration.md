@@ -1082,7 +1082,7 @@ def _get_anomaly_map(model, image: torch.Tensor) -> np.ndarray:
     raise NotImplementedError(f"알 수 없는 모델 구조: {type(model)}")
 ```
 
-#### B.7.2 단일 이미지 추론 (탭6용)
+#### B.7.2 단일 이미지 추론 (탭5용)
 
 ```python
 # utils/model_factory.py
@@ -1135,7 +1135,7 @@ def run_inference(
 
 #### B.8.1 Score 정규화
 
-원시 Anomaly Score는 모델에 따라 스케일이 다르다. 탭5 비교 차트에서 모델 간 Score를 직접 비교하지 않으므로 MVP에서는 정규화를 적용하지 않는다.
+원시 Anomaly Score는 모델에 따라 스케일이 다르다. 탭4 비교 차트에서 모델 간 Score를 직접 비교하지 않으므로 MVP에서는 정규화를 적용하지 않는다.
 
 각 실험의 Score는 해당 실험 내에서만 의미 있는 상대적 값이다.
 
@@ -1269,8 +1269,8 @@ def compute_roc_curve(
 
 | 이벤트 | 파일 경로 | 형식 | 수행 위치 |
 |--------|-----------|------|-----------|
-| 학습 완료 — 모델 저장 | `./models/{exp_id}/model_state_dict.pth` | `torch.save(model.state_dict(), ...)` | `tab4_training.py` (메인 스레드) |
-| 학습 완료 — 설정 저장 | `./models/{exp_id}/configs.yaml` | `shutil.copy("./configs.yaml", ...)` | `tab4_training.py` (메인 스레드) |
+| 학습 완료 — 모델 저장 | `./models/{exp_id}/model_state_dict.pth` | `torch.save(model.state_dict(), ...)` | `tab3_training.py` (메인 스레드) |
+| 학습 완료 — 설정 저장 | `./models/{exp_id}/configs.yaml` | `shutil.copy("./configs.yaml", ...)` | `tab3_training.py` (메인 스레드) |
 | 학습 로그 | `./logs/{exp_id}.log` | 텍스트, 탭 구분자 | `training_worker.py` (백그라운드) |
 | 추론용 모델 로드 | `./models/{exp_id}/model_state_dict.pth` | `torch.load(...)` | `model_factory.load_model_for_inference()` |
 
@@ -1278,19 +1278,19 @@ def compute_roc_curve(
 
 ### C.2 anomaly_maps 메모리 관리
 
-`result_queue`를 통해 전달된 `anomaly_maps` (dict[str → np.ndarray])는 크기가 클 수 있다. 탭6 세션 내 캐시 방식:
+`result_queue`를 통해 전달된 `anomaly_maps` (dict[str → np.ndarray])는 크기가 클 수 있다. 탭5 세션 내 캐시 방식:
 
 ```python
-# tabs/tab4_training.py — 완료 처리 시
+# tabs/tab3_training.py — 완료 처리 시
 msg = result_queue.get_nowait()   # type == "completed"
 
-# session_state에 저장 (탭6에서 재사용)
+# session_state에 저장 (탭5에서 재사용)
 # 각 anomaly_map: float32 (256×256) ≈ 256KB
 # 테스트 이미지 100장 기준 ≈ 25MB — session_state 허용 범위
 st.session_state[f"_anomaly_maps_{exp_id}"] = msg["anomaly_maps"]
 ```
 
-탭6에서 사용:
+탭5에서 사용:
 ```python
 exp_id = st.session_state.selected_experiment_id
 cached_maps = st.session_state.get(f"_anomaly_maps_{exp_id}")
@@ -1360,7 +1360,7 @@ ML 레이어 추가 요구사항:
 | **전처리 속도** | 1024×1024 이미지 Homomorphic 적용 ≤ 200ms/장 (CPU) |
 | **anomaly_map 캐시 크기** | float32, 256×256, 100장 = ~25MB. 허용 범위 |
 | **모델 파일 크기** | EfficientAD-medium: ~200MB / PatchCore WRN50: ~400MB |
-| **추론 속도 (탭6)** | 단일 이미지 추론 ≤ 500ms (CUDA 기준) |
+| **추론 속도 (탭5)** | 단일 이미지 추론 ≤ 500ms (CUDA 기준) |
 
 ---
 
@@ -1422,7 +1422,7 @@ Then:   두 실험의 metrics.auc 차이 < 0.0001
 
 ```
 Given:  preprocessing_config.method = "clahe", clip_limit = 2.0
-        동일 이미지를 학습 DataLoader와 탭6 추론에서 각각 처리
+        동일 이미지를 학습 DataLoader와 탭5 추론에서 각각 처리
 When:   MVTecDataset.__getitem__()과 apply_preprocessing() 각각 호출
 Then:   두 경로에서 생성된 image_tensor의 max 차이 < 1e-5
         (image_utils.apply_preprocessing() 단일 구현 보장)
@@ -1452,7 +1452,7 @@ Then:   반환값 ≈ np.percentile(normal_scores, 95)
 | 4 | `utils/model_factory.py` EfficientAD 파트 (B.4절) | mvtec_dataset.py | B (EfficientAD 배경) |
 | 5 | `utils/model_factory.py` PatchCore 파트 (B.5절) | mvtec_dataset.py | C (PatchCore 배경) |
 | 6 | `utils/training_worker.py` (B.6절) | model_factory.py | B+C 공동 |
-| 7 | `tabs/tab4_training.py` (03_FR B.5절) | training_worker.py | B+C |
+| 7 | `tab3_training.py` (03_FR B.4절) | training_worker.py | B+C |
 
 ---
 
@@ -1570,7 +1570,7 @@ class StoppedMessage(TypedDict):
     step: int      # 중단 시점 step (0-based)
 ```
 
-**근거**: 06절 §B.3.2에서 `StoppedMessage`에 `step: int` 필드 확정. tab4 UI가 "N step 완료 후 중단" 표시에 사용.
+**근거**: 06절 §B.3.2에서 `StoppedMessage`에 `step: int` 필드 확정. tab3 UI가 "N step 완료 후 중단" 표시에 사용.
 
 ---
 
@@ -1612,7 +1612,7 @@ class CompletedMessage(TypedDict):
     duration_seconds: int
 ```
 
-**근거**: tab4 핸들러가 `set_anomaly_map_cache()`를 호출할 때 `anomaly_maps`와 `image_paths` 모두 필요 (Z.6 참조).
+**근거**: tab3 핸들러가 `set_anomaly_map_cache()`를 호출할 때 `anomaly_maps`와 `image_paths` 모두 필요 (Z.6 참조).
 
 ---
 
@@ -1651,7 +1651,7 @@ for section, data in [
 
 **본문 (삭제):**
 ```python
-# tab4 completed 핸들러 — 사용 금지
+# tab3_training.py completed 핸들러 — 사용 금지
 st.session_state[f"_anomaly_maps_{exp_id}"] = msg["anomaly_maps"]
 ```
 
@@ -1659,7 +1659,7 @@ st.session_state[f"_anomaly_maps_{exp_id}"] = msg["anomaly_maps"]
 ```python
 from utils.cache_manager import set_anomaly_map_cache
 
-# tab4 _handle_terminal() 내부 — completed 분기
+# tab3_training.py _handle_terminal() 내부 — completed 분기
 def _handle_terminal(msg: dict) -> None:
     if msg["type"] == "completed":
         set_anomaly_map_cache(
@@ -1714,7 +1714,7 @@ def load_model_for_inference(
     """
 ```
 
-호출 측 (tab6 pipeline — 07절 §C.3):
+호출 측 (tab5 pipeline — 07절 §C.3):
 ```python
 model = load_model_for_inference(
     experiment_id=exp_id,
@@ -1724,7 +1724,7 @@ model = load_model_for_inference(
 )
 ```
 
-**근거**: 07절 §C.3 tab6 pipeline에서 `load_model_for_inference(exp_id, model_path, model_config, device)` 4-인자 형태로 확정.
+**근거**: 07절 §C.3 tab5 pipeline에서 `load_model_for_inference(exp_id, model_path, model_config, device)` 4-인자 형태로 확정.
 `experiment_id`는 오류 로그 context 제공 및 향후 캐시 키 확장을 위해 필수.
 
 ---

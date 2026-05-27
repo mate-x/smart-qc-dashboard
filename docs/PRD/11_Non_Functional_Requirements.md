@@ -48,7 +48,7 @@
 - 탭 전환은 Streamlit 자체 처리 — Python 코드 실행 없음
 
 **측정 방법**:
-1. 학습 실행 중 탭1~탭6을 순서대로 클릭
+1. 학습 실행 중 탭1~탭5를 순서대로 클릭
 2. 각 탭 클릭 시 브라우저 렌더링 완료까지 시간 측정 (Chrome DevTools Network 탭)
 
 **합격 기준**:
@@ -104,7 +104,7 @@
 **요구사항**: 단일 이미지 추론 (anomaly map 생성) 결과 표시까지 사용자 대기 시간 합리적 범위.
 
 **설계 보장 메커니즘**:
-- 탭6 추론 시 모델 재로드 필요 (05절 캐시 없는 경우)
+- 탭5 추론 시 모델 재로드 필요 (05절 캐시 없는 경우)
 - 최대 3개 anomaly_maps 캐시로 반복 추론 회피 (05절 §4.2)
 
 **합격 기준**:
@@ -164,14 +164,14 @@
 **설계 보장 메커니즘**:
 - `history.json` 파일 기반 영속 (05절 §3.1)
 - `app.py` 시작 시 `load_history()` → `session_state["experiments"]` 로딩
-- `session_state`는 재시작 시 초기화되므로, 탭5 진입 시 `history.json` 재로드
+- `session_state`는 재시작 시 초기화되므로, 탭4 진입 시 `history.json` 재로드
 
 **합격 기준**:
-- 재시작 후 탭5에서 이전 실험 목록 전체 표시
+- 재시작 후 탭4에서 이전 실험 목록 전체 표시
 - `completed` 상태 실험의 `model_path` 파일 존재 확인 (R-04 참조무결성)
 
 **위반 시 처리**:
-- `load_history()` 호출 위치 확인 (탭5 진입 시 반드시 호출)
+- `load_history()` 호출 위치 확인 (탭4 진입 시 반드시 호출)
 - `model_path` 존재하지 않는 레코드: UI에서 "(파일 없음)" 표시 + 추론 비활성화
 
 ---
@@ -187,10 +187,9 @@
 | 조건 | 기대 동작 |
 |------|-----------|
 | `dataset_path is None` + 탭2 진입 | `st.warning(MSG["NO_DATASET"])` + 탭 콘텐츠 미렌더링 |
-| `preprocessing_config is None` + 탭3 진입 | `st.warning(MSG["NO_PREPROCESSING"])` + 탭 콘텐츠 미렌더링 |
-| `model_config is None` + 탭4 진입 | `st.warning(MSG["NO_MODEL_CONFIG"])` + 탭 콘텐츠 미렌더링 |
-| `experiments` 빈 dict + 탭5 진입 | `st.info(MSG["NO_EXPERIMENTS"])` |
-| `selected_experiment_id is None` + 탭6 진입 | `st.info(MSG["NO_SELECTED_EXP"])` |
+| `dataset_path is None` · `preprocessing_config is None` · `model_config is None` 중 하나라도 None + 탭3 진입 | `st.warning(MSG["NO_MODEL_CONFIG"])` + 탭 콘텐츠 미렌더링 |
+| `experiments` 빈 dict + 탭4 진입 | `st.info(MSG["NO_EXPERIMENTS"])` |
+| `selected_experiment_id is None` + 탭5 진입 | `st.info(MSG["NO_SELECTED_EXP"])` |
 
 **측정 방법**: 각 조건을 수동으로 재현하여 안내 메시지 표시 및 콘텐츠 미렌더링 확인.
 
@@ -237,7 +236,7 @@ if usage.free < 500 * 1024 * 1024:
 
 ### E.1 MVTec AD 폴더 구조 검증
 
-**요구사항 (00절 §6)**: 폴더 구조 검증 실패 시 탭4 진입 완전 차단.
+**요구사항 (00절 §6)**: 폴더 구조 검증 실패 시 탭3 진입 완전 차단.
 
 **검증 항목** (01절 §B.2 기준):
 
@@ -249,9 +248,9 @@ if usage.free < 500 * 1024 * 1024:
 
 **합격 기준**:
 - 위 조건 중 하나라도 해당 시 `session_state["dataset_path"] = None` 유지
-- 탭4 진입 가드가 `dataset_path is None` 체크로 차단
+- 탭3 진입 가드가 `dataset_path is None` 체크로 차단
 
-**위반 판단**: 검증 실패 경로에서 탭4가 렌더링되면 즉시 버그 처리.
+**위반 판단**: 검증 실패 경로에서 탭3이 렌더링되면 즉시 버그 처리.
 
 ---
 
@@ -303,9 +302,9 @@ assert np.all(rgb_arr[:, :, 0] == rgb_arr[:, :, 1] == rgb_arr[:, :, 2]), "R=G=B 
 
 | 규칙 | 합격 기준 | 검증 시점 |
 |------|----------|-----------|
-| R-01 | `selected_experiment_id` 조회 시 `experiments` dict에 키 존재 | 탭6 진입 시 |
-| R-02 | `model_config.image_size == preprocessing_config.image_size` | 탭3 저장 시 자동 동기화 |
-| R-04 | `status=="completed"` 이고 `model_path` NOT NULL인 경우 파일 존재 | 탭5 로딩 시 |
+| R-01 | `selected_experiment_id` 조회 시 `experiments` dict에 키 존재 | 탭5 진입 시 |
+| R-02 | `model_config.image_size == preprocessing_config.image_size` | 탭2 저장 시 자동 동기화 |
+| R-04 | `status=="completed"` 이고 `model_path` NOT NULL인 경우 파일 존재 | 탭4 로딩 시 |
 | R-05 | `status=="중단"` 레코드의 `metrics`, `model_path`, `configs_path` 모두 `null` | 중단 처리 시 |
 
 ---
@@ -362,11 +361,11 @@ def set_global_seed(seed: int) -> None:
 
 ### G.1 GPU 메모리 해제
 
-**요구사항**: 탭6 추론 완료 후 GPU 메모리를 즉시 해제해야 한다.
+**요구사항**: 탭5 추론 완료 후 GPU 메모리를 즉시 해제해야 한다.
 
 **구현 명세** (07절 §C.3):
 ```python
-# tab6 추론 파이프라인 — 추론 완료 직후
+# tab5 추론 파이프라인 — 추론 완료 직후
 del model
 torch.cuda.empty_cache()
 ```
@@ -393,7 +392,7 @@ torch.cuda.empty_cache()
 
 **구현 명세**:
 ```python
-# tab4 로그 표시 — UI 버퍼
+# tab3 로그 표시 — UI 버퍼
 log_lines: list[str] = st.session_state.get("log_buffer", [])
 log_lines.append(new_line)
 if len(log_lines) > 100:
@@ -410,7 +409,7 @@ st.text_area("학습 로그", value="\n".join(log_lines), height=300)
 
 ### G.4 비교 차트 최대 실험 수
 
-**요구사항 (00절 §9 A-13)**: 탭5 비교 차트에서 최대 10개 실험 동시 비교.
+**요구사항 (00절 §9 A-13)**: 탭4 비교 차트에서 최대 10개 실험 동시 비교.
 
 **합격 기준**:
 - 11개 이상 선택 시 `st.warning("최대 10개 실험까지 비교할 수 있습니다.")`
@@ -429,11 +428,11 @@ st.text_area("학습 로그", value="\n".join(log_lines), height=300)
 | NFR-P-05 | 캐시 히트 추론 | ≤ 1s | B.4 |
 | NFR-R-01 | 파일 원자성 | 부분 파일 없음 (강제 종료 후) | C.1 |
 | NFR-R-02 | 중단 처리 | ≤ 10s 종료 + history 기록 | C.2 |
-| NFR-R-03 | 재시작 복구 | 전체 히스토리 탭5 표시 | C.3 |
-| NFR-U-01 | 탭 진입 가드 | 5개 조건 전부 | D.1 |
+| NFR-R-03 | 재시작 복구 | 전체 히스토리 탭4 표시 | C.3 |
+| NFR-U-01 | 탭 진입 가드 | 4개 조건 전부 | D.1 |
 | NFR-U-02 | UI 언어 | 모든 라벨 한국어 | D.2 |
 | NFR-U-03 | 디스크 경고 | < 500MB 시 표시 | D.4 |
-| NFR-D-01 | 폴더 구조 검증 | 실패 시 탭4 차단 | E.1 |
+| NFR-D-01 | 폴더 구조 검증 | 실패 시 탭3 차단 | E.1 |
 | NFR-D-02 | 비율 보존 | 오차 < 1픽셀 | E.2 |
 | NFR-D-03 | 채널 보장 | 3채널 출력 | E.3 |
 | NFR-F-01 | 재현성 | AUC 오차 ≤ 0.001 | F.1 |

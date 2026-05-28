@@ -490,7 +490,7 @@ def _train_efficientad(
     """
     params = model_config["params"]
     total_steps = params["train_steps"]
-    report_every = 500    # 500 step마다 progress 보고 (가정 A-08)
+    report_every = 100    # 100 step마다 progress 보고 (가정 A-08)
 
     model = model.to(device)
     model.train()

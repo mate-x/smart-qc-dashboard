@@ -472,7 +472,7 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 | **설명** | 학습 중 Progress Bar, Loss 곡선, 로그 텍스트를 주기적으로 갱신한다 |
 | **갱신 메커니즘** | `st.empty()` 컨테이너 + `time.sleep(0.3)` + `st.rerun()` 루프 |
 | **Progress Bar** | `st.progress(current_step / total_steps, text=f"진행: {current_step}/{total_steps} ({pct:.1f}%)")` |
-| **EfficientAD Loss 갱신 주기** | 매 500 step마다 queue에 `{"step": int, "loss": float}` 전송 (가정 A-08) |
+| **EfficientAD Loss 갱신 주기** | 매 100 step마다 queue에 `{"step": int, "loss": float}` 전송 (가정 A-08) |
 | **PatchCore Loss 갱신 주기** | 에포크 단위 (PatchCore는 단일 에포크 학습) |
 | **Loss 곡선 차트** | `st.line_chart(data={"step": [...], "loss": [...]})` 또는 `plotly` 라인 차트 |
 | **로그 텍스트** | `st.text_area("학습 로그", value="\n".join(log_lines[-100:]), height=200, disabled=True)` <br> 최신 100줄 유지 (가정 A-09) <br> 로그 형식: `[Step {n}/{total}] Loss: {loss:.4f} | 경과: {elapsed:.1f}s` |
@@ -872,7 +872,7 @@ FR별 로그 이벤트 매핑:
 #### 탭3
 
 - [ ] FR-T3-03: 학습 중 [학습 시작] disabled
-- [ ] FR-T3-04: 500 step마다 Loss 차트 갱신
+- [ ] FR-T3-04: 100 step마다 Loss 차트 갱신
 - [ ] FR-T3-04: 로그 텍스트 최신 100줄 유지
 - [ ] FR-T3-05: 완료 후 ./models/{exp_id}/ 에 .pth + configs.yaml 존재
 - [ ] FR-T3-06: 중지 후 history.json에 status="중단" 레코드 존재

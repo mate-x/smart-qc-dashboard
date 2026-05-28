@@ -1,9 +1,15 @@
 # 00. Global Context Document — Single Source of Truth
 
-> **프로젝트명**: 제조산업 품질검사를 위한 딥러닝 기반 비전검사 최적 모델 탐색 대시보드 v1.0 (MVP)
-> **버전**: v1.0
+> **프로젝트명**: 제조산업 품질검사를 위한 딥러닝 기반 비전검사 시스템 v1.1
+> **버전**: v1.1
 > **작성일**: 2026-05-08
-> **목적**: 이 문서는 이후 생성되는 01~14번 PRD 파일 전체의 유일한 기준점이다. 모든 파일은 이 문서에 정의된 스키마, 계약, 용어, 규칙을 그대로 따른다. 변경은 이 문서를 먼저 수정한 후 전파한다.
+> **최종수정**: 2026-05-26
+> **목적**: 이 문서는 이후 생성되는 01~15번 PRD 파일 전체의 유일한 기준점이다. 모든 파일은 이 문서에 정의된 스키마, 계약, 용어, 규칙을 그대로 따른다. 변경은 이 문서를 먼저 수정한 후 전파한다.
+
+> **v1.1 변경 요약**: 단일 대시보드(모델 탐색 전용)에서 **이중 대시보드 구조**로 확장.
+> - **모델 탐색 대시보드** (기존 유지): AI/ML 엔지니어용, 탭1~6, 학습·실험·비교
+> - **비전검사 대시보드** (신규): 현장 작업자/관리자용, 탭1~3, 추론·검사 이력·모델 교체
+> - 사이드바: 데이터셋·디바이스 표시 제거 → 대시보드 전환 버튼 2개로 교체
 
 ---
 
@@ -19,6 +25,9 @@
 8. [Deterministic Design Rules](#8-deterministic-design-rules)
 9. [Made Assumptions](#9-made-assumptions)
 10. [Global Technology Stack](#10-global-technology-stack)
+
+> **문서 범위 안내**: 1.1~1.9절 및 3.1~3.5절은 **모델 탐색 대시보드** 전용 스키마다.
+> 1.10~1.11절 및 3.6~3.8절은 **비전검사 대시보드** 전용 스키마다. 두 대시보드는 session_state 키 네임스페이스로 격리된다.
 
 ---
 
@@ -261,6 +270,66 @@ model:                      # model_config 1.7절 스키마 그대로
 
 ---
 
+### 1.10 inspection_record (검사 레코드)
+
+```
+저장 위치: session_state.insp_records (세션 기반, 앱 재시작 시 초기화)
+           모델 교체 시에도 전체 초기화
+
+필드명            타입       Nullable   제약조건
+─────────────────────────────────────────────────────────────────
+seq               INTEGER    NOT NULL   PK, 세션 내 순번 (1부터 자동 증가)
+inspected_at      STRING     NOT NULL   ISO 8601, KST. 예: "2026-05-26T14:02:31+09:00"
+image_name        STRING     NOT NULL   이미지 파일명 (경로 제외). 예: "crack_001.png"
+image_path        STRING     NOT NULL   절대경로. 추론·Anomaly Map 재생성에 사용
+verdict           ENUM       NOT NULL   값: "양품" | "불량"
+anomaly_score     FLOAT      NOT NULL   round(value, 4). 모델 출력 raw score
+anomaly_map_cache STRING     NULLABLE   캐시된 Anomaly Map numpy 배열 (session_state 내 별도 관리)
+```
+
+---
+
+### 1.11 INSPECTION_SESSION_SCHEMA (비전검사 세션 스키마)
+
+```python
+# inspection/utils/insp_session_init.py
+
+INSPECTION_SESSION_SCHEMA = {
+    # 대시보드 전환
+    "active_dashboard":      "explorer",   # "explorer" | "inspection"
+
+    # 비전검사 대시보드 — 적용 모델
+    "insp_active_model":     None,         # dict | None — history.json의 experiment 레코드 전체
+                                           # None이면 탭1 검사 버튼 비활성화
+
+    # 비전검사 대시보드 — 검사 이력
+    "insp_records":          [],           # list[dict] — inspection_record 배열 (1.10절)
+    "insp_seq_counter":      0,            # int — 다음 seq 값
+
+    # 비전검사 대시보드 — 자동 검사 상태
+    "insp_auto_active":      False,        # bool — 자동 검사(3초마다) 실행 중 여부
+
+    # 비전검사 대시보드 — 마지막 추론 결과 (탭1 화면 유지용)
+    "insp_last_result":      None,         # dict | None — 직전 추론 결과 전체
+                                           # {image_path, verdict, anomaly_score, anomaly_map}
+                                           # 새 결과 나오기 전까지 화면 유지
+
+    # 비전검사 대시보드 — 팝업 제어
+    "insp_defect_popup":     False,        # bool — 불량 감지 팝업 표시 여부
+                                           # True이면 탭1에서 st.dialog 팝업 렌더링
+                                           # 확인 버튼 클릭 시 False로 리셋
+
+    # 비전검사 대시보드 — 테스트 이미지 풀
+    "insp_test_pool":        [],           # list[tuple[str, str]] — (절대경로, "양품"|"불량")
+                                           # 적용 모델의 dataset_path/test/ 스캔 결과
+                                           # 세션 시작 또는 모델 교체 시 재구성 후 1회 셔플
+    "insp_pool_index":       0,            # int — 현재 샘플링 위치
+                                           # 끝 도달 시 재셔플 후 0으로 리셋
+}
+```
+
+---
+
 ## 2. Entity Relationship
 
 > 이 시스템은 MySQL 8.0을 인프라 레이어에 포함하며, 현재 앱 데이터는 파일시스템에 저장된다. 아래는 파일 간 참조 관계를 ERD로 표현한 것이다.
@@ -294,6 +363,42 @@ model:                      # model_config 1.7절 스키마 그대로
                ─── (1:1) ─── [experiment 섹션]      (탭4 Write)
 ```
 
+### 2.1 모델 탐색 대시보드 ERD
+
+```
+[explorer_session_state] ─── (1:1) ─── [dataset_meta]
+     │
+     ├── (1:1) ──── [preprocessing_config]
+     ├── (1:1) ──── [model_config]
+     ├── (1:1) ──── [device_info]
+     ├── (1:N) ──── [experiments]  ←→  history.json (영속)
+     │                   └── (1:1) ── [metrics / preprocessing_params / model_params]
+     ├── (1:1) ──── [selected_experiment_id]  ──→  experiments[exp_id] 참조
+     └── (1:1) ──── [anomaly_map_threshold]
+
+[experiments[exp_id]] ─── (1:1) ─── [./models/{exp_id}/model_state_dict.pth]
+                      ─── (1:1) ─── [./models/{exp_id}/configs.yaml]
+[history.json] ─── (1:N) ─── [experiment 레코드]
+[configs.yaml] ─── (1:1) ─── [preprocessing 섹션] / [model 섹션] / [experiment 섹션]
+```
+
+### 2.2 비전검사 대시보드 ERD
+
+```
+[inspection_session_state]
+     │
+     ├── (1:1) ──── [insp_active_model]  ──→  history.json[experiment_id] 읽기 전용 참조
+     │                   └── experiment.model_path ──→ ./models/{exp_id}/model_state_dict.pth
+     │                   └── experiment.dataset_path ──→ {dataset}/test/ (test pool 구성)
+     │
+     ├── (1:N) ──── [insp_records]       (세션 메모리만, 영속 없음)
+     │                   └── inspection_record (1.10절 스키마)
+     │
+     ├── (1:1) ──── [insp_last_result]   (탭1 화면 유지용)
+     ├── (1:1) ──── [insp_test_pool]     (dataset_path/test/ 스캔 결과)
+     └── (1:1) ──── [insp_auto_active]
+```
+
 ### 참조 무결성 규칙
 
 | 규칙 | 설명 |
@@ -302,6 +407,9 @@ model:                      # model_config 1.7절 스키마 그대로
 | R-02 | `model_config.image_size`는 항상 `preprocessing_config.image_size`와 동일한 값으로 자동 동기화된다. |
 | R-04 | `experiment.model_path`가 NOT NULL인 경우, 해당 경로에 `model_state_dict.pth`와 `configs.yaml`이 반드시 존재한다. |
 | R-05 | `status == "중단"`인 레코드의 `metrics`, `model_path`, `configs_path`는 반드시 NULL이다. |
+| R-06 | `insp_active_model`은 반드시 `history.json` 내 `status == "completed"`인 레코드를 참조한다. |
+| R-07 | `insp_active_model`이 None인 경우, `insp_records`, `insp_test_pool`, `insp_last_result`는 모두 빈값/None이어야 한다. |
+| R-08 | 모델 교체 시 `insp_records`, `insp_test_pool`, `insp_pool_index`, `insp_last_result`, `insp_defect_popup`은 즉시 초기화된다. |
 
 ---
 
@@ -426,6 +534,7 @@ def save_config_section(section: str, data: dict, path: str = "./configs.yaml") 
 ```python
 # utils/messages.py — 변경 시 이 파일만 수정
 
+# 모델 탐색 대시보드 메시지
 MSG = {
     "NO_DATASET":       "먼저 탭1에서 데이터 폴더를 설정해 주세요.",
     "NO_PREPROCESSING": "먼저 탭2에서 전처리 설정을 완료해 주세요.",
@@ -436,11 +545,24 @@ MSG = {
     "INVALID_FOLDER":   "MVTec AD 형식의 폴더 구조가 아닙니다. (필수: train/good/, test/, ground_truth/)",
     "TRAIN_STOPPED":    "학습이 중단되었습니다. 해당 실험은 '중단' 상태로 히스토리에 기록되었습니다.",
 }
+
+# 비전검사 대시보드 메시지
+INSP_MSG = {
+    "NO_MODEL":         "선택된 모델이 없습니다. 탭3 [딥러닝 모델 교체]에서 모델을 선택한 후 검사를 시작해 주세요.",
+    "NO_COMPLETED_EXP": "적용 가능한 완료 실험이 없습니다. 모델 탐색 대시보드에서 학습을 완료해 주세요.",
+    "DEFECT_DETECTED":  "불량이 감지되었습니다. 해당 부품을 라인에서 제거하고 확인해 주세요.",
+    "MODEL_REPLACED":   "모델이 교체되었습니다. 검사 이력이 초기화되었습니다.",
+    "HISTORY_CLEARED":  "검사 이력이 초기화되었습니다.",
+    "AUTO_STOPPED":     "불량 감지로 자동 검사가 중지되었습니다. 확인 후 검사를 재시작해 주세요.",
+    "POOL_RESHUFFLED":  "테스트 이미지 풀을 모두 소진하여 재구성했습니다.",
+}
 ```
 
 ---
 
 ### 3.5 오류 코드 레지스트리
+
+**모델 탐색 대시보드**
 
 | 코드 | 설명 | 발생 조건 |
 |------|------|-----------|
@@ -457,6 +579,87 @@ MSG = {
 | `ERR_MODEL_SAVE_FAILED` | 모델 저장 실패 | 디스크 공간 부족 또는 권한 없음 |
 | `ERR_EXPERIMENT_NOT_FOUND` | 실험 ID 미존재 | 삭제된 실험에 접근 시 |
 | `ERR_INVALID_PARAM_RANGE` | 파라미터 범위 초과 | 1.4절 범위 벗어난 값 입력 |
+
+**비전검사 대시보드**
+
+| 코드 | 설명 | 발생 조건 |
+|------|------|-----------|
+| `ERR_INSP_NO_MODEL` | 적용 모델 미선택 | 탭1 검사 버튼 클릭 시 insp_active_model == None |
+| `ERR_INSP_MODEL_LOAD_FAILED` | 모델 로드 실패 | model_path 파일 없거나 손상 |
+| `ERR_INSP_TEST_POOL_EMPTY` | 테스트 이미지 없음 | dataset_path/test/ 하위 이미지 0개 |
+| `ERR_INSP_INFERENCE_FAILED` | 추론 실패 | 모델 오류 또는 이미지 손상 |
+| `ERR_INSP_MODEL_NOT_COMPLETED` | 완료되지 않은 실험 | status != "completed" 실험 교체 시도 |
+
+---
+
+### 3.6 비전검사 세션 상태 초기화 명세
+
+```python
+# inspection/utils/insp_session_init.py
+
+def init_inspection_session():
+    """비전검사 대시보드 전용 session_state 키 초기화. app.py 시작 시 1회 실행."""
+    defaults = {k: v for k, v in INSPECTION_SESSION_SCHEMA.items()}
+    for key, default in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = default
+
+def reset_inspection_state():
+    """모델 교체 또는 이력 초기화 시 호출. insp_active_model은 유지."""
+    st.session_state.insp_records       = []
+    st.session_state.insp_seq_counter   = 0
+    st.session_state.insp_auto_active   = False
+    st.session_state.insp_last_result   = None
+    st.session_state.insp_defect_popup  = False
+    st.session_state.insp_test_pool     = []
+    st.session_state.insp_pool_index    = 0
+```
+
+---
+
+### 3.7 비전검사 탭 간 데이터 흐름 계약
+
+| 키 | Write 탭 | Read 탭 | 타입 | NULL/빈값 처리 |
+|----|----------|---------|------|----------------|
+| `insp_active_model` | 탭3 | 탭1, 탭2 | `dict \| None` | None이면 탭1 검사 버튼 비활성화 + INSP_MSG["NO_MODEL"] |
+| `insp_records` | 탭1 (추론 시) | 탭2 | `list[dict]` | 빈 list이면 탭2에 "아직 검사 이력이 없습니다." |
+| `insp_auto_active` | 탭1 | 탭1 | `bool` | False이면 자동 검사 버튼 활성 상태 |
+| `insp_last_result` | 탭1 (추론 시) | 탭1 | `dict \| None` | None이면 탭1에 결과 영역 미렌더링 |
+| `insp_defect_popup` | 탭1 (불량 감지 시) | 탭1 | `bool` | True이면 st.dialog 팝업 렌더링 |
+| `insp_test_pool` | 탭1 (모델 선택 시) | 탭1 | `list[tuple]` | 빈 list이면 ERR_INSP_TEST_POOL_EMPTY |
+| `insp_pool_index` | 탭1 (매 검사 시) | 탭1 | `int` | len(pool) 도달 시 재셔플 후 0 리셋 |
+
+---
+
+### 3.8 비전검사 대시보드 — 검사 실행 흐름 계약
+
+```
+[수동 검사 (1개 검사) 클릭]
+  1. insp_active_model None 체크 → None이면 st.warning + 중단
+  2. insp_test_pool[insp_pool_index] → (image_path, label) 샘플링
+  3. insp_pool_index += 1. len(pool) 초과 시 random.shuffle(pool) + index = 0
+  4. image_utils.apply_preprocessing(image_path, preprocessing_params) → tensor
+  5. model_factory.run_inference(model, tensor) → {anomaly_score, anomaly_map}
+  6. score > threshold → verdict = "불량", else → verdict = "양품"
+  7. inspection_record 생성 → insp_records.append + insp_seq_counter += 1
+  8. insp_last_result 갱신
+  9. verdict == "불량" → insp_defect_popup = True + insp_auto_active = False → st.rerun()
+
+[자동 검사 (3초마다 1개) 클릭]
+  1. insp_auto_active = True → st.rerun()
+  2. 탭1 렌더링 시 insp_auto_active == True 감지
+  3. 수동 검사 흐름(1~8) 실행
+  4. verdict == "불량" → insp_defect_popup = True + insp_auto_active = False → st.rerun()
+  5. verdict == "양품" → time.sleep(3) → st.rerun()
+
+[불량 팝업 확인 버튼]
+  1. insp_defect_popup = False → st.rerun()
+  2. insp_auto_active는 이미 False (불량 감지 시 중지됨)
+  3. 이후 수동/자동 버튼을 직접 눌러야 재개
+
+[자동 검사 중지 버튼]
+  1. insp_auto_active = False → st.rerun()
+```
 
 ---
 
@@ -487,6 +690,14 @@ MSG = {
 | **OK/NG 자동 분할** | OK 이미지를 고정 시드(random_seed)로 셔플 후 80%는 학습, 20%는 테스트(정상)로 사용. NG 이미지는 전부 테스트(결함). |
 | **지원 이미지 포맷** | `.jpg`, `.png`, `.bmp` 세 가지. 확장자 대소문자 구분 없이 처리. |
 | **Resize+Padding** | 원본 비율 유지하여 `image_size×image_size`로 리사이즈 후 부족한 영역을 검정(0)으로 패딩. `resize_mode`는 항상 "padding"으로 고정. |
+| **모델 탐색 대시보드** | AI/ML 엔지니어용. EfficientAD/PatchCore 학습·비교·자산화 전용. 탭1~6. `active_dashboard == "explorer"`. |
+| **비전검사 대시보드** | 현장 작업자/관리자용. 검증된 모델로 테스트셋 추론·판정·이력 관리. 탭1~3. `active_dashboard == "inspection"`. |
+| **inspection_record** | 비전검사 1회 추론 결과 레코드. 세션 메모리에만 저장(영속 없음). 1.10절 스키마. |
+| **test_pool** | 비전검사 대시보드에서 추론에 사용하는 이미지 목록. 적용 모델의 `dataset_path/test/` 스캔 결과. `good/` → 양품, 그 외 디렉토리 → 불량. |
+| **verdict (판정)** | 비전검사 추론 결과 이진 분류. `anomaly_score > threshold_value` → "불량", 이하 → "양품". |
+| **수동 검사** | 사용자가 버튼을 클릭할 때마다 test_pool에서 이미지 1장을 가져와 추론 1회 실행. |
+| **자동 검사** | 3초 간격으로 test_pool에서 이미지를 1장씩 자동으로 가져와 추론. 불량 감지 시 즉시 중지. |
+| **불량 팝업** | 불량 판정 시 자동 표시되는 모달 알림. 확인 버튼 클릭 전까지 검사 재개 불가. |
 
 ---
 
@@ -495,39 +706,53 @@ MSG = {
 ### 5.1 컴포넌트 구성
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                   브라우저 (localhost:8501)                   │
-│              Streamlit Web UI (6-Tab Layout)                 │
-└─────────────────────────────┬───────────────────────────────┘
-                              │ HTTP (Streamlit WebSocket)
-┌─────────────────────────────▼───────────────────────────────┐
-│                  app.py (Streamlit 진입점)                    │
-│  ┌────────────┐  ┌──────────────────────────────────────┐   │
-│  │  sidebar   │  │           st.tabs([탭1~탭6])          │   │
-│  │ component  │  │  tabs/tab1.py ~ tabs/tab6.py         │   │
-│  └────────────┘  └──────────────────────────────────────┘   │
-│                                                              │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │                    utils/ 레이어                       │   │
-│  │  session_state_init.py  │  config_manager.py         │   │
-│  │  messages.py            │  metrics.py                │   │
-│  │  model_factory.py       │  image_utils.py            │   │
-│  └──────────────────────────────────────────────────────┘   │
-└─────────────────────────────┬───────────────────────────────┘
-                              │ Python function call
-┌─────────────────────────────▼───────────────────────────────┐
-│               ML 레이어 (Anomalib / PyTorch)                  │
-│  EfficientAD Engine  │  PatchCore Engine  │  Evaluator      │
-└──────────┬───────────┴───────────┬────────┴────────┬────────┘
-           │                       │                 │
-┌──────────▼───────────────────────▼─────────────────▼────────┐
-│                    파일시스템 레이어                            │
-│  ./dataset/          데이터셋 (읽기 전용)                      │
-│  ./experiments/      history.json (읽기/쓰기)                 │
-│  ./models/{exp_id}/  model_state_dict.pth, configs.yaml      │
-│  ./logs/{exp_id}.log 학습 로그 (쓰기 전용)                     │
-│  ./configs.yaml      공유 설정 파일 (읽기/쓰기)                │
-└──────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                      브라우저 (localhost:8501)                        │
+│                   Streamlit Web UI (Dual Dashboard)                  │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │ HTTP (Streamlit WebSocket)
+┌──────────────────────────────▼──────────────────────────────────────┐
+│                     app.py (Streamlit 진입점 · 라우터)                │
+│  ┌──────────────────┐                                                │
+│  │  sidebar.py      │  [🔬 모델 탐색 대시보드] [🏭 비전검사 대시보드]  │
+│  │  (전환 버튼만)    │  → active_dashboard 값에 따라 렌더링 분기        │
+│  └──────────────────┘                                                │
+│                                                                      │
+│  ┌─────────────────────────┐  ┌─────────────────────────────────┐   │
+│  │  모델 탐색 대시보드       │  │  비전검사 대시보드                │   │
+│  │  st.tabs([탭1~탭6])      │  │  inspection_app.py              │   │
+│  │  tabs/tab1.py ~ tab6.py  │  │  st.tabs([탭1~탭3])             │   │
+│  │                          │  │  inspection/tabs/               │   │
+│  │                          │  │  insp_tab1/2/3.py               │   │
+│  └─────────────────────────┘  └─────────────────────────────────┘   │
+│                                                                      │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │                    공유 utils/ 레이어                           │   │
+│  │  session_state_init.py  │  config_manager.py  │  messages.py │   │
+│  │  model_factory.py       │  image_utils.py     │  metrics.py  │   │
+│  │  storage.py             │  cache_manager.py                  │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+│                                                                      │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │              inspection/utils/ 레이어 (비전검사 전용)           │   │
+│  │  insp_session_init.py   │  test_sampler.py                   │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │ Python function call
+┌──────────────────────────────▼──────────────────────────────────────┐
+│                  ML 레이어 (Anomalib / PyTorch)                       │
+│  EfficientAD Engine  │  PatchCore Engine  │  Evaluator (학습용)      │
+│  run_inference()     ← 비전검사 대시보드는 이 함수만 사용              │
+└──────────┬───────────────────────────────────────────────────────────┘
+           │
+┌──────────▼───────────────────────────────────────────────────────────┐
+│                       파일시스템 레이어                                 │
+│  ./dataset/          데이터셋 (읽기 전용 — 두 대시보드 공유)             │
+│  ./experiments/      history.json (모델 탐색 R/W, 비전검사 R only)     │
+│  ./models/{exp_id}/  model_state_dict.pth, configs.yaml (비전검사 R)  │
+│  ./logs/{exp_id}.log 학습 로그 (모델 탐색 전용)                         │
+│  ./configs.yaml      공유 설정 파일 (모델 탐색 R/W)                    │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -536,7 +761,7 @@ MSG = {
 
 ```
 smart-qc-dashboard/
-├── app.py                          # Streamlit 진입점
+├── app.py                          # Streamlit 진입점 + 대시보드 라우터
 ├── requirements.txt
 ├── Dockerfile
 ├── docker-compose.base.yml
@@ -545,7 +770,7 @@ smart-qc-dashboard/
 ├── .env
 ├── configs.yaml                    # 공유 설정 파일 (탭2/3 Write)
 │
-├── tabs/
+├── tabs/                           # 모델 탐색 대시보드 탭 (기존)
 │   ├── tab1_data_folder.py
 │   ├── tab2_preprocessing.py
 │   ├── tab3_model_params.py
@@ -553,18 +778,30 @@ smart-qc-dashboard/
 │   ├── tab5_history.py
 │   └── tab6_anomaly_map.py
 │
-├── utils/
-│   ├── session_state_init.py       # SESSION_STATE_SCHEMA 정의 (3.1절)
+├── inspection/                     # 비전검사 대시보드 (신규)
+│   ├── inspection_app.py           # 비전검사 대시보드 진입점 (render 함수)
+│   ├── tabs/
+│   │   ├── insp_tab1_realtime.py   # 탭1: 실시간 검사
+│   │   ├── insp_tab2_history.py    # 탭2: 검사 이력 및 통계
+│   │   └── insp_tab3_model.py      # 탭3: 딥러닝 모델 교체
+│   └── utils/
+│       ├── insp_session_init.py    # INSPECTION_SESSION_SCHEMA (1.11절)
+│       └── test_sampler.py         # test_pool 구성·샘플링 로직
+│
+├── utils/                          # 공유 유틸리티 (두 대시보드 공통)
+│   ├── session_state_init.py       # SESSION_STATE_SCHEMA (3.1절)
 │   ├── config_manager.py           # YAML 읽기/쓰기 (3.3절)
-│   ├── messages.py                 # MSG 상수 (3.4절)
+│   ├── messages.py                 # MSG + INSP_MSG 상수 (3.4절)
 │   ├── metrics.py                  # Accuracy/Precision/Recall/F1/F2/AUC 계산
 │   ├── model_factory.py            # EfficientAD/PatchCore Anomalib 래퍼
+│   ├── storage.py                  # history.json R/W, 모델 저장
+│   ├── cache_manager.py            # Anomaly Map LRU 캐시
 │   ├── checkpoint_manager.py       # 체크포인트 저장/로드/목록/삭제 (일시정지 기능)
 │   ├── dataset_converter.py        # OK/NG 폴더 탐지(detect_ok_ng_dirs), 이미지 수 카운트
 │   └── image_utils.py              # 전처리, Resize+Padding, 채널 변환
 │
 ├── components/
-│   └── sidebar.py                  # 사이드바 공통 컴포넌트
+│   └── sidebar.py                  # 대시보드 전환 버튼 (수정됨)
 │
 ├── experiments/
 │   └── history.json                # 실험 히스토리 (자동 생성)
@@ -651,6 +888,49 @@ smart-qc-dashboard/
 
 ---
 
+### 5.4 비전검사 대시보드 탭별 데이터 흐름
+
+```
+[탭1: 실시간 검사]
+  진입 시:
+    - insp_active_model == None → INSP_MSG["NO_MODEL"] 표시, 검사 버튼 비활성
+    - insp_active_model != None → 모델명/전처리/임계값 상단 표시
+    - insp_last_result != None → 직전 판정 결과(판정카드/원본/Anomaly Map) 유지 표시
+    - insp_defect_popup == True → st.dialog 팝업 렌더링
+    - insp_auto_active == True → 자동 검사 루프 실행 (3.8절 계약)
+
+  [수동 검사 (1개 검사)] 클릭 → 3.8절 수동 검사 흐름 실행
+  [자동 검사 (3초마다 1개)] 클릭 → insp_auto_active = True → st.rerun()
+  [자동 검사 중지] 클릭 → insp_auto_active = False → st.rerun()
+
+[탭2: 검사 이력 및 통계]
+  상단: insp_records 역순 테이블 렌더링
+        컬럼: 번호/시각/이미지명/판정결과/Anomaly Score (5개)
+        불량 행: 빨간 배경 강조
+        필터: 전체/양품만/불량만
+        CSV 내보내기 버튼
+        이력 초기화 버튼 (확인 다이얼로그, reset_inspection_state() 호출)
+  하단: KPI 카드 4개
+        - 총 검사 수: len(insp_records)
+        - 양품 수: verdict == "양품" count
+        - 불량 수: verdict == "불량" count
+        - 불량률(%): 불량 수 / 총 검사 수 * 100 (총 검사 0이면 "-")
+
+[탭3: 딥러닝 모델 교체]
+  진입 시: history.json 로드 → status == "completed" 필터
+  완료 실험 없으면: INSP_MSG["NO_COMPLETED_EXP"] 표시
+  완료 실험 있으면:
+    - 현재 적용 모델 정보 카드
+    - 모델 목록 테이블 (F1 내림차순 기본 정렬, 컬럼 클릭 정렬)
+      컬럼: 실험명/모델/전처리/AUC/F1/학습일/상태
+      현재 적용 모델: "★ 현재" 배지, 적용 버튼 비활성
+    - [적용] 클릭 → 확인 다이얼로그 표시
+      확인 → insp_active_model 갱신 + reset_inspection_state() + 탭1 이동
+      취소 → 팝업 닫기
+```
+
+---
+
 ## 6. Global Non-Functional Requirements
 
 > 이후 모든 파일에서 이 절을 참조하며, 강화가 필요한 경우 "6.X절 기준 강화: ..." 형식으로 명시한다.
@@ -668,6 +948,9 @@ smart-qc-dashboard/
 | **채널 처리** | Grayscale 이미지 자동 RGB 변환, 3채널 보장 | 단위 테스트 |
 | **디스크 용량** | 모델 저장 전 여유 공간 < 500MB 시 경고 메시지 표시 | `shutil.disk_usage()` |
 | **Streamlit 버전** | ≥ 1.30 (st.tabs 지원 보장) | requirements.txt |
+| **추론 지연 (비전검사)** | 이미지 1장 추론 → 판정 결과 표시까지 **3초 이내** | 수동 테스트 |
+| **자동 검사 타이밍 (비전검사)** | 3초 간격 오차 **0.5초 이내** (`time.sleep(3)` 기준) | 수동 측정 |
+| **불량 팝업 표시 지연 (비전검사)** | 불량 판정 후 팝업 표시까지 **0.5초 이내** | 수동 테스트 |
 
 ---
 
@@ -703,6 +986,12 @@ LOG_FORMAT = {
 | `training_failed` | tab4 | ERROR | 예외 발생 + traceback |
 | `model_saved` | tab5 | INFO | 모델 파일 저장 완료 |
 | `experiment_deleted` | tab5 | WARNING | 실험 삭제 |
+| `insp_model_applied` | insp_tab3 | INFO | 비전검사 모델 교체 완료 |
+| `insp_inspection_started_manual` | insp_tab1 | INFO | 수동 검사 1회 실행 |
+| `insp_inspection_started_auto` | insp_tab1 | INFO | 자동 검사 시작 |
+| `insp_inspection_stopped_auto` | insp_tab1 | INFO | 자동 검사 중지 (수동 또는 불량 감지) |
+| `insp_defect_detected` | insp_tab1 | WARNING | 불량 판정 발생 + score |
+| `insp_history_cleared` | insp_tab2 | WARNING | 검사 이력 초기화 |
 
 ### 7.3 학습 로그 파일 형식
 
@@ -752,6 +1041,13 @@ LOG_FORMAT = {
 | **R-ATOMIC-01** | 파일 쓰기 | 임시 파일(.tmp) 생성 후 rename. 부분 쓰기 방지. |
 | **R-UI-01** | UI 언어 | 모든 라벨·버튼·안내 메시지 한국어. 기술 용어는 한국어+영문 병기. |
 | **R-UI-02** | 숨김 처리 | 비선택 파라미터 UI는 DOM 미렌더링 (`if` 분기). `disabled=True` 금지. |
+| **R-INSP-01** | 비전검사 session_state 키 | `insp_` 접두사 필수. 예: `insp_active_model`, `insp_records`. 모델 탐색 키와 네임스페이스 충돌 방지. |
+| **R-INSP-02** | 비전검사 파일 위치 | `inspection/` 디렉토리 하위에만 위치. `tabs/`나 루트에 혼재 금지. |
+| **R-INSP-03** | 비전검사 이력 영속 없음 | `insp_records`는 session_state에만 저장. 파일·DB 쓰기 금지. |
+| **R-INSP-04** | history.json 쓰기 금지 | 비전검사 대시보드는 `history.json`을 읽기 전용으로만 사용. `save_history()` 호출 금지. |
+| **R-INSP-05** | 모델 교체 시 상태 초기화 | `reset_inspection_state()` 반드시 호출. `insp_active_model` 갱신 이전에 호출 금지. |
+| **R-INSP-06** | 판정 결과 화면 유지 | `insp_last_result`가 None이 아닌 한 직전 결과(이미지+히트맵+판정카드)는 화면에 유지. |
+| **R-INSP-07** | 완료 실험만 교체 가능 | `status == "completed"`가 아닌 실험의 [적용] 버튼은 렌더링하지 않음. |
 
 ---
 
@@ -775,6 +1071,12 @@ LOG_FORMAT = {
 | A-12 | 한국 시간대 | 모든 시간은 KST (UTC+9) 기준. `datetime.now(tz=timezone(timedelta(hours=9)))`. | PRD 한국어 작성 기준 |
 | A-13 | 비교 차트 최대 실험 수 | 한 번에 최대 10개 실험 비교. 초과 시 `st.warning()` 안내. | Plotly 레이더 차트 가독성 |
 | A-14 | 폴더 구조 검증 깊이 | `train/good/` 디렉토리 존재 + 이미지 최소 1개 이상. `test/good/` 디렉토리 선택적. | MVTec AD 표준 |
+| A-15 | 비전검사 접근 권한 | 접근 권한 분리 없음. 모든 탭에 누구나 접근 가능. | 단일 로컬 사용자 환경 |
+| A-16 | test_pool 구성 시점 | 모델 교체 직후 또는 앱 최초 진입 시 1회 구성. 세션 중 재구성 없음(소진 시 재셔플만). | 일관성 유지 |
+| A-17 | test_pool 레이블 기준 | `test/good/` 하위 이미지 → "양품". `test/{그 외}/` 하위 이미지 → "불량". 레이블은 표시하지 않음(현장 정답 미공개 원칙). | 현장 실제 사용 시나리오 모사 |
+| A-18 | 자동 검사 타이머 구현 | `time.sleep(3)` + `st.rerun()` 조합. 별도 스레드 없음. | Streamlit 단일 스레드 모델 |
+| A-19 | 비전검사 모델 로드 캐싱 | `insp_active_model` 변경 시에만 모델 재로드. 동일 모델 연속 추론 시 `st.cache_resource` 활용. | 추론 지연 최소화 |
+| A-20 | KPI 계산 분모 | 총 검사 수 == 0이면 불량률 표시를 "-"로. ZeroDivisionError 방지. | 세션 초기 상태 처리 |
 
 ---
 
@@ -841,4 +1143,4 @@ numpy>=1.24.0
 
 ---
 
-*문서 끝. Phase 2 파일 생성 전 이 문서의 모든 절이 기준으로 사용된다.*
+*문서 끝. v1.1 기준: 모든 01~15번 PRD 파일은 이 문서의 스키마·계약·규칙을 기준으로 한다. 모델 탐색 대시보드 관련 절(1.1~1.9, 3.1~3.5)과 비전검사 대시보드 관련 절(1.10~1.11, 3.6~3.8)은 각 대시보드 전용이며 교차 참조하지 않는다.*

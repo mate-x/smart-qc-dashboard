@@ -1,8 +1,9 @@
 # 06. API Specification (Internal Interface Contracts)
 
 > **참조 문서**: `04_System_Architecture.md` §B.3 (모듈 책임 명세), `05_Data_Model_and_Storage_Strategy.md`
-> **버전**: v1.0
+> **버전**: v1.1
 > **작성일**: 2026-05-09
+> **수정일**: 2026-05-26 — v1.1: 비전검사 대시보드 인터페이스 추가 (§1 파일 목록, §2.3, §7 Guard, §9 체크리스트)
 > **목적**: 이 시스템은 REST API가 없다. 이 문서는 `utils/` 레이어의 모든 공개 함수 인터페이스, 에러 계약, Queue 메시지 프로토콜, tab4 소비 알고리즘을 단일 참조점으로 확정한다.
 >
 > **04와의 역할 분리**: 04.B.3에서 확정된 함수 시그니처는 이 문서에서 반복하지 않는다. 이 문서는 04에서 미정의된 항목(에러 계약, Queue 프로토콜, tab4 소비 루프, 신규 모듈)만 추가로 명세한다.
@@ -39,9 +40,20 @@ utils/
 ├── training_worker.py      # 04.B.3.3 + 08 확정
 ├── storage.py              # 05 신규 추가 — §2.1 참조
 └── cache_manager.py        # 05 신규 추가 — §2.2 참조
+
+inspection/                 # v1.1 추가 — 비전검사 대시보드 전용
+├── inspection_app.py       # 비전검사 대시보드 진입점 (3탭 렌더링)
+├── tabs/
+│   ├── insp_tab1_realtime.py   # 실시간 검사 탭 (FR-INSP-T1-*)
+│   ├── insp_tab2_history.py    # 검사 이력 및 통계 탭 (FR-INSP-T2-*)
+│   └── insp_tab3_model.py      # 모델 교체 탭 (FR-INSP-T3-*)
+└── utils/
+    ├── insp_session_init.py    # 검사 세션 초기화 + 모델 캐시 (FR-INSP-CMN-02)
+    └── test_sampler.py         # test_pool 구성 + 샘플링 (FR-INSP-T1-06)
 ```
 
 > `storage.py`와 `cache_manager.py`는 04 작성 시점에 `config_manager.py` 내 단순 함수로 설계됐으나, 05에서 책임 분리 원칙에 따라 독립 파일로 분리 확정됐다.
+> `inspection/` 디렉토리는 v1.1에서 추가됐다. `inspection/utils/` 모듈은 `utils/`의 기존 모듈을 읽기 전용으로 참조한다 (R-INSP-04).
 
 ---
 
@@ -168,6 +180,65 @@ def invalidate_anomaly_map_cache(experiment_id: str) -> None:
     """
     특정 실험의 캐시 제거. 키 없으면 no-op.
     실험 삭제(storage.delete_experiment) 직후 호출.
+    """
+```
+
+---
+
+### 2.3 `inspection/utils/` 인터페이스 (v1.1)
+
+#### `inspection/utils/insp_session_init.py`
+
+```python
+"""
+책임: 검사 대시보드 session_state 초기화 + st.cache_resource 기반 모델 캐시.
+금지: 학습 관련 session_state 키 직접 수정, history.json 쓰기.
+"""
+
+@st.cache_resource
+def _load_insp_model(model_path: str, model_type: str, device: str) -> object:
+    """
+    (model_path, model_type, device) 조합이 같으면 캐시 반환.
+    모델 교체 시 호출 측에서 _load_insp_model.clear() 호출 필수.
+    Raises: RuntimeError("ERR_INSP_MODEL_LOAD_FAILED: ...") — pth 파일 없거나 state_dict 불일치.
+    """
+
+def get_insp_model() -> object | None:
+    """
+    insp_active_model 기준으로 _load_insp_model() 호출.
+    insp_active_model is None 이면 None 반환 (예외 전파 없음).
+    """
+
+def init_inspection_session() -> None:
+    """
+    00_Global §1.11 INSPECTION_SESSION_SCHEMA 기준 초기화.
+    멱등성: 이미 존재하는 키는 덮어쓰지 않는다.
+    """
+```
+
+#### `inspection/utils/test_sampler.py`
+
+```python
+"""
+책임: test_pool 구성(build) + 순서 관리(sample).
+금지: st.session_state 직접 수정 (sample_from_pool 제외).
+"""
+
+def build_test_pool(dataset_path: str) -> list[tuple[str, str]]:
+    """
+    dataset_path/test/ 하위 이미지 스캔 → (image_path, gt_label) 리스트.
+    gt_label: "양품" (good/) | "불량" (기타 클래스)  — A-17 레이블 규칙.
+    결과는 random.shuffle() 1회 적용 후 반환.
+    Raises: FileNotFoundError — dataset_path/test/ 미존재 시.
+    Returns: list[tuple[str, str]], 빈 리스트 가능.
+    """
+
+def sample_from_pool() -> tuple[str, str]:
+    """
+    insp_pool_index 위치 항목 반환 후 index 증가.
+    pool 소진 시 shuffle + index 리셋 (A-16: pool 소진 정책).
+    Precondition: insp_test_pool is not None (build_test_pool() 선행 호출 필요).
+    Returns: (image_path, gt_label)
     """
 ```
 
@@ -689,7 +760,33 @@ def _guard() -> None:
 
 `st.stop()`은 이후 코드 실행을 중단하므로 `return`보다 안전하다.
 
+### 7.1.1 비전검사 대시보드 Guard 조건 (v1.1)
+
+| 탭 | Guard 조건 (미충족 시 진입 차단) | 차단 메시지 |
+|----|--------------------------------|-------------|
+| **검사 탭1** | `insp_active_model is not None` | `INSP_MSG["NO_MODEL"]` |
+| **검사 탭2** | `insp_active_model is not None` | `INSP_MSG["NO_MODEL"]` |
+| **검사 탭3** | Guard 없음. completed 실험 없으면 `INSP_MSG["NO_COMPLETED_EXP"]` 표시 | — |
+
+**추가 Guard — 검사 탭1 팝업 우선 처리**:
+```python
+# insp_tab1_realtime.py — render() 상단
+def render() -> None:
+    if st.session_state.get("insp_active_model") is None:
+        st.info(INSP_MSG["NO_MODEL"])
+        return
+
+    # 팝업이 열린 동안 루프 중단, 팝업만 렌더링
+    if st.session_state.get("insp_defect_popup"):
+        _render_defect_popup()
+        return
+
+    # 정상 검사 UI 렌더링 ...
+```
+
 ### 7.2 탭별 session_state 쓰기 권한 (확정)
+
+#### 모델 탐색 대시보드
 
 | session_state 키 | Write 탭 | 조건 |
 |-----------------|----------|------|
@@ -709,6 +806,20 @@ def _guard() -> None:
 | `_log_lines` | 탭4 내부 | `_handle_log()` 호출 시 |
 | `_loss_history` | 탭4 내부 | `_handle_progress()` 호출 시 |
 | `_anomaly_maps_{exp_id}` | 탭6 (`cache_manager`) | 캐시 미스 시 추론 후 |
+
+#### 비전검사 대시보드 (v1.1) — insp_ 네임스페이스
+
+| session_state 키 | Write 위치 | 조건 |
+|-----------------|------------|------|
+| `insp_active_model` | 검사 탭3 | [이 모델로 검사 시작] 클릭 시 |
+| `insp_records` | 검사 탭1 | 검사 1회 완료 시 append |
+| `insp_seq_counter` | 검사 탭1 | 검사 1회 완료 시 +1 |
+| `insp_auto_active` | 검사 탭1 | 버튼 클릭 / 불량 감지 시 |
+| `insp_last_result` | 검사 탭1 | 검사 1회 완료 시 덮어쓰기 |
+| `insp_last_anomaly_map` | 검사 탭1 | 검사 1회 완료 시 덮어쓰기 |
+| `insp_defect_popup` | 검사 탭1 | 불량 감지 시 True, 팝업 확인 시 False |
+| `insp_test_pool` | 검사 탭3 (초기), 검사 탭1 (pool 소진 시 reshuffle) | 모델 교체 또는 pool 소진 |
+| `insp_pool_index` | 검사 탭1 | 샘플링 1회 시 +1, pool 소진 시 0 리셋 |
 
 ### 7.3 탭1 데이터셋 경로 변경 시 연쇄 초기화
 
@@ -795,6 +906,18 @@ def _handle_path_change(new_path: str) -> None:
 - [ ] `utils/storage.py` 생성 (§2.1 전체 구현)
 - [ ] `utils/cache_manager.py` 생성 (§2.2 전체 구현)
 - [ ] 두 파일 모두 `utils/__init__.py`에 import 추가
+
+### 비전검사 대시보드 (v1.1)
+
+- [ ] `inspection/utils/insp_session_init.py` 생성 (§2.3 전체 구현)
+- [ ] `inspection/utils/test_sampler.py` 생성 (§2.3 전체 구현)
+- [ ] `_load_insp_model()` — `@st.cache_resource` 데코레이터 적용
+- [ ] `build_test_pool()` — A-17 레이블 규칙 (`good/` → "양품", 나머지 → "불량")
+- [ ] `sample_from_pool()` — pool 소진 시 reshuffle + index=0 리셋
+- [ ] `insp_tab1_realtime.py` — `insp_defect_popup == True` 시 팝업만 렌더링 (§7.1.1)
+- [ ] 검사 탭1·탭2 — `insp_active_model is None` Guard 적용
+- [ ] 검사 탭3 — Guard 없이 항상 접근 가능, completed 없으면 안내 메시지만
+- [ ] `insp_` 네임스페이스 쓰기 권한 §7.2 테이블 준수
 
 ---
 

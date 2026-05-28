@@ -1,8 +1,9 @@
 # 07. Backend Service Design
 
 > **참조 문서**: `04_System_Architecture.md` §B.5 (비동기 처리 아키텍처), `06_API_Specification.md` §5 (tab4 소비 알고리즘), `08_AI_ML_Integration.md` §B.4~B.6 (학습 구현)
-> **버전**: v1.0
+> **버전**: v1.1
 > **작성일**: 2026-05-09
+> **수정일**: 2026-05-26 — v1.1: 비전검사 대시보드 서비스 흐름 추가 (§12~§14)
 > **목적**: utils/ 서비스 레이어의 비즈니스 로직 흐름을 구현 가능한 수준으로 명세한다. 아래 4가지 영역이 이 문서에서 확정된다:
 > 1. experiment_id 생성 규칙 (코드 포함)
 > 2. 학습 시작 버튼 핸들러 전체 흐름
@@ -26,6 +27,9 @@
 9. [메모리 관리 규칙](#9-메모리-관리-규칙)
 10. [서비스 데이터 흐름 요약](#10-서비스-데이터-흐름-요약)
 11. [구현 체크리스트](#11-구현-체크리스트)
+12. [비전검사 대시보드 추론 서비스 (v1.1)](#12-비전검사-대시보드-추론-서비스-v11)
+13. [자동 검사 루프 설계 (v1.1)](#13-자동-검사-루프-설계-v11)
+14. [검사 서비스 체크리스트 (v1.1)](#14-검사-서비스-체크리스트-v11)
 
 ---
 
@@ -1141,6 +1145,278 @@ worker.run()
 
 - [ ] `_handle_completed()` — `del msg["model"]` + `torch.cuda.empty_cache()`
 - [ ] 탭6 추론 완료 후 모델 해제 (device == "cuda"인 경우만)
+
+---
+
+---
+
+## 12. 비전검사 대시보드 추론 서비스 (v1.1)
+
+> 이 절은 비전검사 대시보드의 단일 이미지 추론 서비스 흐름을 확정한다.
+> 학습 서비스 (§3~§6) 와 공유하는 `model_factory.py`를 읽기 전용으로 사용한다 (R-INSP-04).
+
+### 12.1 서비스 책임 범위
+
+| 서비스 | 위치 | 핵심 결정 사항 |
+|--------|------|----------------|
+| 모델 로드 (검사용) | `inspection/utils/insp_session_init.py` | `st.cache_resource` 기반 캐시 |
+| 단일 이미지 추론 | `inspection/tabs/insp_tab1_realtime.py` | `run_inference()` 호출 + verdict 계산 |
+| test_pool 구성 | `inspection/utils/test_sampler.py` | 디렉토리 스캔 + 셔플 |
+| 검사 기록 저장 | `inspection/tabs/insp_tab1_realtime.py` | session_state `insp_records` 직접 append |
+
+### 12.2 검사용 모델 캐시
+
+검사 대시보드는 `st.cache_resource`를 사용하여 모델을 한 번만 로드한다.
+모델 교체 시 캐시를 명시적으로 무효화한다 (R-INSP-06).
+
+```python
+# inspection/utils/insp_session_init.py
+
+import streamlit as st
+from utils.model_factory import load_model_for_inference
+
+@st.cache_resource
+def _load_insp_model(model_path: str, model_type: str, device: str):
+    """
+    (model_path, model_type, device) 조합이 동일하면 캐시 반환.
+    모델 교체 시 호출 측에서 cache_clear()를 호출해야 한다.
+    """
+    import yaml
+    with open(f"{model_path}/configs.yaml") as f:
+        configs = yaml.safe_load(f)
+    model_config = configs.get("model", {})
+    model_config["model_type"] = model_type
+
+    return load_model_for_inference(
+        experiment_id="insp",          # 검사용 고정 ID
+        model_path=model_path,
+        model_config=model_config,
+        device=device,
+    )
+
+
+def get_insp_model():
+    """
+    현재 선택된 insp_active_model 기준으로 모델 반환.
+    insp_active_model is None 이면 None 반환.
+    """
+    active = st.session_state.get("insp_active_model")
+    if active is None:
+        return None
+
+    device = st.session_state.get("device_info", {}).get("device", "cpu")
+    return _load_insp_model(
+        model_path=active["model_path"],
+        model_type=active["model_type"],
+        device=device,
+    )
+```
+
+### 12.3 단일 이미지 추론 흐름
+
+```python
+# inspection/tabs/insp_tab1_realtime.py
+
+def _run_single_inspection() -> None:
+    """
+    수동/자동 검사 1회 실행.
+    FR-INSP-T1-01 동작 순서 구현.
+    """
+    from inspection.utils.test_sampler import sample_from_pool
+    from utils.model_factory import run_inference
+    from utils.image_utils import apply_preprocessing
+    import numpy as np
+    from datetime import datetime, timezone, timedelta
+
+    KST = timezone(timedelta(hours=9))
+    active = st.session_state["insp_active_model"]
+    threshold = active["threshold"]
+
+    # 1. test_pool에서 이미지 샘플링
+    image_path, gt_label = sample_from_pool()
+
+    # 2. 전처리 + 추론
+    model = get_insp_model()
+    if model is None:
+        st.error("모델 로드 실패.")
+        return
+
+    preprocessing_config = active.get("preprocessing_config", {"method": "none"})
+    _, image_tensor = apply_preprocessing(image_path, preprocessing_config)
+    image_tensor = image_tensor.unsqueeze(0)          # (1, C, H, W)
+    anomaly_map = run_inference(model, image_tensor)  # (H, W) float32
+
+    # 3. Score = anomaly_map.max() (이미지 레벨 스코어)
+    anomaly_score = float(np.max(anomaly_map))
+
+    # 4. 판정
+    verdict = "불량" if anomaly_score >= threshold else "양품"
+
+    # 5. inspection_record 구성
+    from pathlib import Path
+    seq = st.session_state["insp_seq_counter"] + 1
+    record = {
+        "seq":           seq,
+        "inspected_at":  datetime.now(tz=KST).strftime("%Y-%m-%d %H:%M:%S"),
+        "image_name":    Path(image_path).name,
+        "image_path":    image_path,
+        "verdict":       verdict,
+        "anomaly_score": round(anomaly_score, 6),
+    }
+
+    # 6. session_state 갱신
+    st.session_state["insp_records"].append(record)
+    st.session_state["insp_seq_counter"] = seq
+    st.session_state["insp_last_result"] = record
+    st.session_state["insp_last_anomaly_map"] = anomaly_map
+
+    # 7. 불량 감지 시 팝업 설정
+    if verdict == "불량" and st.session_state["insp_auto_active"]:
+        st.session_state["insp_auto_active"] = False
+        st.session_state["insp_defect_popup"] = True
+```
+
+### 12.4 모델 교체 시 캐시 무효화
+
+```python
+# inspection/tabs/insp_tab3_model.py
+
+def _apply_model(selected_experiment: dict) -> None:
+    """
+    FR-INSP-T3-02 구현.
+    R-INSP-05: 초기화 순서를 반드시 준수한다.
+    """
+    from inspection.utils.insp_session_init import _load_insp_model
+    from inspection.utils.test_sampler import build_test_pool
+
+    # 1. 캐시 무효화 (A-19: 모델 교체 시 캐시 강제 재생성)
+    _load_insp_model.clear()
+
+    # 2. 세션 초기화 (R-INSP-05 순서 준수)
+    keys_to_reset = [
+        "insp_records", "insp_seq_counter", "insp_last_result",
+        "insp_last_anomaly_map", "insp_auto_active", "insp_defect_popup",
+        "insp_test_pool", "insp_pool_index",
+    ]
+    defaults = {
+        "insp_records": [], "insp_seq_counter": 0,
+        "insp_last_result": None, "insp_last_anomaly_map": None,
+        "insp_auto_active": False, "insp_defect_popup": False,
+        "insp_test_pool": None, "insp_pool_index": 0,
+    }
+    for key in keys_to_reset:
+        st.session_state[key] = defaults[key]
+
+    # 3. 새 모델 설정
+    device = st.session_state.get("device_info", {}).get("device", "cpu")
+    st.session_state["insp_active_model"] = {
+        "experiment_id": selected_experiment["experiment_id"],
+        "model_path":    selected_experiment["model_path"],
+        "model_type":    selected_experiment["model_type"],
+        "threshold":     selected_experiment.get("threshold_value", 0.5),
+        "dataset_path":  selected_experiment["dataset_path"],
+        "preprocessing_config": selected_experiment.get("preprocessing_config"),
+    }
+
+    # 4. test_pool 빌드
+    pool = build_test_pool(selected_experiment["dataset_path"])
+    st.session_state["insp_test_pool"] = pool
+    st.session_state["insp_pool_index"] = 0
+
+    st.rerun()
+```
+
+---
+
+## 13. 자동 검사 루프 설계 (v1.1)
+
+### 13.1 루프 메커니즘
+
+비전검사 대시보드의 자동 검사는 별도 스레드 없이 Streamlit의 `time.sleep()` + `st.rerun()` 루프로 구현한다 (ADR-INSP-04 — 00_Global §3.8 참조).
+
+```python
+# inspection/tabs/insp_tab1_realtime.py — render() 하단
+
+def render() -> None:
+    # ... Guard, 버튼 렌더링, 결과 표시 ...
+
+    # 자동 검사 루프 진입 조건
+    if st.session_state["insp_auto_active"] and not st.session_state["insp_defect_popup"]:
+        _run_single_inspection()  # 검사 1회 실행
+        # st.rerun()은 _run_single_inspection() 내부에서 호출하지 않음
+        # 루프는 이 함수 반환 후 아래 sleep + rerun으로 지속
+        import time
+        time.sleep(3)     # 3초 대기 (A-18: 자동 검사 타이밍 ≤ 0.5초 오차)
+        st.rerun()        # 다음 검사 사이클 진입
+```
+
+### 13.2 루프 상태 전이
+
+```
+초기 상태
+  insp_auto_active = False
+  insp_defect_popup = False
+
+[▶ 자동 검사 시작] 클릭
+  → insp_auto_active = True
+  → st.rerun()
+
+렌더 사이클 (auto_active=True, popup=False)
+  → _run_single_inspection() 실행
+    → verdict == "불량": insp_auto_active=False, insp_defect_popup=True → st.rerun()
+    → verdict == "양품": 정상 진행
+  → time.sleep(3)
+  → st.rerun() → 다음 사이클
+
+불량 감지 상태 (auto_active=False, popup=True)
+  → 팝업 렌더링만 수행 (루프 실행 안 함)
+  → [확인 및 재개]: insp_auto_active=True, insp_defect_popup=False → st.rerun()
+  → [검사 종료]:    insp_auto_active=False, insp_defect_popup=False → st.rerun()
+
+[⏹ 자동 검사 중지] 클릭
+  → insp_auto_active = False → st.rerun()
+  → 다음 렌더 사이클에서 루프 진입 조건 불만족 → sleep 없이 정적 UI 렌더링
+```
+
+### 13.3 타이밍 고려사항
+
+| 항목 | 값 | 비고 |
+|------|-----|------|
+| sleep 시간 | 3초 | A-18: 실제 간격 = 3초 + 추론 시간 |
+| 추론 지연 허용 | ≤ 3초 | NFR — 00_Global §6, 11_NFR 문서 |
+| 자동 검사 타이밍 오차 | ≤ 0.5초 | A-18 기준 |
+| 불량 팝업 지연 | ≤ 0.5초 | 불량 감지 → 팝업 표시 시간 |
+
+---
+
+## 14. 검사 서비스 체크리스트 (v1.1)
+
+### 모델 로드 서비스
+
+- [ ] `_load_insp_model()` — `st.cache_resource` 데코레이터 적용
+- [ ] 모델 교체 시 `_load_insp_model.clear()` 호출 (A-19)
+- [ ] `get_insp_model()` — `insp_active_model is None` 시 None 반환
+
+### 단일 이미지 추론
+
+- [ ] `apply_preprocessing()` — 학습 시 적용과 동일한 config 사용 (DA-05)
+- [ ] `run_inference()` — `(1, C, H, W)` 형태 텐서 전달
+- [ ] `anomaly_score = float(np.max(anomaly_map))` — 이미지 레벨 스코어
+- [ ] `verdict = "불량" if score >= threshold else "양품"`
+- [ ] `inspection_record` — 00_Global §1.10 스키마 완전 준수
+- [ ] `insp_seq_counter += 1` 선행, `seq` 필드에 저장
+
+### 자동 검사 루프
+
+- [ ] `insp_auto_active == True AND insp_defect_popup == False`인 경우에만 루프 진입
+- [ ] `time.sleep(3)` 후 `st.rerun()` (스레드 없이 Streamlit rerun 패턴)
+- [ ] 불량 감지 시 즉시 `insp_auto_active = False`, `insp_defect_popup = True`
+
+### 모델 교체
+
+- [ ] `_load_insp_model.clear()` 선행 호출
+- [ ] R-INSP-05 초기화 순서 (8개 키 → active_model 설정 → pool 빌드)
+- [ ] `build_test_pool(dataset_path)` 호출 후 `insp_pool_index = 0`
 
 ---
 

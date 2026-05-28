@@ -2,8 +2,9 @@
 
 > **참조 기준**: [00_Global_Context_Document.md](./00_Global_Context_Document.md)
 > **선행 문서**: [09_Infrastructure_and_Cloud.md](./09_Infrastructure_and_Cloud.md), [13_QA_and_Testing_Strategy.md](./13_QA_and_Testing_Strategy.md)
-> **버전**: v1.0
+> **버전**: v1.1
 > **작성일**: 2026-05-09
+> **수정일**: 2026-05-26
 > **중요**: MVP v1.0 배포는 단일 환경(로컬 또는 AWS EC2 g4dn.xlarge) 대상이다. CI/CD 파이프라인은 GitHub Actions 기준으로 설계하나, 실행 환경이 없는 경우 수동 배포 절차로 대체한다.
 
 ---
@@ -434,6 +435,84 @@ def migrate_v1_0_to_v1_1():
 
 if __name__ == "__main__":
     migrate_v1_0_to_v1_1()
+```
+
+---
+
+---
+
+## H. 비전검사 대시보드 배포 체크리스트 (v1.1)
+
+### H.1 신규 파일 생성 확인
+
+배포 전 아래 파일이 소스 저장소에 존재하는지 확인한다.
+
+```
+□ inspection/__init__.py (또는 inspection/ 디렉터리 존재)
+□ inspection/inspection_app.py
+□ inspection/tabs/__init__.py
+□ inspection/tabs/insp_tab1_realtime.py
+□ inspection/tabs/insp_tab2_history.py
+□ inspection/tabs/insp_tab3_model.py
+□ inspection/utils/__init__.py
+□ inspection/utils/insp_session_init.py
+□ inspection/utils/test_sampler.py
+```
+
+### H.2 insp_ 세션 상태 초기화 검증
+
+```
+□ app.py 사이드바에서 🏭 비전검사 버튼 클릭 시 insp_session_init.init_insp_session_state() 호출 확인
+□ 앱 첫 진입 시 insp_seq == 0, insp_records == [] 확인
+□ 페이지 새로고침(앱 재시작) 시 모든 insp_ 키 초기화 확인
+□ 모델 교체 시 insp_records, insp_seq 초기화 확인 (TC-INSP-03)
+```
+
+### H.3 _load_insp_model() 캐시 검증
+
+```
+□ 동일 experiment_id로 두 번 호출 시 모델 재로드 없음 확인 (st.cache_resource 또는 session_state 캐시)
+□ 모델 교체 후 이전 캐시 무효화 확인
+□ 추론 시간 ≤ 3초 확인 (NFR: 추론 ≤ 3초)
+□ 자동 검사 타이밍 오차 ±0.5초 이내 확인
+□ 불량 팝업 표시 지연 ≤ 0.5초 확인
+```
+
+### H.4 WBS — 비전검사 기능 요구사항
+
+배포 전 아래 기능 요구사항 구현이 완료되어야 한다.
+
+| 요구사항 ID | 설명 | 구현 파일 |
+|------------|------|---------|
+| FR-INSP-CMN-01 | 사이드바 대시보드 전환 버튼 (🔬/🏭) | `app.py` |
+| FR-INSP-CMN-02 | `insp_` 네임스페이스 session_state 초기화 | `insp_session_init.py` |
+| FR-INSP-CMN-03 | `inspection_record` 스키마 준수 (seq/inspected_at/image_name/image_path/verdict/anomaly_score) | `insp_tab1_realtime.py` |
+| FR-INSP-T1-01 | 수동 검사 버튼 | `insp_tab1_realtime.py` |
+| FR-INSP-T1-02 | 자동 검사 버튼 (3초 간격) | `insp_tab1_realtime.py` |
+| FR-INSP-T1-03 | 3열 레이아웃: 판정결과 / 원본이미지 / Anomaly Map | `insp_tab1_realtime.py` |
+| FR-INSP-T1-04 | 불량 감지 팝업 표시 및 자동 검사 중지 | `insp_tab1_realtime.py` |
+| FR-INSP-T1-05 | 테스트 풀 소진 시 재섞기 | `test_sampler.py` |
+| FR-INSP-T1-06 | 모델 미적용 상태 가드 (`INSP_MSG["NO_MODEL"]`) | `insp_tab1_realtime.py` |
+| FR-INSP-T2-01 | 5열 이력 테이블 (번호/시각/이미지명/판정결과/Anomaly Score) | `insp_tab2_history.py` |
+| FR-INSP-T2-02 | KPI 카드 4개 (총검사/양품/불량/불량률) | `insp_tab2_history.py` |
+| FR-INSP-T2-03 | 이력 없음 상태 가드 | `insp_tab2_history.py` |
+| FR-INSP-T2-04 | 히스토그램/차트 없음 (명세 준수) | `insp_tab2_history.py` |
+| FR-INSP-T3-01 | 완료된 실험 목록 F1 기준 정렬 | `insp_tab3_model.py` |
+| FR-INSP-T3-02 | 모델 [적용] 버튼 → `insp_model` 설정 | `insp_tab3_model.py` |
+| FR-INSP-T3-03 | 모델 교체 시 모든 `insp_` 이력 초기화 | `insp_tab3_model.py` |
+
+### H.5 배포 전 수동 검증 체크리스트 추가 항목
+
+```
+□ 사이드바: 🔬 모델 탐색 / 🏭 비전검사 버튼 표시 확인
+□ 🏭 비전검사 클릭 시 비전검사 대시보드로 전환 확인
+□ 탭1: 수동 검사 버튼 클릭 → 3열 결과 표시 확인
+□ 탭1: 자동 검사 시작 → 3초 간격 동작 확인
+□ 탭1: 불량 이미지 검사 → 팝업 표시 및 자동 중지 확인
+□ 탭2: 검사 후 이력 테이블 및 KPI 카드 표시 확인
+□ 탭3: 완료 실험 목록 F1 기준 정렬 확인
+□ 탭3: 모델 교체 후 탭2 이력이 초기화됨을 확인
+□ 앱 재시작 후 비전검사 이력 없음(세션 전용 저장소) 확인
 ```
 
 ---

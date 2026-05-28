@@ -240,7 +240,7 @@
   13. current_run_status = "running"
   14. 백그라운드 스레드 시작 (threading.Thread + queue.Queue)
   15. 메인 스레드: st.empty() 컨테이너에 Progress Bar, Loss 곡선, 로그 텍스트 갱신
-      (500 step마다 queue에서 데이터 수신 후 st.rerun())
+      (100 step마다 queue에서 데이터 수신 후 st.rerun())
   16. 학습 완료:
       16a. metrics 계산 (accuracy, precision, recall, f1, f2, auc)
       16b. experiments[exp_id] Write (status="completed")

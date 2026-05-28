@@ -657,7 +657,7 @@ smart-qc-dashboard/
 | **모델 정확도** | MVTec AD Screw 데이터셋 기준 AUC ≥ 0.95 | history.json metrics.auc |
 | **디바이스 자동 감지** | `torch.cuda.is_available()` 결과에 따라 자동 전환, UI 명시 | 자동 감지 로직 |
 | **재현성** | 동일 `random_seed` + 동일 하이퍼파라미터 시 동일 결과 | 2회 실행 결과 비교 |
-| **데이터 무결성** | 폴더 구조 검증 실패 시 탭4 진입 완전 차단 | E2E 테스트 |
+| **데이터 무결성** | 폴더 구조 검증 실패 시 탭3 진입 완전 차단 | E2E 테스트 |
 | **이미지 처리** | Resize+Padding 적용 후 가로·세로 비율 유지 오차 < 1픽셀 | 픽셀 단위 검증 |
 | **채널 처리** | Grayscale 이미지 자동 RGB 변환, 3채널 보장 | 단위 테스트 |
 | **디스크 용량** | 모델 저장 전 여유 공간 < 500MB 시 경고 메시지 표시 | `shutil.disk_usage()` |
@@ -759,10 +759,10 @@ LOG_FORMAT = {
 | A-02 | 학습 비동기 처리 | Python `threading.Thread` + `queue.Queue`로 백그라운드 학습, 메인 스레드는 UI 갱신 전담. | PRD 5절 "UI 블로킹 없음" |
 | A-03 | Anomalib 버전 | `anomalib >= 1.0.0` (v1 API 기준). | PRD 6절 기술 스택 |
 | A-04 | 모델 저장 크기 | EfficientAD-medium ≈ 200~400 MB, PatchCore (WideResNet50) ≈ 400~800 MB. | 일반적인 모델 크기 |
-| A-05 | 테스트 이미지 추론 | 탭6에서 모델 재로드 후 전체 테스트셋 일괄 추론. 실험 완료 시 `metrics.anomaly_scores` 이미 계산·저장. | 탭6 응답성 확보 |
+| A-05 | 테스트 이미지 추론 | 탭5에서 모델 재로드 후 전체 테스트셋 일괄 추론. 실험 완료 시 `metrics.anomaly_scores` 이미 계산·저장. | 탭5 응답성 확보 |
 | A-06 | configs.yaml 위치 | 작업 디렉토리 루트 `./configs.yaml`. Docker 실행 시 `/app/configs.yaml`. | 11.1절 Dockerfile WORKDIR /app |
 | A-07 | 데이터셋 마운트 | Docker 실행 시 `-v /path/to/dataset:/app/dataset`. 탭1에서 `/app/dataset` 하위 경로 입력. | PRD 11.3절 docker run |
-| A-08 | Loss 곡선 갱신 주기 | EfficientAD: 매 500 step. PatchCore: 에포크 단위. | UI 성능 vs 정보 밀도 균형 |
+| A-08 | Loss 곡선 갱신 주기 | EfficientAD: 매 100 step. PatchCore: 에포크 단위. | UI 성능 vs 정보 밀도 균형 |
 | A-09 | 학습 로그 버퍼 | UI에 표시되는 로그 텍스트 박스는 최신 100줄만 유지. 파일에는 전량 저장. | Streamlit 메모리 제한 |
 | A-10 | GT 마스크 없는 결함 클래스 | `ground_truth/{class}/` 디렉토리가 없으면 해당 이미지의 GT는 빈 마스크(전체 0)로 처리. | MVTec AD 일부 클래스 |
 | A-11 | image_size 기본값 | 256. 변경 시 preprocessing_config와 model_config 동시 업데이트. | PRD 9.2절 YAML 예시 |

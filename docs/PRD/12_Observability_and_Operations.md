@@ -186,7 +186,7 @@ class TrainingWorker(threading.Thread):
 | `experiment_deleted` | `tab4_history.py._delete_experiment()` | `{"experiment_id": str}` |
 
 `training_step` 이벤트 주기 (00절 §9 A-08):
-- EfficientAD: 매 500 step마다 → `queue.put({"type": "progress", "step": N, "loss": float, ...})`
+- EfficientAD: 매 100 step마다 → `queue.put({"type": "progress", "step": N, "loss": float, ...})`
 - PatchCore: 에포크 단위
 
 ---
@@ -327,7 +327,7 @@ if st.session_state.get("loss_history"):
 ```
 
 `loss_history` 업데이트 조건:
-- EfficientAD: `progress` 메시지에 `loss` 필드가 있을 때만 append (매 500 step)
+- EfficientAD: `progress` 메시지에 `loss` 필드가 있을 때만 append (매 100 step)
 - PatchCore: epoch 완료 메시지마다 append
 
 ### E.3 실시간 로그

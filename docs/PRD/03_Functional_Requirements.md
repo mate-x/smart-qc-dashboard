@@ -828,7 +828,6 @@ FR별 로그 이벤트 매핑:
 | FR-T1-01 (실패) | `dataset_validation_failed` | ERROR |
 | FR-T2-05 | `preprocessing_config_saved` | INFO |
 | FR-T2-05 | `model_config_saved` | INFO |
-| FR-T3-08 | `model_config_saved` | INFO |
 | FR-T3-03 (시작) | `training_started` | INFO |
 | FR-T3-04 (step) | `training_step` | INFO |
 | FR-T3-05 (완료) | `training_completed` | INFO |

@@ -1,7 +1,7 @@
 """
-탭3 PatchCore 파트 단위 테스트
+탭2 PatchCore 파트 단위 테스트
 
-PRD 03_Functional_Requirements.md H.2 TC-FR-T3-03 포함.
+PRD 03_Functional_Requirements.md H.2 TC-FR-T2-03 포함.
 순수 함수만 테스트 (Streamlit context 불필요).
 """
 
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from tabs.tab3_model_params import (
+from tabs.tab2_config import (
     build_model_config,
     build_patchcore_params,
     compute_threshold_ratio,
@@ -191,7 +191,7 @@ class TestApplyPatchcoreWidgets:
 
     def _run(self, params: dict) -> dict:
         """session_state를 일반 dict로 대체하여 Streamlit 없이 테스트."""
-        import tabs.tab3_model_params as mod
+        import tabs.tab2_config as mod
         fake_ss: dict = {}
         original_ss = getattr(mod.st, "session_state", None)
         mod.st.session_state = fake_ss  # type: ignore[attr-defined]
@@ -204,45 +204,45 @@ class TestApplyPatchcoreWidgets:
 
     def test_backbone_key_set(self):
         ss = self._run({"backbone": "resnet18"})
-        assert ss["pc_backbone"] == "resnet18"
+        assert ss["tab2_pc_backbone"] == "resnet18"
 
     def test_pretrained_source_torchvision(self):
         ss = self._run({"pretrained_source": "torchvision"})
-        assert ss["pc_pretrained_label"] == "torchvision"
+        assert ss["tab2_pc_pretrained"] == "torchvision"
 
     def test_pretrained_source_local(self):
         ss = self._run({"pretrained_source": "local"})
-        assert ss["pc_pretrained_label"] == "로컬 경로"
+        assert ss["tab2_pc_pretrained"] == "로컬 경로"
 
     def test_pretrained_path_set(self):
         ss = self._run({"pretrained_source": "local", "pretrained_path": "/w/r18.pth"})
-        assert ss["pc_pretrained_path"] == "/w/r18.pth"
+        assert ss["tab2_pc_pretrained_path"] == "/w/r18.pth"
 
     def test_coreset_ratio_set(self):
         ss = self._run({"coreset_sampling_ratio": 0.3})
-        assert ss["pc_coreset"] == pytest.approx(0.3)
+        assert ss["tab2_pc_coreset"] == pytest.approx(0.3)
 
     def test_neighbourhood_kernel_odd_values(self):
         for ks in (1, 3, 5, 7, 9):
             ss = self._run({"neighbourhood_kernel_size": ks})
-            assert ss["pc_kernel"] == ks
+            assert ss["tab2_pc_kernel"] == ks
 
     def test_neighbourhood_kernel_even_skipped(self):
         """짝수 값은 select_slider options에 없으므로 키를 설정하지 않는다."""
         ss = self._run({"neighbourhood_kernel_size": 4})
-        assert "pc_kernel" not in ss
+        assert "tab2_pc_kernel" not in ss
 
     def test_max_train_set(self):
         ss = self._run({"max_train": 2000})
-        assert ss["pc_max_train"] == 2000
+        assert ss["tab2_pc_max_train"] == 2000
 
     def test_knn_set(self):
         ss = self._run({"knn": 15})
-        assert ss["pc_knn"] == 15
+        assert ss["tab2_pc_knn"] == 15
 
     def test_top_k_ratio_set(self):
         ss = self._run({"top_k_ratio": 0.25})
-        assert ss["pc_top_k"] == pytest.approx(0.25)
+        assert ss["tab2_pc_top_k"] == pytest.approx(0.25)
 
     def test_empty_params_no_error(self):
         """파라미터 없이 호출해도 예외 없음."""
@@ -250,11 +250,11 @@ class TestApplyPatchcoreWidgets:
 
 
 # ─────────────────────────────────────────────
-# compute_threshold_ratio — FR-T3-10 정상/결함 비율 근사치
+# compute_threshold_ratio — FR-T2-10 정상/결함 비율 근사치
 # ─────────────────────────────────────────────
 
 class TestComputeThresholdRatio:
-    """FR-T3-10 (S): Threshold 기준 정상/결함 비율 실시간 표시 순수 함수 검증."""
+    """FR-T2-10 (S): Threshold 기준 정상/결함 비율 실시간 표시 순수 함수 검증."""
 
     def test_percentile_95_returns_0_95(self):
         normal, defect = compute_threshold_ratio("percentile", 95.0)

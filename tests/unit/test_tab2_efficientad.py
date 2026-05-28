@@ -1,7 +1,7 @@
 """
-탭3 EfficientAD 파트 단위 테스트
+탭2 EfficientAD 파트 단위 테스트
 
-PRD 03_Functional_Requirements.md FR-T3-03, FR-T3-04 관련.
+PRD 03_Functional_Requirements.md FR-T2-03, FR-T2-04 관련.
 순수 함수만 테스트 (Streamlit context 불필요).
 """
 
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from tabs.tab3_model_params import (
+from tabs.tab2_config import (
     build_efficientad_params,
     build_model_config,
     compute_threshold_ratio,
@@ -177,8 +177,8 @@ class TestBuildEfficientadParams:
         assert params["use_imagenet_penalty"] is False
         assert params["penalty_batch_size"] == 8
 
-    def test_tc_fr_t3_03_ae_0_73(self):
-        """PRD TC-FR-T3-03: ae=0.73 → ae_loss_weight 저장 검증."""
+    def test_tc_fr_t2_03_ae_0_73(self):
+        """PRD TC-FR-T2-03: ae=0.73 → ae_loss_weight 저장 검증."""
         params = _default_ead_params(ae_loss_weight=0.73)
         assert params["ae_loss_weight"] == pytest.approx(0.73)
 
@@ -192,7 +192,7 @@ class TestApplyEfficientadWidgets:
 
     def _run(self, params: dict) -> dict:
         """session_state를 일반 dict로 대체하여 Streamlit 없이 테스트."""
-        import tabs.tab3_model_params as mod
+        import tabs.tab2_config as mod
         fake_ss: dict = {}
         original_ss = getattr(mod.st, "session_state", None)
         mod.st.session_state = fake_ss  # type: ignore[attr-defined]
@@ -205,67 +205,67 @@ class TestApplyEfficientadWidgets:
 
     def test_model_size_key_set(self):
         ss = self._run({"model_size": "small"})
-        assert ss["ead_model_size"] == "small"
+        assert ss["tab2_ead_model_size"] == "small"
 
     def test_train_steps_key_set(self):
         ss = self._run({"train_steps": 50_000})
-        assert ss["ead_train_steps"] == 50_000
+        assert ss["tab2_ead_train_steps"] == 50_000
 
     def test_optimizer_key_set(self):
         ss = self._run({"optimizer": "adamw"})
-        assert ss["ead_optimizer"] == "adamw"
+        assert ss["tab2_ead_optimizer"] == "adamw"
 
     def test_learning_rate_key_set(self):
         ss = self._run({"learning_rate": 2e-4})
-        assert ss["ead_lr"] == pytest.approx(2e-4)
+        assert ss["tab2_ead_lr"] == pytest.approx(2e-4)
 
     def test_weight_decay_key_set(self):
         ss = self._run({"weight_decay": 1e-3})
-        assert ss["ead_wd"] == pytest.approx(1e-3)
+        assert ss["tab2_ead_wd"] == pytest.approx(1e-3)
 
     def test_out_channels_key_set(self):
         ss = self._run({"out_channels": 256})
-        assert ss["ead_out_channels"] == 256
+        assert ss["tab2_ead_out_channels"] == 256
 
     def test_padding_key_set_true(self):
         ss = self._run({"padding": True})
-        assert ss["ead_padding"] is True
+        assert ss["tab2_ead_padding"] is True
 
     def test_padding_key_set_false(self):
         ss = self._run({"padding": False})
-        assert ss["ead_padding"] is False
+        assert ss["tab2_ead_padding"] is False
 
     def test_ae_loss_weight_key_set(self):
         ss = self._run({"ae_loss_weight": 0.7})
-        assert ss["ead_ae_weight"] == pytest.approx(0.7)
+        assert ss["tab2_ead_ae_weight"] == pytest.approx(0.7)
 
     def test_autoencoder_lr_key_set(self):
         ss = self._run({"autoencoder_lr": 5e-4})
-        assert ss["ead_ae_lr"] == pytest.approx(5e-4)
+        assert ss["tab2_ead_ae_lr"] == pytest.approx(5e-4)
 
     def test_autoencoder_weight_decay_key_set(self):
         ss = self._run({"autoencoder_weight_decay": 1e-5})
-        assert ss["ead_ae_wd"] == pytest.approx(1e-5)
+        assert ss["tab2_ead_ae_wd"] == pytest.approx(1e-5)
 
     def test_lr_decay_epochs_key_set(self):
         ss = self._run({"lr_decay_epochs": 40_000})
-        assert ss["ead_decay_ep"] == 40_000
+        assert ss["tab2_ead_decay_ep"] == 40_000
 
     def test_lr_decay_factor_key_set(self):
         ss = self._run({"lr_decay_factor": 0.5})
-        assert ss["ead_decay_f"] == pytest.approx(0.5)
+        assert ss["tab2_ead_decay_f"] == pytest.approx(0.5)
 
     def test_scheduler_key_set(self):
         ss = self._run({"scheduler": "CosineAnnealingLR"})
-        assert ss["ead_sched"] == "CosineAnnealingLR"
+        assert ss["tab2_ead_sched"] == "CosineAnnealingLR"
 
     def test_use_imagenet_penalty_key_set(self):
         ss = self._run({"use_imagenet_penalty": True})
-        assert ss["ead_use_img_penalty"] is True
+        assert ss["tab2_ead_use_penalty"] is True
 
     def test_penalty_batch_size_key_set(self):
         ss = self._run({"penalty_batch_size": 16})
-        assert ss["ead_pen_bs"] == 16
+        assert ss["tab2_ead_pen_bs"] == 16
 
     def test_empty_params_no_error(self):
         """파라미터 없이 호출해도 예외 없음."""
@@ -279,10 +279,10 @@ class TestApplyEfficientadWidgets:
     def test_partial_params_only_present_keys_set(self):
         """일부 파라미터만 있을 때 해당 키만 설정된다."""
         ss = self._run({"model_size": "small", "train_steps": 30_000})
-        assert "ead_model_size" in ss
-        assert "ead_train_steps" in ss
-        assert "ead_optimizer" not in ss
-        assert "ead_lr" not in ss
+        assert "tab2_ead_model_size" in ss
+        assert "tab2_ead_train_steps" in ss
+        assert "tab2_ead_optimizer" not in ss
+        assert "tab2_ead_lr" not in ss
 
 
 # ─────────────────────────────────────────────
@@ -363,11 +363,11 @@ class TestBuildModelConfigEfficientad:
 
 
 # ─────────────────────────────────────────────
-# compute_threshold_ratio — FR-T3-10 검증
+# compute_threshold_ratio — FR-T2-10 검증
 # ─────────────────────────────────────────────
 
 class TestComputeThresholdRatio:
-    """compute_threshold_ratio — FR-T3-10 정상/결함 비율 계산 검증."""
+    """compute_threshold_ratio — FR-T2-10 정상/결함 비율 계산 검증."""
 
     def test_percentile_95(self):
         normal, defect = compute_threshold_ratio("percentile", 95.0)
@@ -404,8 +404,8 @@ class TestComputeThresholdRatio:
             n, d = compute_threshold_ratio("absolute", val)
             assert (n, d) == (None, None), f"expected (None, None) for val={val}"
 
-    def test_tc_fr_t3_10_percentile_50(self):
-        """PRD TC-FR-T3-10: percentile=50 → normal=0.5, defect=0.5."""
+    def test_tc_fr_t2_10_percentile_50(self):
+        """PRD TC-FR-T2-10: percentile=50 → normal=0.5, defect=0.5."""
         normal, defect = compute_threshold_ratio("percentile", 50.0)
         assert normal == pytest.approx(0.5)
         assert defect == pytest.approx(0.5)

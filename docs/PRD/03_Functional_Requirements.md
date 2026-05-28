@@ -494,10 +494,10 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 | 항목 | 내용 |
 |------|------|
 | **[학습 시작] 버튼** | `st.button("🚀 학습 시작", type="primary", disabled=(current_run_status == "running"))` |
-| **[학습 중지] 버튼** | `st.button("⏹ 학습 중지", type="secondary", disabled=(current_run_status != "running"))`. running/paused 상태에서 `[⏸ 일시정지]`, `[▶ 재시작]`과 `st.columns(3)` 3열로 배치 |
-| **[⏸ 일시정지] 버튼** | running/paused 상태에서만 렌더링. `disabled=(status == "paused")` |
-| **[▶ 재시작] 버튼** | running/paused 상태에서만 렌더링. `disabled=(status == "running")` |
-| **상태 표시** | `running` → `st.info("🔄 학습이 진행 중입니다.")` / `paused` → `st.warning("⏸ 일시정지됨 — 체크포인트 저장 완료")` |
+| **[학습 중지] 버튼** | `st.button("⏹ 학습 중지", type="secondary")`. running/paused 상태에서 `[⏸ 일시정지]`, `[▶ 재시작]`과 `st.columns(3)` 3열로 항상 배치 |
+| **[⏸ 일시정지] 버튼** | 항상 렌더링. `disabled=(status != "running")` |
+| **[▶ 재시작] 버튼** | 항상 렌더링. `disabled=(status != "paused")` |
+| **상태 표시** | running/paused 공통 → `st.info("🔄 학습이 진행 중입니다.")` 하나만 표시. paused 상태는 프로그레스 바 레이블에 `⏸ 일시정지 \| Step... \| 경과: ...s \| 저장: {filename}` 형태로 통합 |
 | **[학습 시작] 동작** | 1. `stop_event = threading.Event()`, `pause_event = threading.Event()` 생성 <br> 2. `TrainingWorker(..., stop_event=stop_event, pause_event=pause_event).start()` <br> 3. `current_run_status = "running"` |
 | **[학습 중지] 동작** | 1. `stop_event.set()` + `pause_event.clear()` (일시정지 중이면 해제 후 스레드가 stop_event 감지) <br> 2. 백그라운드 스레드 종료 <br> 3. FR-T4-06 중단 처리 실행 |
 | **[⏸ 일시정지] 동작** | 1. `pause_event.set()` <br> 2. 워커가 현재 step 완료 후 체크포인트 저장 → Queue에 `{"type": "paused", "ckpt_path": str}` 전송 <br> 3. `_handle_paused()` → `current_run_status = "paused"` |
@@ -572,7 +572,7 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 | **PatchCore 저장 내용** | `batch_idx`, `total_batches`, `model_type`, `model_config`, `preprocessing_config`, `dataset_path`, `accumulated_features` (Tensor), `created_at` |
 | **저장 메커니즘** | `torch.save(data, path)` — `utils/checkpoint_manager.save_checkpoint()` |
 | **대기 메커니즘** | 체크포인트 저장 완료 후 Queue에 `{"type": "paused", "ckpt_path": str}` 전송 → `pause_event.is_set()` 동안 `time.sleep(0.5)` 루프로 대기 |
-| **UI 전환** | `current_run_status = "paused"` → 자동 rerun 중단 → `st.warning("⏸ 일시정지됨")` + 체크포인트 경로 표시 |
+| **UI 전환** | `current_run_status = "paused"` → 자동 rerun 중단 → 프로그레스 바 레이블에 `⏸ 일시정지 \| Step... \| 저장: {filename}` 표시 (별도 st.warning 없음) |
 | **중복 저장 방지** | 동일 pause_event 세트 내 `_ckpt_saved` 플래그로 체크포인트 1회만 저장 |
 
 ---
@@ -619,7 +619,7 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 | **지표 카드** | `st.columns(4)` 에 Accuracy, Precision, Recall, F1 각 `st.metric()` |
 | **Confusion Matrix** | Plotly heatmap: 행=실제(정상/결함), 열=예측(정상/결함) <br> 셀 값: TP/FP/TN/FN 수치 표시 |
 | **ROC Curve** | Plotly line chart: FPR(x) vs TPR(y), AUC 값 범례에 표시 <br> 데이터: `metrics.anomaly_scores` + `metrics.image_labels` → `sklearn.metrics.roc_curve` |
-| **Anomaly Score 분포** | Plotly histogram: 정상(image_label=0)과 결함(image_label=1) 겹쳐서 표시 <br> x축: Anomaly Score, y축: 이미지 수 <br> 현재 threshold 값을 수직선으로 표시 (`add_vline`) |
+| **Anomaly Score 분포** | Plotly histogram: 정상(image_label=0)과 결함(image_label=1) 겹쳐서 표시 <br> 표시 전 Min-Max 정규화 적용 (0~1 범위, 모든 값이 동일하면 0으로 처리) <br> x축: Anomaly Score (0~1), y축: 이미지 수 <br> threshold 값도 동일 스케일로 정규화 후 수직선으로 표시 (`add_vline`) |
 
 ---
 

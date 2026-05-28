@@ -87,7 +87,7 @@ def get_insp_model() -> object | None:
     if active is None:
         return None
 
-    device = st.session_state.get("device_info", {}).get("device", "cpu")
+    device = (st.session_state.get("device_info") or {}).get("device", "cpu")
     return _load_insp_model(
         model_path=active["model_path"],
         model_type=active["model_type"],

@@ -5,6 +5,7 @@ import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -64,7 +65,6 @@ def render() -> None:
         st.rerun()
 
     elif status == "paused":
-        # 일시정지 중: 버튼만 표시, 자동 rerun 없음
         st.info("학습 중 새로고침 시 학습 상태를 확인할 수 없습니다.", icon="⚠️")
         _render_running_ui()
 
@@ -236,13 +236,7 @@ def _render_running_ui() -> None:
     """current_run_status == "running" 또는 "paused" 상태 UI."""
     status = st.session_state.get("current_run_status", "running")
 
-    if status == "paused":
-        st.warning("⏸ 일시정지됨 — 체크포인트 저장 완료")
-        ckpt_path = st.session_state.get("_last_ckpt_path")
-        if ckpt_path:
-            st.caption(f"저장 위치: `{ckpt_path}`")
-    else:
-        st.info("🔄 학습이 진행 중입니다. 탭을 전환해도 학습은 계속됩니다.")
+    st.info("🔄 학습이 진행 중입니다. 탭을 전환해도 학습은 계속됩니다.")
 
     progress = st.session_state.get("_progress") or {}
     step     = progress.get("step", 0)
@@ -253,10 +247,15 @@ def _render_running_ui() -> None:
     elapsed = time.time() - start_t
 
     pct   = step / total if total > 0 else 0.0
-    label = f"Step {step:,} / {total:,} ({pct*100:.1f}%)"
-    if loss is not None and loss > 0:
-        label += f" | Loss: {loss:.4f}"
-    label += f" | 경과: {elapsed:.0f}s"
+    if status == "paused":
+        ckpt_path = st.session_state.get("_last_ckpt_path")
+        ckpt_info = f" | 저장: {Path(ckpt_path).name}" if ckpt_path else ""
+        label = f"⏸ 일시정지 | Step {step:,} / {total:,} ({pct*100:.1f}%) | 경과: {elapsed:.0f}s{ckpt_info}"
+    else:
+        label = f"Step {step:,} / {total:,} ({pct*100:.1f}%)"
+        if loss is not None and loss > 0:
+            label += f" | Loss: {loss:.4f}"
+        label += f" | 경과: {elapsed:.0f}s"
     st.progress(pct, text=label)
 
     # Loss 곡선 (EfficientAD만 유효, PatchCore는 loss=0)
@@ -281,18 +280,14 @@ def _render_running_ui() -> None:
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        pause_disabled = (status == "paused")
-        if st.button("⏸ 일시정지", disabled=pause_disabled, use_container_width=True, key="tab4_pause_btn"):
+        if st.button("⏸ 일시정지", disabled=(status != "running"), use_container_width=True, key="tab4_pause_btn"):
             pause_ev: threading.Event | None = st.session_state.get("_pause_event")
             if pause_ev:
                 pause_ev.set()
-            # 상태는 background thread가 "paused" 메시지를 보낸 후 _handle_paused에서 갱신됨
-            # 그 전까지 auto-rerun이 계속 돌면서 메시지를 수신함
 
     with col2:
-        resume_disabled = (status == "running")
-        if st.button("▶ 재시작", disabled=resume_disabled, use_container_width=True, key="tab4_resume_ctrl_btn"):
-            pause_ev = st.session_state.get("_pause_event")
+        if st.button("▶ 재시작", disabled=(status != "paused"), use_container_width=True, key="tab4_resume_ctrl_btn"):
+            pause_ev: threading.Event | None = st.session_state.get("_pause_event")
             if pause_ev:
                 pause_ev.clear()
             st.session_state["current_run_status"] = "running"
@@ -303,16 +298,10 @@ def _render_running_ui() -> None:
             stop_ev: threading.Event | None = st.session_state.get("_stop_event")
             if stop_ev:
                 stop_ev.set()
-            # 일시정지 중이라면 pause를 해제해 스레드가 stop_event를 감지할 수 있게 함
             pause_ev = st.session_state.get("_pause_event")
             if pause_ev:
                 pause_ev.clear()
-            if status == "paused":
-                # 자동 rerun을 재개해 queue에서 "stopped" 메시지를 수신
-                st.session_state["current_run_status"] = "running"
-                st.rerun()
-            else:
-                st.info("중지 신호를 전송했습니다. 현재 스텝 완료 후 중단됩니다.")
+            st.info("중지 신호를 전송했습니다. 현재 스텝 완료 후 중단됩니다.")
 
 
 # ── 학습 시작 핸들러 ──────────────────────────────────────────────────────────

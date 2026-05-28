@@ -4,6 +4,7 @@ import logging
 import shutil
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -268,27 +269,40 @@ def _roc_curve_fig(metrics: dict) -> go.Figure:
 def _score_dist_fig(metrics: dict, threshold_value: float | None = None) -> go.Figure:
     scores = metrics.get("anomaly_scores") or []
     labels = metrics.get("image_labels") or []
-    threshold = threshold_value
 
     fig = go.Figure()
     if scores and labels:
-        normal = [s for s, l in zip(scores, labels) if l == 0]
-        defect = [s for s, l in zip(scores, labels) if l == 1]
+        arr = np.array(scores, dtype=np.float64)
+        s_min, s_max = arr.min(), arr.max()
+        if s_max > s_min:
+            norm = (arr - s_min) / (s_max - s_min)
+        else:
+            norm = np.zeros_like(arr)
+
+        norm_threshold = (
+            (threshold_value - s_min) / (s_max - s_min)
+            if threshold_value is not None and s_max > s_min
+            else threshold_value
+        )
+
+        normal = [float(v) for v, l in zip(norm, labels) if l == 0]
+        defect = [float(v) for v, l in zip(norm, labels) if l == 1]
         if normal:
             fig.add_trace(go.Histogram(x=normal, name="정상", opacity=0.7, nbinsx=30))
         if defect:
             fig.add_trace(go.Histogram(x=defect, name="결함", opacity=0.7, nbinsx=30))
-        if threshold is not None:
+        if norm_threshold is not None:
             fig.add_vline(
-                x=threshold,
+                x=norm_threshold,
                 line_dash="dash",
                 line_color="red",
-                annotation_text=f"threshold={threshold:.4f}",
+                annotation_text=f"threshold={norm_threshold:.4f}",
             )
     fig.update_layout(
-        title="Anomaly Score 분포",
-        xaxis_title="Anomaly Score",
+        title="Anomaly Score 분포 (Min-Max 정규화)",
+        xaxis_title="Anomaly Score (0 ~ 1)",
         yaxis_title="이미지 수",
+        xaxis=dict(range=[0, 1]),
         barmode="overlay",
         height=320,
     )

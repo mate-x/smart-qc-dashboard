@@ -2,8 +2,9 @@
 
 > **참조 기준**: [00_Global_Context_Document.md](./00_Global_Context_Document.md)
 > **선행 문서**: [11_Non_Functional_Requirements.md](./11_Non_Functional_Requirements.md), [08_AI_ML_Integration.md](./08_AI_ML_Integration.md)
-> **버전**: v1.0
+> **버전**: v1.1
 > **작성일**: 2026-05-09
+> **수정일**: 2026-05-26
 > **중요**: 이 문서는 테스트 전략의 Single Source of Truth다. 테스트 유형·범위·합격 기준·도구를 확정한다. 모든 테스트는 08절 Z.절 및 05~07절 확정 사항을 기준으로 작성한다.
 
 ---
@@ -838,6 +839,204 @@ pytest tests/ --cov=utils --cov=tabs \
     --cov-report=html:coverage_report \
     --cov-fail-under=80
 ```
+
+---
+
+---
+
+## I. 비전검사 대시보드 테스트 전략 (v1.1)
+
+### I.1 단위 테스트 — `inspection/utils/test_sampler.py`
+
+```python
+# tests/unit/test_sampler.py
+
+import pytest
+from inspection.utils.test_sampler import build_test_pool, sample_from_pool
+
+class TestBuildTestPool:
+    def test_returns_list_of_paths(self, tmp_path):
+        """build_test_pool()이 유효한 파일 경로 리스트를 반환한다"""
+        good_dir = tmp_path / "test" / "good"
+        good_dir.mkdir(parents=True)
+        defect_dir = tmp_path / "test" / "scratch"
+        defect_dir.mkdir(parents=True)
+        (good_dir / "001.png").write_bytes(b"fake")
+        (defect_dir / "001.png").write_bytes(b"fake")
+
+        pool = build_test_pool(str(tmp_path))
+        assert isinstance(pool, list)
+        assert len(pool) == 2
+
+    def test_empty_dataset_raises(self, tmp_path):
+        """test/ 디렉터리가 없으면 ValueError 발생"""
+        with pytest.raises(ValueError):
+            build_test_pool(str(tmp_path))
+
+    def test_pool_contains_only_supported_formats(self, tmp_path):
+        """지원 포맷(.png/.jpg/.bmp)만 포함"""
+        test_dir = tmp_path / "test" / "good"
+        test_dir.mkdir(parents=True)
+        (test_dir / "001.png").write_bytes(b"fake")
+        (test_dir / "002.txt").write_bytes(b"text")  # 제외 대상
+
+        pool = build_test_pool(str(tmp_path))
+        assert all(p.endswith((".png", ".jpg", ".jpeg", ".bmp")) for p in pool)
+
+
+class TestSampleFromPool:
+    def test_sample_returns_item_from_pool(self):
+        pool = ["a.png", "b.png", "c.png"]
+        selected, used = sample_from_pool(pool, set())
+        assert selected in pool
+        assert selected in used
+
+    def test_pool_exhaustion_triggers_reshuffle(self):
+        """풀의 모든 아이템 사용 후 재샘플링 시 used가 초기화된다"""
+        pool = ["a.png", "b.png"]
+        used = {"a.png", "b.png"}  # 이미 모두 사용됨
+        selected, new_used = sample_from_pool(pool, used)
+        # 재섞기 후 used는 선택된 1개만 포함
+        assert len(new_used) == 1
+        assert selected in pool
+
+    def test_no_duplicate_before_reshuffle(self):
+        """재섞기 전까지 동일 이미지가 두 번 선택되지 않는다"""
+        pool = ["a.png", "b.png", "c.png"]
+        used = set()
+        selected_items = []
+        for _ in range(len(pool)):
+            item, used = sample_from_pool(pool, used)
+            selected_items.append(item)
+        assert len(set(selected_items)) == len(pool)
+```
+
+### I.2 통합 테스트 — 모델 적용 → 검사 → 이력 누적 흐름
+
+```python
+# tests/integration/test_insp_flow.py
+
+import pytest
+from unittest.mock import patch, MagicMock
+import streamlit as st
+
+@pytest.fixture(autouse=True)
+def mock_session_state():
+    state = {}
+    with patch.object(st, "session_state", state):
+        yield state
+
+def test_model_apply_initializes_insp_keys(mock_session_state):
+    """모델 적용 시 insp_ 세션 키가 초기화된다"""
+    from inspection.utils.insp_session_init import init_insp_session_state
+
+    init_insp_session_state()
+    assert "insp_records" in st.session_state
+    assert "insp_seq" in st.session_state
+    assert st.session_state["insp_seq"] == 0
+    assert st.session_state["insp_records"] == []
+
+def test_inspection_increments_seq(mock_session_state):
+    """검사 실행 시 insp_seq가 1 증가한다 (TC-INSP-01)"""
+    from inspection.utils.insp_session_init import init_insp_session_state
+
+    init_insp_session_state()
+    initial_seq = st.session_state["insp_seq"]
+
+    # 검사 레코드 직접 추가 (추론 mock)
+    st.session_state["insp_seq"] += 1
+    record = {
+        "seq": st.session_state["insp_seq"],
+        "inspected_at": "2026-05-26T12:00:00+09:00",
+        "image_name": "001.png",
+        "image_path": "/dataset/test/good/001.png",
+        "verdict": "OK",
+        "anomaly_score": 0.12,
+    }
+    st.session_state["insp_records"].append(record)
+
+    assert st.session_state["insp_seq"] == initial_seq + 1
+    assert len(st.session_state["insp_records"]) == 1
+
+def test_model_replacement_resets_insp_keys(mock_session_state):
+    """모델 교체 시 모든 insp_ 키가 초기화된다 (TC-INSP-03)"""
+    from inspection.utils.insp_session_init import init_insp_session_state
+
+    # 사전 상태 설정
+    st.session_state["insp_seq"] = 5
+    st.session_state["insp_records"] = [{"seq": 1}, {"seq": 2}]
+
+    # 모델 교체 시 재초기화
+    init_insp_session_state(reset=True)
+
+    assert st.session_state["insp_seq"] == 0
+    assert st.session_state["insp_records"] == []
+```
+
+### I.3 주요 테스트 시나리오 (Given-When-Then)
+
+#### TC-INSP-01: 수동 검사 레코드 추가
+
+| 단계 | 내용 |
+|------|------|
+| **Given** | 모델이 적용되어 있고 `insp_seq = 3`, `insp_records`에 3개 레코드 존재 |
+| **When** | 수동 검사 버튼 클릭 |
+| **Then** | `insp_seq == 4`, `insp_records`에 4번째 레코드 추가, `record.seq == 4` |
+
+#### TC-INSP-02: 자동 검사 중 불량 감지 시 중지 및 팝업
+
+| 단계 | 내용 |
+|------|------|
+| **Given** | 자동 검사 모드 실행 중 (`insp_auto_running = True`) |
+| **When** | 추론 결과 `verdict == "NG"` (불량 감지) |
+| **Then** | `insp_auto_running = False`로 설정, `st.error(INSP_MSG["DEFECT_DETECTED"])` 표시, 자동 검사 중지 |
+
+#### TC-INSP-03: 모델 교체 시 이력 초기화
+
+| 단계 | 내용 |
+|------|------|
+| **Given** | `insp_records`에 N개 기록 존재, `insp_seq = N` |
+| **When** | 탭3에서 새 모델 [적용] 버튼 클릭 |
+| **Then** | 모든 `insp_` 키 초기화: `insp_seq = 0`, `insp_records = []`, `insp_model = 새 모델` |
+
+#### TC-INSP-04: 테스트 풀 소진 시 재섞기
+
+| 단계 | 내용 |
+|------|------|
+| **Given** | `insp_test_pool`의 모든 이미지가 `insp_used_images`에 포함 |
+| **When** | `sample_from_pool()` 호출 |
+| **Then** | `insp_used_images` 초기화, `insp_pool_reshuffled` 로그 기록, 새 이미지 반환 |
+
+### I.4 테스트 마커 및 파일 구조
+
+ML 모델 로드가 필요한 테스트는 `@pytest.mark.slow`로 표시하여 CI 빠른 실행에서 제외한다.
+
+```python
+@pytest.mark.slow
+def test_insp_model_inference_end_to_end():
+    """실제 모델 가중치 로드 후 추론 결과 검증 — CI 제외, 수동 실행"""
+    pass
+```
+
+추가되는 테스트 파일 구조:
+
+```
+tests/
+├── unit/
+│   └── test_sampler.py              # I.1 단위 테스트
+└── integration/
+    └── test_insp_flow.py            # I.2 통합 테스트
+```
+
+### I.5 커버리지 대상 추가
+
+| 모듈 | 목표 커버리지 | 우선 테스트 대상 |
+|------|-------------|----------------|
+| `inspection/utils/test_sampler.py` | ≥ 90% | `build_test_pool()`, `sample_from_pool()` 재섞기 |
+| `inspection/utils/insp_session_init.py` | ≥ 85% | 초기화, 리셋 분기 |
+| `inspection/tabs/insp_tab1_realtime.py` | ≥ 60% | 수동/자동 검사 핸들러, 불량 팝업 |
+| `inspection/tabs/insp_tab2_history.py` | ≥ 60% | 테이블 렌더링, KPI 계산 |
+| `inspection/tabs/insp_tab3_model.py` | ≥ 60% | 모델 적용, 이력 초기화 |
 
 ---
 

@@ -23,25 +23,29 @@ st.set_page_config(
 init_session_state()
 render_sidebar()
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "📁 탭1. 데이터 폴더",
-    "⚙️ 탭2. 전처리 및 모델 설정",
-    "🚀 탭3. 학습",
-    "📊 탭4. 실험 히스토리",
-    "🗺️ 탭5. 이상 영역 시각화",
-])
+if st.session_state.active_dashboard == "inspection":
+    from inspection.inspection_app import render as render_inspection
+    render_inspection()
+else:
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📁 탭1. 데이터 폴더",
+        "⚙️ 탭2. 전처리 및 모델 설정",
+        "🚀 탭3. 학습",
+        "📊 탭4. 실험 히스토리",
+        "🗺️ 탭5. 이상 영역 시각화",
+    ])
 
-with tab1:
-    tab1_data_folder.render()
+    with tab1:
+        tab1_data_folder.render()
 
-with tab2:
-    tab2_config.render()
+    with tab2:
+        tab2_config.render()
 
-with tab3:
-    tab3_training.render()
+    with tab3:
+        tab3_training.render()
 
-with tab4:
-    tab4_history.render()
+    with tab4:
+        tab4_history.render()
 
-with tab5:
-    tab5_anomaly_map.render()
+    with tab5:
+        tab5_anomaly_map.render()

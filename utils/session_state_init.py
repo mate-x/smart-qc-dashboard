@@ -1,6 +1,9 @@
 import streamlit as st
 
 SESSION_STATE_SCHEMA: dict = {
+    # 대시보드 라우팅
+    "active_dashboard": "explorer",  # "explorer" | "inspection"
+
     # 탭1 Write
     "dataset_path": None,           # str | None
     "dataset_meta": None,           # dict | None  (00_Global_Context 1.5절)
@@ -32,6 +35,17 @@ SESSION_STATE_SCHEMA: dict = {
 
     # 탭6 Write
     "anomaly_map_threshold": None,  # float | None
+
+    # 비전검사 대시보드 (insp_ 네임스페이스, R-INSP-01)
+    "insp_active_model":   None,    # dict | None — history.json experiment 레코드 전체
+    "insp_records":        [],      # list[dict] — inspection_record 배열 (1.10절)
+    "insp_seq_counter":    0,       # int — 다음 seq 값
+    "insp_auto_active":    False,   # bool — 자동 검사 실행 중 여부
+    "insp_last_result":    None,    # dict | None — 직전 추론 결과
+    "insp_last_anomaly_map": None,  # np.ndarray | None — 직전 이상 맵 (H, W) float32
+    "insp_defect_popup":   False,   # bool — 불량 감지 팝업 표시 여부
+    "insp_test_pool":      [],      # list[tuple[str, str]] — (절대경로, "양품"|"불량")
+    "insp_pool_index":     0,       # int — 현재 샘플링 위치
 }
 
 

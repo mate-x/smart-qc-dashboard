@@ -2,8 +2,9 @@
 
 > **참조 기준**: [00_Global_Context_Document.md](./00_Global_Context_Document.md)
 > **선행 문서**: [04_System_Architecture.md](./04_System_Architecture.md), [05_Data_Model_and_Storage_Strategy.md](./05_Data_Model_and_Storage_Strategy.md)
-> **버전**: v1.0
+> **버전**: v1.1
 > **작성일**: 2026-05-09
+> **수정일**: 2026-05-26
 > **중요**: 이 문서는 실행 환경의 Single Source of Truth다. 하드웨어 요구사항, Python 환경, 디렉터리 초기화, 선택적 Docker 패키징 방법을 확정한다.
 
 ---
@@ -621,6 +622,75 @@ for name, result in CHECKS:
 print("\n" + ("All checks passed." if all_ok else "Some checks FAILED — fix before running."))
 sys.exit(0 if all_ok else 1)
 ```
+
+---
+
+---
+
+## J. 비전검사 대시보드 인프라 (v1.1)
+
+### J.1 inspection/ 디렉터리 구조
+
+비전검사 대시보드는 `inspection/` 디렉터리에 앱 코드로 포함된다. 별도 볼륨 마운트는 불필요하며, Docker 빌드 시 `COPY . .` 단계에서 자동으로 포함된다.
+
+```
+smart-qc-dashboard/
+├── inspection/
+│   ├── inspection_app.py          # 비전검사 대시보드 진입점
+│   ├── tabs/
+│   │   ├── insp_tab1_realtime.py  # 실시간 검사 탭
+│   │   ├── insp_tab2_history.py   # 검사 이력 및 통계 탭
+│   │   └── insp_tab3_model.py     # 딥러닝 모델 교체 탭
+│   └── utils/
+│       ├── insp_session_init.py   # insp_ 세션 상태 초기화
+│       └── test_sampler.py        # 테스트 이미지 샘플링
+```
+
+### J.2 ensure_required_dirs() 확장
+
+`utils/env_init.py`의 `REQUIRED_DIRS`에 `inspection/` 관련 서브디렉터리가 필요한 경우 추가한다. 단, `inspection/` 자체는 소스코드 디렉터리이므로 별도 초기화가 필요하지 않다.
+
+```python
+# utils/env_init.py (v1.1 — 변경 없음, 비전검사는 앱 코드에 포함)
+REQUIRED_DIRS = [
+    Path("./experiments"),
+    Path("./models"),
+    Path("./logs"),
+    Path("./results"),
+    Path("./dataset/imagenet_penalty"),
+    # inspection/ 은 소스코드 디렉터리이므로 여기서 생성하지 않음
+]
+```
+
+### J.3 테스트 데이터 출처
+
+비전검사 탭1(실시간 검사)의 테스트 이미지는 기존 `dataset/` 마운트 경로의 MVTec AD `test/` 디렉터리에서 샘플링한다.
+
+```
+dataset/              ← 기존 볼륨 마운트 (변경 없음)
+└── {category}/
+    └── test/
+        ├── good/
+        └── {defect_class}/
+```
+
+`utils/test_sampler.py`의 `build_test_pool()`이 해당 경로를 스캔하여 풀을 구성한다. 추가 볼륨 마운트나 데이터 복사는 불필요하다.
+
+### J.4 Docker 환경에서의 비전검사 대시보드
+
+| 항목 | 내용 |
+|------|------|
+| 소스 포함 방식 | `COPY . .` 단계에서 `inspection/` 디렉터리 자동 포함 |
+| 데이터 의존성 | `./dataset` 볼륨 마운트 (기존과 동일, 추가 설정 불필요) |
+| 세션 데이터 | 메모리(session_state)만 사용 — 파일시스템 쓰기 없음 |
+| 포트 / 환경변수 추가 사항 | 없음 |
+
+### J.5 I.1 검증 항목 추가
+
+| 검증 항목 | 명령 | 기대 결과 |
+|-----------|------|----------|
+| inspection/ 디렉터리 존재 | `ls inspection/` | 오류 없음 |
+| insp_session_init 임포트 | `python -c "from inspection.utils.insp_session_init import init_insp_session_state"` | 오류 없음 |
 
 ---
 

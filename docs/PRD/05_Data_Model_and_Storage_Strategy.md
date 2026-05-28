@@ -1,8 +1,9 @@
 # 05. Data Model and Storage Strategy
 
 > **참조 문서**: `00_Global_Context_Document.md` §1 (Core Data Model), §3 (File I/O 계약), §8 (결정 규칙)
-> **버전**: v1.0
+> **버전**: v1.1
 > **작성일**: 2026-05-09
+> **최종수정**: 2026-05-26
 > **목적**: 이 시스템의 모든 영속 데이터 및 임시 캐시에 대한 저장 전략, 읽기/쓰기 계약, 원자성 보장, rollback 정책을 구현 가능한 수준으로 명세한다. 04_System_Architecture.md의 파일시스템 레이어 설계를 구체화하고, 08_AI_ML_Integration.md에서 참조할 스토리지 계약을 선행 정의한다.
 
 ---
@@ -784,3 +785,101 @@ def check_disk_before_save(model_type: str) -> None:
 
 *이 문서는 08_AI_ML_Integration.md §8 (학습 완료 후 처리) 및 04_System_Architecture.md §3 (파일시스템 레이어)와 연동된다.*
 *다음: [06_API_Specification.md](./06_API_Specification.md)*
+
+---
+
+## 13. 비전검사 대시보드 데이터 저장 전략 (v1.1 신규)
+
+### 13.1 저장 원칙
+
+비전검사 대시보드는 **세션 메모리 전용** 전략을 사용한다. 아래 원칙을 강제한다.
+
+| 원칙 | 내용 |
+|------|------|
+| **영속 없음** | `insp_records`, `insp_test_pool`, `insp_last_result` 등 모든 검사 세션 데이터는 `session_state`에만 저장. 파일/DB 쓰기 금지 (R-INSP-03) |
+| **읽기 전용 참조** | `history.json`, `./models/{exp_id}/model_state_dict.pth`, `./models/{exp_id}/configs.yaml`은 읽기 전용으로 참조. `save_history()` 등 쓰기 함수 호출 금지 (R-INSP-04) |
+| **초기화 시점** | 앱 재시작 시 자동 초기화. 모델 교체 시 `reset_inspection_state()` 호출. 수동 초기화 버튼 제공 |
+
+### 13.2 inspection_record 저장 구조
+
+```python
+# session_state.insp_records: list[dict]
+# 각 dict의 구조 (00_Global_Context 1.10절 스키마)
+
+example_record = {
+    "seq":           1,
+    "inspected_at":  "2026-05-26T14:02:31+09:00",  # ISO 8601 KST
+    "image_name":    "crack_001.png",               # basename only
+    "image_path":    "/app/dataset/screw/test/crack/001.png",  # 절대경로
+    "verdict":       "불량",                         # "양품" | "불량"
+    "anomaly_score": 0.4873,                        # round(value, 4)
+}
+
+# anomaly_map은 insp_records에 포함하지 않음.
+# insp_last_result["anomaly_map"]에만 보관 (현재 화면 표시용).
+```
+
+### 13.3 test_pool 구성 로직
+
+```python
+# inspection/utils/test_sampler.py
+
+def build_test_pool(dataset_path: str) -> list[tuple[str, str]]:
+    """
+    dataset_path/test/ 스캔하여 (절대경로, verdict_label) 풀 구성.
+    good/ 하위 → "양품", 그 외 디렉토리 → "불량".
+    반환 전 random.shuffle() 1회 적용.
+    """
+    test_root = Path(dataset_path) / "test"
+    pool = []
+    for cls_dir in test_root.iterdir():
+        if not cls_dir.is_dir():
+            continue
+        label = "양품" if cls_dir.name == "good" else "불량"
+        for img_path in cls_dir.iterdir():
+            if img_path.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp"}:
+                pool.append((str(img_path), label))
+    random.shuffle(pool)
+    return pool
+
+def sample_next(pool: list, index: int) -> tuple[tuple[str, str], int]:
+    """
+    pool[index] 반환. 끝 도달 시 재셔플 후 index = 0.
+    반환: (sample, next_index)
+    """
+    if index >= len(pool):
+        random.shuffle(pool)
+        index = 0
+    return pool[index], index + 1
+```
+
+### 13.4 모델 교체 시 상태 초기화 프로토콜
+
+모델 교체는 아래 순서를 반드시 준수한다 (R-INSP-05):
+
+```
+Step 1. reset_inspection_state() 호출 (insp_active_model 제외 전체 초기화)
+Step 2. insp_active_model = new_experiment_record
+Step 3. build_test_pool(new_experiment_record["dataset_path"]) → insp_test_pool 갱신
+Step 4. st.rerun()
+```
+
+Step 1 전에 Step 2를 실행하면 안 됨. 초기화 도중 모델이 변경되면 test_pool이 잘못 구성될 수 있음.
+
+### 13.5 CSV 내보내기 스펙
+
+탭2 [CSV 내보내기] 버튼은 `insp_records`를 5컬럼 CSV로 변환하여 `st.download_button`으로 제공한다.
+
+```python
+# 컬럼 순서 및 헤더
+CSV_COLUMNS = ["번호", "시각", "이미지명", "판정결과", "Anomaly Score"]
+# 실제 키 매핑
+KEY_MAP = {
+    "번호":          "seq",
+    "시각":          "inspected_at",
+    "이미지명":      "image_name",
+    "판정결과":      "verdict",
+    "Anomaly Score": "anomaly_score",
+}
+# 파일명: inspection_history_{YYYYMMDD_HHMMSS}.csv
+```

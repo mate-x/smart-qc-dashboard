@@ -56,8 +56,8 @@
 ```
 {WORKDIR}/                          # Docker: /app, 로컬: 프로젝트 루트
 │
-├── configs.yaml                    # [읽기/쓰기] 탭2, 탭3 공유 설정 파일
-│                                   # 탭4 학습 시작 시점의 스냅샷 기준
+├── configs.yaml                    # [읽기/쓰기] 탭2 공유 설정 파일
+│                                   # 탭3 학습 시작 시점의 스냅샷 기준
 │
 ├── experiments/
 │   └── history.json                # [읽기/쓰기] 실험 레코드 배열
@@ -207,8 +207,8 @@ def delete_experiment_from_history(experiment_id: str) -> bool:
 
 | 파일 | 위치 | 역할 |
 |------|------|------|
-| **공유 설정 파일** | `./configs.yaml` | 탭2(전처리), 탭3(모델) 파라미터 편집용. 탭4 학습 시작 시 이 파일을 읽어 실험 스냅샷 생성. |
-| **실험 스냅샷** | `./models/{exp_id}/configs.yaml` | 학습 시점의 설정 고정 사본. 탭6 모델 재로드 시 사용. 이후 변경 불가. |
+| **공유 설정 파일** | `./configs.yaml` | 탭2(전처리 및 모델) 파라미터 편집용. 탭3 학습 시작 시 이 파일을 읽어 실험 스냅샷 생성. |
+| **실험 스냅샷** | `./models/{exp_id}/configs.yaml` | 학습 시점의 설정 고정 사본. 탭5 모델 재로드 시 사용. 이후 변경 불가. |
 
 ### 4.2 읽기 계약
 
@@ -274,10 +274,9 @@ def save_config_section(
 
 | 탭 | section | 접근 종류 | 대상 파일 |
 |----|---------|-----------|-----------|
-| 탭2 (전처리 설정) | `"preprocessing"` | Write | `./configs.yaml` |
-| 탭3 (모델 파라미터) | `"model"` | Write | `./configs.yaml` |
-| 탭4 (학습 시작) | `"experiment"` + 전체 | Read + 스냅샷 Write | `./configs.yaml` (Read), `./models/{exp_id}/configs.yaml` (Write) |
-| 탭6 (이상 영역 시각화) | `"preprocessing"`, `"model"` | Read 전용 | `./models/{exp_id}/configs.yaml` |
+| 탭2 (전처리 및 모델 설정) | `"preprocessing"` + `"model"` | Write | `./configs.yaml` |
+| 탭3 (학습 시작) | `"experiment"` + 전체 | Read + 스냅샷 Write | `./configs.yaml` (Read), `./models/{exp_id}/configs.yaml` (Write) |
+| 탭5 (이상 영역 시각화) | `"preprocessing"`, `"model"` | Read 전용 | `./models/{exp_id}/configs.yaml` |
 
 ---
 
@@ -414,10 +413,10 @@ def _cleanup_dir(path: Path) -> None:
         shutil.rmtree(path, ignore_errors=True)
 ```
 
-### 6.3 호출자 (tab4_training.py) 처리 패턴
+### 6.3 호출자 처리 패턴
 
 ```python
-# tabs/tab4_training.py — 메인 스레드의 완료 처리 부분
+# tabs/tab3_training.py — 메인 스레드의 완료 처리 부분
 
 try:
     save_completed_experiment(exp_id, model, record)
@@ -436,7 +435,7 @@ except RuntimeError as e:
 
 ## 7. 실험 삭제 프로토콜
 
-> 탭5에서 [실험 삭제] 버튼 클릭 시 실행.
+> 탭4에서 [실험 삭제] 버튼 클릭 시 실행.
 
 ### 7.1 삭제 순서
 
@@ -478,7 +477,7 @@ def delete_experiment(experiment_id: str, model_path: str | None = None) -> None
 
 | 조건 | 처리 |
 |------|------|
-| 삭제 대상이 `selected_experiment_id`와 동일 | 탭5에서 삭제 후 `st.session_state["selected_experiment_id"] = None` |
+| 삭제 대상이 `selected_experiment_id`와 동일 | 탭4에서 삭제 후 `st.session_state["selected_experiment_id"] = None` |
 | 삭제 대상의 anomaly_maps 캐시가 session_state에 존재 | `st.session_state.pop(f"_anomaly_maps_{exp_id}", None)` |
 | `status == "중단"` 레코드 삭제 | model_path가 None이므로 파일 삭제 단계 건너뜀 |
 
@@ -514,7 +513,7 @@ st.session_state[cache_key] = {
 
 | 이벤트 | 처리 |
 |--------|------|
-| **탭6 진입** | 캐시 키 존재 확인. 있으면 재사용, 없으면 모델 로드 + 전체 추론 후 저장. |
+| **탭5 진입** | 캐시 키 존재 확인. 있으면 재사용, 없으면 모델 로드 + 전체 추론 후 저장. |
 | **다른 실험 선택** (`selected_experiment_id` 변경) | 이전 실험 캐시 삭제하지 않음. 새 키로 별도 캐시. |
 | **실험 삭제** | 해당 `_anomaly_maps_{exp_id}` 키 즉시 삭제 (§7.3 참조). |
 | **브라우저 새로고침** | session_state 전체 초기화 → 캐시 자동 소멸. |
@@ -586,7 +585,7 @@ IMAGENET_PENALTY_DIR = Path("./dataset/imagenet_penalty")
 def validate_imagenet_penalty_dir() -> tuple[bool, int]:
     """
     반환: (존재 여부, 이미지 수)
-    학습 시작 전 탭4에서 호출하여 EfficientAD 선택 시 사전 검증.
+    학습 시작 전 탭3에서 호출하여 EfficientAD 선택 시 사전 검증.
     """
     d = IMAGENET_PENALTY_DIR
     if not d.exists():
@@ -596,10 +595,10 @@ def validate_imagenet_penalty_dir() -> tuple[bool, int]:
     return count > 0, count
 ```
 
-### 9.4 탭4 검증 로직
+### 9.4 탭3 검증 로직
 
 ```python
-# tabs/tab4_training.py — [학습 시작] 버튼 클릭 핸들러
+# tabs/tab3_training.py — [학습 시작] 버튼 클릭 핸들러
 
 if model_config["model_type"] == "efficientad":
     ok, count = validate_imagenet_penalty_dir()
@@ -778,7 +777,7 @@ def check_disk_before_save(model_type: str) -> None:
 ### 기타 검증
 
 - [ ] `validate_imagenet_penalty_dir()` — `IMAGENET_PENALTY_DIR` 경로 존재 + 이미지 수 반환
-- [ ] EfficientAD 학습 시작 전 탭4에서 penalty dir 검증 호출
+- [ ] EfficientAD 학습 시작 전 탭3에서 penalty dir 검증 호출
 - [ ] 실험 삭제 시 `_anomaly_maps_{exp_id}` 캐시 session_state에서 제거
 - [ ] `status == "중단"` 레코드 저장 시 `model_path`, `configs_path`, `metrics` 모두 `null`
 

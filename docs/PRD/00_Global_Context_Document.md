@@ -7,7 +7,7 @@
 > **목적**: 이 문서는 이후 생성되는 01~15번 PRD 파일 전체의 유일한 기준점이다. 모든 파일은 이 문서에 정의된 스키마, 계약, 용어, 규칙을 그대로 따른다. 변경은 이 문서를 먼저 수정한 후 전파한다.
 
 > **v1.1 변경 요약**: 단일 대시보드(모델 탐색 전용)에서 **이중 대시보드 구조**로 확장.
-> - **모델 탐색 대시보드** (기존 유지): AI/ML 엔지니어용, 탭1~6, 학습·실험·비교
+> - **모델 탐색 대시보드** (기존 유지): AI/ML 엔지니어용, 탭1~5, 학습·실험·비교
 > - **비전검사 대시보드** (신규): 현장 작업자/관리자용, 탭1~3, 추론·검사 이력·모델 교체
 > - 사이드바: 데이터셋·디바이스 표시 제거 → 대시보드 전환 버튼 2개로 교체
 
@@ -359,8 +359,8 @@ INSPECTION_SESSION_SCHEMA = {
 [history.json] ─── (1:N) ─── [experiment 레코드]
 
 [configs.yaml] ─── (1:1) ─── [preprocessing 섹션]  (탭2 Write)
-               ─── (1:1) ─── [model 섹션]           (탭3 Write)
-               ─── (1:1) ─── [experiment 섹션]      (탭4 Write)
+               ─── (1:1) ─── [model 섹션]           (탭2 Write)
+               ─── (1:1) ─── [experiment 섹션]      (탭3 Write)
 ```
 
 ### 2.1 모델 탐색 대시보드 ERD
@@ -431,17 +431,15 @@ SESSION_STATE_SCHEMA = {
 
     # 탭2 Write
     "preprocessing_config": None,   # dict | None (1.6절 스키마)
-
-    # 탭3 Write
     "model_config": None,           # dict | None (1.7절 스키마)
     "device_info": None,            # dict | None (1.8절 스키마)
 
-    # 탭4 Write
+    # 탭3 Write
     "experiments": {},              # dict[str, dict] — key: experiment_id
     "current_run_status": "idle",   # "idle" | "running" | "paused" | "stopped" | "completed"
     "current_exp_id": None,         # str | None — 현재 실행 중인 실험 ID
 
-    # 탭4 내부 상태 (접두사 _ = 탭4 전용)
+    # 탭3 내부 상태 (접두사 _ = 탭3 전용)
     "_stop_event": None,            # threading.Event | None
     "_pause_event": None,           # threading.Event | None — 일시정지 제어
     "_result_queue": None,          # queue.Queue | None
@@ -451,10 +449,10 @@ SESSION_STATE_SCHEMA = {
     "_loss_history": [],            # list[dict]  {"step": int, "loss": float}
     "_last_ckpt_path": None,        # str | None — 가장 최근 저장된 체크포인트 경로
 
-    # 탭5 Write
+    # 탭4 Write
     "selected_experiment_id": None, # str | None
 
-    # 탭6 Write
+    # 탭5 Write
     "anomaly_map_threshold": None,  # float | None — 초기값: model_config.threshold_value
 }
 
@@ -470,15 +468,15 @@ def init_session_state():
 
 | 키 | Write 탭 | Read 탭 | 타입 | NULL 처리 |
 |----|----------|---------|------|-----------|
-| `dataset_path` | 탭1 | 탭2, 탭4 | `str \| None` | None이면 해당 탭 진입 차단 + 안내 메시지 |
+| `dataset_path` | 탭1 | 탭2, 탭3 | `str \| None` | None이면 해당 탭 진입 차단 + 안내 메시지 |
 | `dataset_meta` | 탭1 | 탭2 | `dict \| None` | None이면 탭2 전처리 미리보기 비활성화 |
-| `preprocessing_config` | 탭2 | 탭3(image_size), 탭4 | `dict \| None` | None이면 탭3/탭4 진입 차단 + 안내 메시지 |
-| `model_config` | 탭3 | 탭4 | `dict \| None` | None이면 탭4 진입 차단 + 안내 메시지 |
-| `device_info` | 탭3 | 탭4 | `dict \| None` | None이면 CPU fallback |
-| `experiments` | 탭4 | 탭5, 탭6 | `dict` | 빈 dict이면 탭5/탭6 안내 메시지 |
-| `current_run_status` | 탭4 | 탭4 UI | `str` | 항상 유효한 ENUM 값 (`"idle"` \| `"running"` \| `"paused"` \| `"stopped"` \| `"completed"`) |
-| `selected_experiment_id` | 탭5 | 탭6 | `str \| None` | None이면 탭6 안내 메시지 |
-| `anomaly_map_threshold` | 탭6 | 탭6 내부 | `float \| None` | None이면 model_config.threshold_value 사용 |
+| `preprocessing_config` | 탭2(image_size) | 탭3 | `dict \| None` | None이면 탭3 진입 차단 + 안내 메시지 |
+| `model_config` | 탭2 | 탭3 | `dict \| None` | None이면 탭3 진입 차단 + 안내 메시지 |
+| `device_info` | 탭2 | 탭3 | `dict \| None` | None이면 CPU fallback |
+| `experiments` | 탭3 | 탭4, 탭5 | `dict` | 빈 dict이면 탭4/탭5 안내 메시지 |
+| `current_run_status` | 탭3 | 탭3 UI | `str` | 항상 유효한 ENUM 값 (`"idle"` \| `"running"` \| `"paused"` \| `"stopped"` \| `"completed"`) |
+| `selected_experiment_id` | 탭4 | 탭5 | `str \| None` | None이면 탭5 안내 메시지 |
+| `anomaly_map_threshold` | 탭5 | 탭5 내부 | `float \| None` | None이면 model_config.threshold_value 사용 |
 
 ---
 
@@ -538,9 +536,9 @@ def save_config_section(section: str, data: dict, path: str = "./configs.yaml") 
 MSG = {
     "NO_DATASET":       "먼저 탭1에서 데이터 폴더를 설정해 주세요.",
     "NO_PREPROCESSING": "먼저 탭2에서 전처리 설정을 완료해 주세요.",
-    "NO_MODEL_CONFIG":  "먼저 탭3에서 모델 파라미터를 설정해 주세요.",
-    "NO_EXPERIMENTS":   "아직 실행된 실험이 없습니다. 탭4에서 학습을 먼저 실행해 주세요.",
-    "NO_SELECTED_EXP":  "탭5에서 분석할 실험을 먼저 선택해 주세요.",
+    "NO_MODEL_CONFIG":  "먼저 탭2에서 모델 파라미터를 설정해 주세요.",
+    "NO_EXPERIMENTS":   "아직 실행된 실험이 없습니다. 탭3에서 학습을 먼저 실행해 주세요.",
+    "NO_SELECTED_EXP":  "탭4에서 분석할 실험을 먼저 선택해 주세요.",
     "GRAYSCALE_DETECT": "Grayscale 이미지가 감지되었습니다. 모델 입력을 위해 RGB 3채널로 자동 변환됩니다.",
     "INVALID_FOLDER":   "MVTec AD 형식의 폴더 구조가 아닙니다. (필수: train/good/, test/, ground_truth/)",
     "TRAIN_STOPPED":    "학습이 중단되었습니다. 해당 실험은 '중단' 상태로 히스토리에 기록되었습니다.",
@@ -569,8 +567,8 @@ INSP_MSG = {
 | `ERR_DATASET_NOT_FOUND` | 지정 경로가 존재하지 않음 | 탭1 경로 검증 실패 |
 | `ERR_INVALID_FOLDER_STRUCTURE` | MVTec AD 구조 미충족 | `train/good/` 또는 `test/` 미존재 |
 | `ERR_NO_VALID_IMAGES` | 지원 포맷 이미지 없음 | `.jpg/.png/.bmp` 외 파일만 존재 |
-| `ERR_PREPROCESSING_CONFIG_MISSING` | 전처리 설정 없음 | 탭2 미완료 상태에서 탭3/탭4 접근 |
-| `ERR_MODEL_CONFIG_MISSING` | 모델 설정 없음 | 탭3 미완료 상태에서 탭4 접근 |
+| `ERR_PREPROCESSING_CONFIG_MISSING` | 전처리 설정 없음 | 탭2 미완료 상태에서 탭3 접근 |
+| `ERR_MODEL_CONFIG_MISSING` | 모델 설정 없음 | 탭2 미완료 상태에서 탭3 접근 |
 | `ERR_MODEL_INIT_FAILED` | 모델 초기화 실패 | CUDA OOM 또는 Anomalib 오류 |
 | `ERR_TRAINING_INTERRUPTED` | 학습 강제 중단 | 사용자 [학습 중지] 클릭 |
 | `ERR_CHECKPOINT_SAVE_FAILED` | 체크포인트 저장 실패 | 디스크 공간 부족 또는 권한 없음 |
@@ -690,7 +688,7 @@ def reset_inspection_state():
 | **OK/NG 자동 분할** | OK 이미지를 고정 시드(random_seed)로 셔플 후 80%는 학습, 20%는 테스트(정상)로 사용. NG 이미지는 전부 테스트(결함). |
 | **지원 이미지 포맷** | `.jpg`, `.png`, `.bmp` 세 가지. 확장자 대소문자 구분 없이 처리. |
 | **Resize+Padding** | 원본 비율 유지하여 `image_size×image_size`로 리사이즈 후 부족한 영역을 검정(0)으로 패딩. `resize_mode`는 항상 "padding"으로 고정. |
-| **모델 탐색 대시보드** | AI/ML 엔지니어용. EfficientAD/PatchCore 학습·비교·자산화 전용. 탭1~6. `active_dashboard == "explorer"`. |
+| **모델 탐색 대시보드** | AI/ML 엔지니어용. EfficientAD/PatchCore 학습·비교·자산화 전용. 탭1~5. `active_dashboard == "explorer"`. |
 | **비전검사 대시보드** | 현장 작업자/관리자용. 검증된 모델로 테스트셋 추론·판정·이력 관리. 탭1~3. `active_dashboard == "inspection"`. |
 | **inspection_record** | 비전검사 1회 추론 결과 레코드. 세션 메모리에만 저장(영속 없음). 1.10절 스키마. |
 | **test_pool** | 비전검사 대시보드에서 추론에 사용하는 이미지 목록. 적용 모델의 `dataset_path/test/` 스캔 결과. `good/` → 양품, 그 외 디렉토리 → 불량. |
@@ -720,8 +718,8 @@ def reset_inspection_state():
 │                                                                      │
 │  ┌─────────────────────────┐  ┌─────────────────────────────────┐   │
 │  │  모델 탐색 대시보드       │  │  비전검사 대시보드                │   │
-│  │  st.tabs([탭1~탭6])      │  │  inspection_app.py              │   │
-│  │  tabs/tab1.py ~ tab6.py  │  │  st.tabs([탭1~탭3])             │   │
+│  │  st.tabs([탭1~탭5])      │  │  inspection_app.py              │   │
+│  │  tabs/tab1.py ~ tab5.py  │  │  st.tabs([탭1~탭3])             │   │
 │  │                          │  │  inspection/tabs/               │   │
 │  │                          │  │  insp_tab1/2/3.py               │   │
 │  └─────────────────────────┘  └─────────────────────────────────┘   │
@@ -768,15 +766,14 @@ smart-qc-dashboard/
 ├── docker-compose.yml
 ├── docker-compose.cpu.yml
 ├── .env
-├── configs.yaml                    # 공유 설정 파일 (탭2/3 Write)
+├── configs.yaml                    # 공유 설정 파일 (탭2 Write)
 │
 ├── tabs/                           # 모델 탐색 대시보드 탭 (기존)
 │   ├── tab1_data_folder.py
-│   ├── tab2_preprocessing.py
-│   ├── tab3_model_params.py
-│   ├── tab4_training.py
-│   ├── tab5_history.py
-│   └── tab6_anomaly_map.py
+│   ├── tab2_config.py
+│   ├── tab3_training.py
+│   ├── tab4_history.py
+│   └── tab5_anomaly_map.py
 │
 ├── inspection/                     # 비전검사 대시보드 (신규)
 │   ├── inspection_app.py           # 비전검사 대시보드 진입점 (render 함수)
@@ -832,7 +829,7 @@ smart-qc-dashboard/
   Step 6. 대표 썸네일 추출 (각 클래스 첫 번째 이미지)
   Step 7. session_state.dataset_path, dataset_meta Write
   ↓
-[탭2: 전처리 파라미터 설정]
+[탭2: 전처리 및 모델 설정]
   Step 1. dataset_path None 체크 → 차단 또는 통과
   Step 2. 전처리 라디오 선택
   Step 3. 선택된 전처리 파라미터 UI 렌더링 (비선택 숨김)
@@ -841,17 +838,14 @@ smart-qc-dashboard/
   Step 6. 정규화 설정
   Step 7. session_state.preprocessing_config Write
   Step 8. configs.yaml preprocessing 섹션 Save (선택적)
+  Step 9. torch.cuda.is_available() → device_info Write
+  Step 10. 모델 라디오 선택 (EfficientAD / PatchCore)
+  Step 11. image_size = preprocessing_config.image_size 자동 반영
+  Step 12. 모델별 파라미터 UI 렌더링
+  Step 13. session_state.model_config Write
+  Step 14. configs.yaml model 섹션 Save (선택적)
   ↓
-[탭3: 모델 파라미터 설정]
-  Step 1. preprocessing_config None 체크 → 차단 또는 통과
-  Step 2. torch.cuda.is_available() → device_info Write
-  Step 3. 모델 라디오 선택 (EfficientAD / PatchCore)
-  Step 4. image_size = preprocessing_config.image_size 자동 반영
-  Step 5. 모델별 파라미터 UI 렌더링
-  Step 6. session_state.model_config Write
-  Step 7. configs.yaml model 섹션 Save (선택적)
-  ↓
-[탭4: 학습 시작 + 학습 로그]
+[탭3: 학습 시작 + 학습 로그]
   Step 1. dataset_path, preprocessing_config, model_config None 체크 → 차단
   Step 2. 실험명 입력 (자동 생성 또는 사용자 입력)
   Step 3. [학습 시작] 클릭 → current_run_status = "running"
@@ -866,7 +860,7 @@ smart-qc-dashboard/
   Step 7b. 중단: experiments[exp_id] Write (status="중단") → history.json Append
   Step 8. 완료/중단 알림 표시
   ↓
-[탭5: 실험 히스토리 + 결과 상세 + 모델 저장]
+[탭4: 실험 히스토리 + 결과 상세 + 모델 저장]
   Step 1. history.json 로드 → 실험 목록 테이블 렌더링
   Step 2. 실험 선택 → selected_experiment_id Write
   Step 3. 선택 실험 상세: Confusion Matrix, ROC Curve, Anomaly Score 분포
@@ -875,7 +869,7 @@ smart-qc-dashboard/
   Step 6. 저장 완료 메시지 (경로·파일명·용량)
   Step 7. [실험 삭제] → history.json에서 제거
   ↓
-[탭6: 이상 영역 시각화]
+[탭5: 이상 영역 시각화]
   Step 1. selected_experiment_id None 체크 → 차단 또는 통과
   Step 2. 실험의 metrics.anomaly_scores, image_labels 로드
   Step 3. 테스트 이미지 목록 테이블 렌더링 (결함 유형 필터 적용)
@@ -943,7 +937,7 @@ smart-qc-dashboard/
 | **모델 정확도** | MVTec AD Screw 데이터셋 기준 AUC ≥ 0.95 | history.json metrics.auc |
 | **디바이스 자동 감지** | `torch.cuda.is_available()` 결과에 따라 자동 전환, UI 명시 | 자동 감지 로직 |
 | **재현성** | 동일 `random_seed` + 동일 하이퍼파라미터 시 동일 결과 | 2회 실행 결과 비교 |
-| **데이터 무결성** | 폴더 구조 검증 실패 시 탭4 진입 완전 차단 | E2E 테스트 |
+| **데이터 무결성** | 폴더 구조 검증 실패 시 탭3 진입 완전 차단 | E2E 테스트 |
 | **이미지 처리** | Resize+Padding 적용 후 가로·세로 비율 유지 오차 < 1픽셀 | 픽셀 단위 검증 |
 | **채널 처리** | Grayscale 이미지 자동 RGB 변환, 3채널 보장 | 단위 테스트 |
 | **디스크 용량** | 모델 저장 전 여유 공간 < 500MB 시 경고 메시지 표시 | `shutil.disk_usage()` |
@@ -964,7 +958,7 @@ LOG_FORMAT = {
     "timestamp": "ISO 8601",        # 예: "2026-05-08T14:00:23.456+09:00"
     "level": "INFO|WARNING|ERROR",
     "experiment_id": "str|null",    # 실험 컨텍스트가 없으면 null
-    "tab": "tab1|tab2|...|tab6|null",
+    "tab": "tab1|tab2|...|tab5|null",
     "event": "이벤트명 (snake_case)",
     "message": "사람이 읽을 수 있는 설명",
     "data": {}                      # 이벤트별 추가 데이터 (선택)
@@ -978,14 +972,14 @@ LOG_FORMAT = {
 | `dataset_validated` | tab1 | INFO | 폴더 구조 검증 완료 |
 | `dataset_validation_failed` | tab1 | ERROR | 폴더 구조 검증 실패 |
 | `preprocessing_config_saved` | tab2 | INFO | 전처리 설정 저장 |
-| `model_config_saved` | tab3 | INFO | 모델 설정 저장 |
-| `training_started` | tab4 | INFO | 학습 시작 |
-| `training_step` | tab4 | INFO | 매 N step마다 (N=1000) |
-| `training_completed` | tab4 | INFO | 학습 완료 + 소요 시간 |
-| `training_stopped` | tab4 | WARNING | 사용자 중단 |
-| `training_failed` | tab4 | ERROR | 예외 발생 + traceback |
-| `model_saved` | tab5 | INFO | 모델 파일 저장 완료 |
-| `experiment_deleted` | tab5 | WARNING | 실험 삭제 |
+| `model_config_saved` | tab2 | INFO | 모델 설정 저장 |
+| `training_started` | tab3 | INFO | 학습 시작 |
+| `training_step` | tab3 | INFO | 매 N step마다 (N=1000) |
+| `training_completed` | tab3 | INFO | 학습 완료 + 소요 시간 |
+| `training_stopped` | tab3 | WARNING | 사용자 중단 |
+| `training_failed` | tab3 | ERROR | 예외 발생 + traceback |
+| `model_saved` | tab4 | INFO | 모델 파일 저장 완료 |
+| `experiment_deleted` | tab4 | WARNING | 실험 삭제 |
 | `insp_model_applied` | insp_tab3 | INFO | 비전검사 모델 교체 완료 |
 | `insp_inspection_started_manual` | insp_tab1 | INFO | 수동 검사 1회 실행 |
 | `insp_inspection_started_auto` | insp_tab1 | INFO | 자동 검사 시작 |
@@ -1061,10 +1055,10 @@ LOG_FORMAT = {
 | A-02 | 학습 비동기 처리 | Python `threading.Thread` + `queue.Queue`로 백그라운드 학습, 메인 스레드는 UI 갱신 전담. | PRD 5절 "UI 블로킹 없음" |
 | A-03 | Anomalib 버전 | `anomalib >= 1.0.0` (v1 API 기준). | PRD 6절 기술 스택 |
 | A-04 | 모델 저장 크기 | EfficientAD-medium ≈ 200~400 MB, PatchCore (WideResNet50) ≈ 400~800 MB. | 일반적인 모델 크기 |
-| A-05 | 테스트 이미지 추론 | 탭6에서 모델 재로드 후 전체 테스트셋 일괄 추론. 실험 완료 시 `metrics.anomaly_scores` 이미 계산·저장. | 탭6 응답성 확보 |
+| A-05 | 테스트 이미지 추론 | 탭5에서 모델 재로드 후 전체 테스트셋 일괄 추론. 실험 완료 시 `metrics.anomaly_scores` 이미 계산·저장. | 탭5 응답성 확보 |
 | A-06 | configs.yaml 위치 | 작업 디렉토리 루트 `./configs.yaml`. Docker 실행 시 `/app/configs.yaml`. | 11.1절 Dockerfile WORKDIR /app |
 | A-07 | 데이터셋 마운트 | Docker 실행 시 `-v /path/to/dataset:/app/dataset`. 탭1에서 `/app/dataset` 하위 경로 입력. | PRD 11.3절 docker run |
-| A-08 | Loss 곡선 갱신 주기 | EfficientAD: 매 500 step. PatchCore: 에포크 단위. | UI 성능 vs 정보 밀도 균형 |
+| A-08 | Loss 곡선 갱신 주기 | EfficientAD: 매 100 step. PatchCore: 에포크 단위. | UI 성능 vs 정보 밀도 균형 |
 | A-09 | 학습 로그 버퍼 | UI에 표시되는 로그 텍스트 박스는 최신 100줄만 유지. 파일에는 전량 저장. | Streamlit 메모리 제한 |
 | A-10 | GT 마스크 없는 결함 클래스 | `ground_truth/{class}/` 디렉토리가 없으면 해당 이미지의 GT는 빈 마스크(전체 0)로 처리. | MVTec AD 일부 클래스 |
 | A-11 | image_size 기본값 | 256. 변경 시 preprocessing_config와 model_config 동시 업데이트. | PRD 9.2절 YAML 예시 |

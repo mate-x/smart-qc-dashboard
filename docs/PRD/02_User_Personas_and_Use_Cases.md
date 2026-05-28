@@ -67,10 +67,10 @@
 
 | # | 페인 포인트 | 이 제품의 해결 방식 |
 |---|------------|-------------------|
-| PP-01 | 모델·전처리 조합 변경 시마다 Python 스크립트를 수정하고 재실행해야 함 | 탭2·탭3 GUI로 코드 작성 없이 파라미터 변경 |
-| PP-02 | 실험 결과를 수동으로 Excel에 기록하다가 어떤 조합이 최선이었는지 잊어버림 | history.json + 탭5 비교 차트로 자동 기록·시각화 |
-| PP-03 | 학습 시작 후 완료까지 터미널만 보며 기다려야 함, 중간 진행 상황 파악 불가 | 탭4 Progress Bar + 실시간 Loss 곡선 |
-| PP-04 | 결함 위치가 어디인지 모델이 어디를 보는지 확인할 방법이 없음 | 탭6 Anomaly Map 3분할 시각화 |
+| PP-01 | 모델·전처리 조합 변경 시마다 Python 스크립트를 수정하고 재실행해야 함 | 탭2 GUI로 코드 작성 없이 파라미터 변경 |
+| PP-02 | 실험 결과를 수동으로 Excel에 기록하다가 어떤 조합이 최선이었는지 잊어버림 | history.json + 탭4 비교 차트로 자동 기록·시각화 |
+| PP-03 | 학습 시작 후 완료까지 터미널만 보며 기다려야 함, 중간 진행 상황 파악 불가 | 탭3 Progress Bar + 실시간 Loss 곡선 |
+| PP-04 | 결함 위치가 어디인지 모델이 어디를 보는지 확인할 방법이 없음 | 탭5 Anomaly Map 3분할 시각화 |
 | PP-05 | 전처리 필터를 적용하면 이미지가 어떻게 바뀌는지 학습 전에 확인할 수 없음 | 탭2 적용 전·후 실시간 미리보기 |
 | PP-06 | 학습한 모델을 추론 파이프라인에 연결하려면 별도 코드 작성 필요 | state_dict + configs.yaml 고정 포맷 저장 |
 
@@ -116,16 +116,16 @@
 |-------|------|------------|---------|---------|
 | UC-01 | 새 데이터셋 등록 및 검증 | P-01 | 탭1 | Must |
 | UC-02 | 전처리 방식 탐색 및 설정 | P-01 | 탭2 | Must |
-| UC-03 | EfficientAD 실험 설정 및 실행 | P-01 | 탭3, 탭4 | Must |
-| UC-04 | PatchCore 실험 설정 및 실행 | P-01 | 탭3, 탭4 | Must |
-| UC-05 | 실험 결과 분석 | P-01 | 탭5 | Must |
-| UC-06 | 두 실험 비교 및 최적 모델 선택 | P-01 | 탭5 | Must |
-| UC-07 | Anomaly Map으로 모델 행동 검증 | P-01 | 탭6 | Must |
-| UC-08 | 최적 모델 저장 | P-01 | 탭5 | Must |
-| UC-09 | 설정 재사용 (configs.yaml 불러오기) | P-01 | 탭2, 탭3 | Should |
-| UC-10 | 실패 실험 정리 (히스토리 삭제) | P-01 | 탭5 | Must |
+| UC-03 | EfficientAD 실험 설정 및 실행 | P-01 | 탭2, 탭3 | Must |
+| UC-04 | PatchCore 실험 설정 및 실행 | P-01 | 탭2, 탭3 | Must |
+| UC-05 | 실험 결과 분석 | P-01 | 탭4 | Must |
+| UC-06 | 두 실험 비교 및 최적 모델 선택 | P-01 | 탭4 | Must |
+| UC-07 | Anomaly Map으로 모델 행동 검증 | P-01 | 탭5 | Must |
+| UC-08 | 최적 모델 저장 | P-01 | 탭4 | Must |
+| UC-09 | 설정 재사용 (configs.yaml 불러오기) | P-01 | 탭2 | Should |
+| UC-10 | 실패 실험 정리 (히스토리 삭제) | P-01 | 탭4 | Must |
 | UC-11 | EC2 환경 배포 | P-02 | - | Must |
-| UC-12 | 결함 유형별 탐지 성능 필터링 확인 | P-01 | 탭6 | Should |
+| UC-12 | 결함 유형별 탐지 성능 필터링 확인 | P-01 | 탭5 | Should |
 | UC-13 | 검사 모델 선택 및 검사 시작 | P-03 | 검사탭3, 검사탭1 | Must |
 | UC-14 | 수동 검사 실행 및 판정 확인 | P-03 | 검사탭1 | Must |
 | UC-15 | 자동 검사 실행 및 중지 | P-03 | 검사탭1 | Must |
@@ -226,43 +226,42 @@
 
 ```
 액터:      P-01
-전제조건:  UC-02 완료, session_state.preprocessing_config != None
+전제조건:  UC-01 완료, session_state.dataset_meta != None
 성공 종료: experiments[exp_id] 에 status="completed" 레코드 저장, history.json 갱신
 실패 종료: experiments[exp_id] 에 status="중단" 또는 미기록, 오류 메시지 표시
 
-주 플로우 — 탭3 (설정):
-  1. 사용자가 탭3 진입 (guard 통과)
+주 플로우 — 탭2 (설정):
+  1. 사용자가 탭2 진입 (guard 통과)
   2. 시스템이 torch.cuda.is_available() 실행 → device_info Write
   3. 사용자가 모델 라디오에서 "EfficientAD" 선택
-  4. image_size 필드에 preprocessing_config.image_size 자동 반영 (편집 가능)
-  5. 사용자가 기본 노출 파라미터 설정
+  4. 사용자가 기본 노출 파라미터 설정
      (model_size, train_steps, optimizer, learning_rate, weight_decay,
       out_channels, padding, ae_loss_weight)
-  6. ae_loss_weight(α) 설정 — ST 비중(1-α)은 학습 루프에서 자동 적용
-  7. (선택) [고급 설정] expander 열기 → 고급 파라미터 설정
-  8. Threshold 방식·값 설정
-  9. [모델 설정 저장] 클릭 → session_state.model_config Write
-  10. (선택) [configs.yaml 저장] 클릭
+  5. ae_loss_weight(α) 설정 — ST 비중(1-α)은 학습 루프에서 자동 적용
+  6. (선택) [고급 설정] expander 열기 → 고급 파라미터 설정
+  7. Threshold 방식·값 설정
+  8. [설정 저장] 클릭 → session_state.model_config Write
+  9. (선택) [configs.yaml 저장] 클릭
 
-주 플로우 — 탭4 (실행):
-  11. 사용자가 탭4 진입 (guard 통과)
-  12. 실험명 입력 (빈칸이면 자동 생성: efficientad_{YYYYMMDD}_{HHMMSS}_{4자리})
-  13. 사용자가 [학습 시작] 클릭
-  14. current_run_status = "running"
-  15. 백그라운드 스레드 시작 (threading.Thread + queue.Queue)
-  16. 메인 스레드: st.empty() 컨테이너에 Progress Bar, Loss 곡선, 로그 텍스트 갱신
-      (500 step마다 queue에서 데이터 수신 후 st.rerun())
-  17. 학습 완료:
-      17a. metrics 계산 (accuracy, precision, recall, f1, f2, auc)
-      17b. experiments[exp_id] Write (status="completed")
-      17c. history.json append (R-ATOMIC-01 원자적 쓰기)
-      17d. model_state_dict.pth 저장
-      17e. configs.yaml 모델 경로에 복사
-      17f. current_run_status = "completed" → "idle"
-      17g. st.success("학습이 완료되었습니다. 소요 시간: {N}분 {M}초")
+주 플로우 — 탭3 (실행):
+  10. 사용자가 탭3 진입 (guard 통과)
+  11. 실험명 입력 (빈칸이면 자동 생성: efficientad_{YYYYMMDD}_{HHMMSS}_{4자리})
+  12. 사용자가 [학습 시작] 클릭
+  13. current_run_status = "running"
+  14. 백그라운드 스레드 시작 (threading.Thread + queue.Queue)
+  15. 메인 스레드: st.empty() 컨테이너에 Progress Bar, Loss 곡선, 로그 텍스트 갱신
+      (100 step마다 queue에서 데이터 수신 후 st.rerun())
+  16. 학습 완료:
+      16a. metrics 계산 (accuracy, precision, recall, f1, f2, auc)
+      16b. experiments[exp_id] Write (status="completed")
+      16c. history.json append (R-ATOMIC-01 원자적 쓰기)
+      16d. model_state_dict.pth 저장
+      16e. configs.yaml 모델 경로에 복사
+      16f. current_run_status = "completed" → "idle"
+      16g. st.success("학습이 완료되었습니다. 소요 시간: {N}분 {M}초")
 
 대안 플로우:
-  13-1. [학습 중지] 클릭 (학습 중 표시)
+  12-1. [학습 중지] 클릭 (학습 중 표시)
         → 중단 신호 → 백그라운드 스레드 종료
         → experiments[exp_id] Write (status="중단", metrics=null)
         → history.json append
@@ -281,28 +280,27 @@
 
 ```
 액터:      P-01
-전제조건:  UC-02 완료
+전제조건:  UC-01 완료, session_state.dataset_meta != None
 성공 종료: experiments[exp_id] 에 status="completed" 레코드 저장
 
-주 플로우 — 탭3 (설정):
+주 플로우 — 탭2 (설정):
   1~2.  UC-03 1~2와 동일
   3.    사용자가 모델 라디오에서 "PatchCore" 선택
-  4.    image_size 자동 반영 (UC-03 4와 동일)
-  5.    사용자가 기본 노출 파라미터 설정
+  4.    사용자가 기본 노출 파라미터 설정
         (backbone, pretrained_source, coreset_sampling_ratio, neighbourhood_kernel_size)
-  5a.   pretrained_source == "local" 선택 시 pretrained_path 입력 필드 렌더링
-  6.    (선택) [고급 설정] expander → max_train, knn, top_k_ratio
-  7~10. UC-03 8~10과 동일
+  4a.   pretrained_source == "local" 선택 시 pretrained_path 입력 필드 렌더링
+  5.    (선택) [고급 설정] expander → max_train, knn, top_k_ratio
+  6~9. UC-03 7~9와 동일
 
-주 플로우 — 탭4 (실행):
-  11~12. UC-03 11~12와 동일 (실험명 자동 생성: patchcore_{YYYYMMDD}_{HHMMSS}_{4자리})
-  13.    사용자가 [학습 시작] 클릭
-  14~17. UC-03 14~17과 동일
+주 플로우 — 탭3 (실행):
+  10~11. UC-03 10~11과 동일 (실험명 자동 생성: patchcore_{YYYYMMDD}_{HHMMSS}_{4자리})
+  12.    사용자가 [학습 시작] 클릭
+  13~16. UC-03 13~16과 동일
          단, Loss 곡선은 에포크 단위 갱신 (PatchCore는 1 pass 학습)
 
 비고:
   PatchCore는 train_steps 파라미터를 사용하지 않는다.
-  탭3에서 PatchCore 선택 시 train_steps UI를 미렌더링한다 (R-UI-02).
+  탭2에서 PatchCore 선택 시 train_steps UI를 미렌더링한다 (R-UI-02).
 ```
 
 ---
@@ -315,7 +313,7 @@
 성공 종료: 선택한 실험의 상세 결과 시각화 완료, selected_experiment_id Write
 
 주 플로우:
-  1. 사용자가 탭5 진입 (guard 통과)
+  1. 사용자가 탭4 진입 (guard 통과)
   2. 시스템이 history.json 로드 → 실험 목록 테이블 렌더링
      컬럼: 실험명 / 모델 / 주요 파라미터 요약 / Accuracy / Precision / Recall / F1 / F2 / AUC / 실행 시각 / 상태
      상태="중단"인 행: 회색 텍스트 처리
@@ -341,7 +339,7 @@
 성공 종료: 비교 차트 렌더링 완료
 
 주 플로우:
-  1. UC-05 플로우 진행 (탭5 진입)
+  1. UC-05 플로우 진행 (탭4 진입)
   2. 사용자가 테이블에서 체크박스로 비교 대상 다중 선택 (최대 10개, 가정 A-13)
   3. 비교 메트릭 다중 선택 (Accuracy / Precision / Recall / F1 / F2)
   4. 차트 유형 선택 (막대 차트 / 레이더 차트)
@@ -363,7 +361,7 @@
 성공 종료: 3분할 시각화 렌더링, PNG 저장 완료
 
 주 플로우:
-  1. 사용자가 탭6 진입 (guard 통과)
+  1. 사용자가 탭5 진입 (guard 통과)
   2. 시스템이 selected_experiment의 테스트 이미지 목록 테이블 렌더링
      컬럼: 이미지명 / Anomaly Score / OK·NG 판정 / GT 일치 여부 / 오분류(FP/FN)
   3. (선택) 결함 유형 드롭다운으로 필터링
@@ -395,7 +393,7 @@
 성공 종료: model_state_dict.pth + configs.yaml 저장, 경로·용량 출력
 
 주 플로우:
-  1. 탭5에서 저장 대상 실험 선택 (UC-05 3단계)
+  1. 탭4에서 저장 대상 실험 선택 (UC-05 3단계)
   2. 저장 경로 입력 필드 (기본값: ./models/{exp_id}/)
   3. [모델 저장] 클릭
   4. 시스템이 디스크 여유 공간 확인 → < 500MB 시 st.warning()
@@ -418,12 +416,11 @@
 성공 종료: UI 필드에 설정값 자동 반영
 
 주 플로우:
-  1. 탭2 또는 탭3에서 [configs.yaml 불러오기] 클릭
+  1. 탭2에서 [configs.yaml 불러오기] 클릭
   2. 파일 경로 입력 (st.text_input)
   3. load_config(path) 호출
-  4. 탭2: preprocessing 섹션 → UI 값 자동 반영
-     탭3: model 섹션 → UI 값 자동 반영
-  5. 반영된 값으로 미리보기 즉시 갱신 (탭2 경우)
+  4. 탭2: preprocessing 섹션 + model 섹션 → UI 값 자동 반영
+  5. 반영된 값으로 미리보기 즉시 갱신
 
 실패 플로우:
   3-1. 파일 없음 → st.error("파일을 찾을 수 없습니다: {path}")
@@ -440,7 +437,7 @@
 성공 종료: history.json에서 해당 레코드 제거, 테이블 즉시 갱신
 
 주 플로우:
-  1. 탭5 실험 목록 테이블에서 삭제 대상 선택
+  1. 탭4 실험 목록 테이블에서 삭제 대상 선택
   2. [실험 삭제] 버튼 클릭
   3. 확인 다이얼로그: st.warning() + [확인] / [취소] 버튼
   4. [확인] 클릭:
@@ -493,7 +490,7 @@
 성공 종료: 선택한 결함 유형의 이미지만 목록에 표시
 
 주 플로우:
-  1. 탭6 진입
+  1. 탭5 진입
   2. 결함 유형 드롭다운에서 특정 클래스 선택 (예: "crack", "scratch")
      드롭다운 옵션: ["전체"] + dataset_meta.defect_classes
   3. 선택 클래스의 이미지만 테이블 필터링
@@ -512,23 +509,23 @@
     ↓ (소요: ~2분)
 
 [설정 단계]
-탭2: 전처리 방식 선택, 미리보기 확인 → 탭3: 모델 선택, 파라미터 조정
+탭2: 전처리 및 모델 설정 완결
     ↓ (소요: ~5분)
 
 [실행 단계]
-탭4: 학습 시작 → Progress Bar, Loss 곡선 모니터링 → 완료 알림 수신
+탭3: 학습 시작 → Progress Bar, Loss 곡선 모니터링 → 완료 알림 수신
     ↓ (소요: EfficientAD ~20분 / PatchCore ~10분)
 
 [분석 단계]
-탭5: AUC 확인, Confusion Matrix 검토 → 필요 시 파라미터 조정 후 재실험
+탭4: AUC 확인, Confusion Matrix 검토 → 필요 시 파라미터 조정 후 재실험
     ↓ (소요: ~3분)
 
 [검증 단계]
-탭6: Anomaly Map으로 결함 위치 시각화 → 모델 행동 이해
+탭5: Anomaly Map으로 결함 위치 시각화 → 모델 행동 이해
     ↓ (소요: ~3분)
 
 [저장 단계]
-탭5: 최적 모델 저장 → 추론 팀에 전달
+탭4: 최적 모델 저장 → 추론 팀에 전달
     ↓ (소요: ~1분)
 
 총 소요: 단일 실험 사이클 약 30분 이내 (성공 지표 기준)
@@ -540,11 +537,10 @@
 
 | # | 상황 | 영향 페르소나 | 처리 방식 |
 |---|------|-------------|-----------|
-| ECU-01 | 탭5에서 실험 삭제 후 탭6 진입 | P-01 | selected_experiment_id = None으로 자동 초기화, 탭6 guard 발동 |
-| ECU-02 | 탭3에서 EfficientAD → PatchCore로 모델 변경 | P-01 | model_config 완전 교체, 이전 EfficientAD 설정 유지 안됨 (사용자 안내 필요) |
-| ECU-03 | 학습 중 브라우저 새로고침 | P-01 | session_state 초기화 → 백그라운드 스레드는 계속 실행 → 미아 스레드 발생. 탭4에 "학습 중 새로고침 시 학습 상태를 확인할 수 없습니다" 안내 텍스트 표시 |
-| ECU-04 | 탭2에서 image_size 변경 후 탭3 재진입 | P-01 | model_config.image_size 불일치 발생. 탭3 진입 시 preprocessing_config.image_size와 비교하여 불일치 감지 → st.warning() + 자동 동기화 제안 |
-| ECU-05 | 동일 설정으로 실험 2회 실행 | P-01 | experiment_id에 4자리 난수 포함이므로 중복 방지됨. 두 실험이 별개 레코드로 저장됨 |
+| ECU-01 | 탭4에서 실험 삭제 후 탭5 진입 | P-01 | selected_experiment_id = None으로 자동 초기화, 탭5 guard 발동 |
+| ECU-02 | 탭2에서 EfficientAD → PatchCore로 모델 변경 | P-01 | model_config 완전 교체, 이전 EfficientAD 설정 유지 안됨 (사용자 안내 필요) |
+| ECU-03 | 학습 중 브라우저 새로고침 | P-01 | session_state 초기화 → 백그라운드 스레드는 계속 실행 → 미아 스레드 발생. 탭3에 "학습 중 새로고침 시 학습 상태를 확인할 수 없습니다" 안내 텍스트 표시 |
+| ECU-04 | 동일 설정으로 실험 2회 실행 | P-01 | experiment_id에 4자리 난수 포함이므로 중복 방지됨. 두 실험이 별개 레코드로 저장됨 |
 
 ---
 
@@ -609,7 +605,7 @@ N/A — 페르소나 문서에서 추가 관측 항목 없음.
 
 | # | 기준 | 검증 방법 |
 |---|------|-----------|
-| PUA-01 | P-01이 코드 작성 없이 탭1~탭6 Golden Path 완주 가능 | 실사용자 수동 테스트 |
+| PUA-01 | P-01이 코드 작성 없이 탭1~탭5 Golden Path 완주 가능 | 실사용자 수동 테스트 |
 | PUA-02 | P-01이 EfficientAD와 PatchCore 두 실험을 비교하여 더 높은 AUC 모델 식별 가능 | UC-06 시나리오 실행 |
 | PUA-03 | P-02가 README 없이 docker run 명령만으로 EC2 배포 완료 가능 | UC-11 시나리오 실행 |
 | PUA-04 | 탭6 Anomaly Map에서 사용자가 결함 위치를 육안으로 확인 가능 | 시각 검수 |
@@ -631,9 +627,9 @@ Then:   우측 미리보기 이미지가 1초 이내에 갱신된다
 #### TC-UC-03: ae_loss_weight 저장 확인
 
 ```
-Given:  탭3에서 EfficientAD가 선택된 상태이다
+Given:  탭2에서 EfficientAD가 선택된 상태이다
         ae_loss_weight = 0.5
-When:   사용자가 ae_loss_weight 슬라이더를 0.7로 변경하고 [모델 설정 저장]을 클릭한다
+When:   사용자가 ae_loss_weight 슬라이더를 0.7로 변경하고 [설정 저장]을 클릭한다
 Then:   session_state.model_config.params["ae_loss_weight"] == 0.7
         ST 비중(1 - 0.7 = 0.3)은 학습 루프 내부에서 자동 적용된다
 ```
@@ -644,10 +640,10 @@ Then:   session_state.model_config.params["ae_loss_weight"] == 0.7
 Given:  selected_experiment_id = "efficientad_20260508_140023_7f3a"
         해당 실험이 history.json에 존재한다
         탭6이 해당 실험을 참조 중이다
-When:   사용자가 탭5에서 해당 실험을 삭제하고 [확인]을 클릭한다
+When:   사용자가 탭4에서 해당 실험을 삭제하고 [확인]을 클릭한다
 Then:   history.json에 해당 레코드가 존재하지 않는다
         session_state.selected_experiment_id == None
-        탭6 진입 시 MSG["NO_SELECTED_EXP"] 표시
+        탭5 진입 시 MSG["NO_SELECTED_EXP"] 표시
         ./models/efficientad_20260508_140023_7f3a/ 디렉토리가 존재하지 않는다
 ```
 

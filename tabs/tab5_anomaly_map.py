@@ -22,7 +22,7 @@ from utils.metrics import compute_threshold
 
 
 def render() -> None:
-    st.header("탭6. 이상 영역 시각화")
+    st.header("탭5. 이상 영역 시각화")
     if not _guard():
         return
 
@@ -31,7 +31,7 @@ def render() -> None:
     exp = experiments.get(exp_id)
 
     if exp is None:
-        st.error(f"실험 '{exp_id}'을 찾을 수 없습니다. 탭5에서 다시 선택해 주세요.")
+        st.error(f"실험 '{exp_id}'을 찾을 수 없습니다. 탭4에서 다시 선택해 주세요.")
         return
 
     if exp.get("status") == "중단":
@@ -251,15 +251,15 @@ def _render_ui(exp_id: str, exp: dict, metrics: dict, cache: dict) -> None:
             default_thr = max_score * 0.5
         st.session_state["anomaly_map_threshold"] = round(float(default_thr), 6)
 
-    # FR-T6-06 (S): 결함 유형 필터
+    # FR-T5-06 (S): 결함 유형 필터
     all_classes = sorted({Path(p).parent.name for p in image_paths})
     selected_class = st.selectbox(
         "결함 유형 필터",
         ["전체"] + all_classes,
-        key="tab6_class_filter",
+        key="tab5_class_filter",
     )
 
-    # FR-T6-03: Threshold 슬라이더
+    # FR-T5-03: Threshold 슬라이더
     current_thr = float(st.session_state["anomaly_map_threshold"])
     current_thr = max(0.0, min(current_thr, slider_max))
     threshold = st.slider(
@@ -283,13 +283,13 @@ def _render_ui(exp_id: str, exp: dict, metrics: dict, cache: dict) -> None:
 
     scores_view = df_display["Anomaly Score"].tolist()
 
-    # FR-T6-07 (S): Score 요약
+    # FR-T5-07 (S): Score 요약
     if scores_view:
         col1, col2 = st.columns(2)
         col1.metric("최대 Anomaly Score", f"{max(scores_view):.4f}")
         col2.metric("평균 Anomaly Score", f"{sum(scores_view) / len(scores_view):.4f}")
 
-    # FR-T6-08 (S): FP/FN/TN/TP 카운트
+    # FR-T5-08 (S): FP/FN/TN/TP 카운트
     cls_counts = df_display["오분류"].value_counts()
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("TP", int(cls_counts.get("TP", 0)))
@@ -297,7 +297,7 @@ def _render_ui(exp_id: str, exp: dict, metrics: dict, cache: dict) -> None:
     c3.metric("TN", int(cls_counts.get("TN", 0)))
     c4.metric("FN", int(cls_counts.get("FN", 0)))
 
-    # FR-T6-02: 이미지 목록 테이블 — GT 일치를 ✓/✗ 기호로 표시
+    # FR-T5-02: 이미지 목록 테이블 — GT 일치를 ✓/✗ 기호로 표시
     df_table = df_display.copy()
     df_table["GT 일치"] = df_table["GT 일치"].map({True: "✓", False: "✗"})
 
@@ -307,7 +307,7 @@ def _render_ui(exp_id: str, exp: dict, metrics: dict, cache: dict) -> None:
         use_container_width=True,
         selection_mode="single-row",
         on_select="rerun",
-        key="tab6_image_table",
+        key="tab5_image_table",
     )
 
     selected_rows = event.selection.rows if event else []
@@ -337,25 +337,25 @@ def _render_ui(exp_id: str, exp: dict, metrics: dict, cache: dict) -> None:
             data=csv_bytes,
             file_name=f"{exp_id}_results.csv",
             mime="text/csv",
-            key="tab6_csv_export",
+            key="tab5_csv_export",
         )
 
     with col_zip:
-        zip_key = f"tab6_zip_{exp_id}_{selected_class}_{threshold:.3f}"
-        if st.button("ZIP 준비", key="tab6_zip_prepare"):
+        zip_key = f"tab5_zip_{exp_id}_{selected_class}_{threshold:.3f}"
+        if st.button("ZIP 준비", key="tab5_zip_prepare"):
             with st.spinner("ZIP 파일 생성 중..."):
-                st.session_state["tab6_zip_bytes"] = _build_zip_bytes(
+                st.session_state["tab5_zip_bytes"] = _build_zip_bytes(
                     df_display, anomaly_maps, exp, threshold, exp_id
                 )
-                st.session_state["tab6_zip_key"] = zip_key
+                st.session_state["tab5_zip_key"] = zip_key
 
-        if st.session_state.get("tab6_zip_key") == zip_key and st.session_state.get("tab6_zip_bytes"):
+        if st.session_state.get("tab5_zip_key") == zip_key and st.session_state.get("tab5_zip_bytes"):
             st.download_button(
                 label="ZIP 다운로드",
-                data=st.session_state["tab6_zip_bytes"],
+                data=st.session_state["tab5_zip_bytes"],
                 file_name=f"{exp_id}_anomaly_maps.zip",
                 mime="application/zip",
-                key="tab6_zip_download",
+                key="tab5_zip_download",
             )
 
 
@@ -367,7 +367,7 @@ def _render_triplet(
     exp_id: str,
     score: float = 0.0,
 ) -> None:
-    """FR-T6-04: 원본 / GT 마스크 / Heatmap 3-패널 시각화 + FR-T6-05: PNG 다운로드."""
+    """FR-T5-04: 원본 / GT 마스크 / Heatmap 3-패널 시각화 + FR-T5-05: PNG 다운로드."""
     st.subheader("이미지 상세 시각화")
 
     try:
@@ -420,7 +420,7 @@ def _render_triplet(
     m2.metric("Threshold", f"{threshold:.4f}")
     m3.metric("판정", verdict)
 
-    # FR-T6-05: PNG 다운로드
+    # FR-T5-05: PNG 다운로드
     triplet = create_triplet_image(original, gt_mask_pil, heatmap_display)
     buf = io.BytesIO()
     triplet.save(buf, format="PNG")
@@ -431,5 +431,5 @@ def _render_triplet(
         data=buf.getvalue(),
         file_name=f"{exp_id}_{stem}_anomaly.png",
         mime="image/png",
-        key=f"tab6_dl_{stem}",
+        key=f"tab5_dl_{stem}",
     )

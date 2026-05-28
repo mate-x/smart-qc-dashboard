@@ -21,15 +21,15 @@ _logger = logging.getLogger(__name__)
 # ──────────────────────────────────────────────────────────────────────────────
 
 def render() -> None:
-    st.header("탭5. 실험 히스토리 + 결과 상세 + 모델 저장")
+    st.header("탭4. 실험 히스토리 + 결과 상세 + 모델 저장")
 
-    # FR-T5-06: 탭 진입 시마다 history.json 재로드
+    # FR-T4-06: 탭 진입 시마다 history.json 재로드
     experiments = load_history()
     st.session_state["experiments"] = {
         r["experiment_id"]: r for r in experiments if "experiment_id" in r
     }
 
-    # FR-T5-05: Guard
+    # FR-T4-05: Guard
     if not experiments:
         st.warning(MSG["NO_EXPERIMENTS"])
         return
@@ -41,7 +41,7 @@ def render() -> None:
         (r for r in experiments if r.get("experiment_id") == selected_id), None
     )
 
-    # FR-T5-03: 삭제 버튼 (선택 없으면 disabled)
+    # FR-T4-03: 삭제 버튼 (선택 없으면 disabled)
     st.divider()
     if st.session_state.get("_confirm_delete") and selected is not None:
         _render_delete_confirm(selected)
@@ -55,14 +55,14 @@ def render() -> None:
             st.session_state["_confirm_delete"] = True
             st.rerun()
 
-    # FR-T5-02, FR-T5-04: 상세 결과 + 모델 저장 (completed 실험만)
+    # FR-T4-02, FR-T4-04: 상세 결과 + 모델 저장 (completed 실험만)
     if selected is not None and selected.get("status") == "completed":
         st.divider()
         _render_detail(selected)
         st.divider()
         _render_model_save(selected)
 
-    # FR-T5-07: 다중 실험 비교 차트
+    # FR-T4-07: 다중 실험 비교 차트
     completed = [r for r in experiments if r.get("status") == "completed"]
     if len(completed) >= 2:
         st.divider()
@@ -70,7 +70,7 @@ def render() -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 실험 목록 테이블 (FR-T5-01, FR-T5-09)
+# 실험 목록 테이블 (FR-T4-01, FR-T4-09)
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _render_experiment_table(experiments: list[dict]) -> None:
@@ -79,7 +79,7 @@ def _render_experiment_table(experiments: list[dict]) -> None:
     )
     df = _build_table_df(sorted_exps)
 
-    # FR-T5-09: 중단 실험 회색 텍스트
+    # FR-T4-09: 중단 실험 회색 텍스트
     def _row_style(row: pd.Series) -> list[str]:
         if row["상태"] == "중단":
             return ["color: gray"] * len(row)
@@ -156,7 +156,7 @@ def _param_summary(r: dict) -> str:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 실험 삭제 (FR-T5-03)
+# 실험 삭제 (FR-T4-03)
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _render_delete_confirm(record: dict) -> None:
@@ -182,7 +182,7 @@ def _render_delete_confirm(record: dict) -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 실험 상세 결과 (FR-T5-02)
+# 실험 상세 결과 (FR-T4-02)
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _render_detail(record: dict) -> None:
@@ -310,7 +310,7 @@ def _score_dist_fig(metrics: dict, threshold_value: float | None = None) -> go.F
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 모델 저장 (FR-T5-04, FR-T5-08)
+# 모델 저장 (FR-T4-04, FR-T4-08)
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _render_model_save(record: dict) -> None:
@@ -375,7 +375,7 @@ def _do_model_save(record: dict, save_path: str) -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 다중 실험 비교 차트 (FR-T5-07)
+# 다중 실험 비교 차트 (FR-T4-07)
 # ──────────────────────────────────────────────────────────────────────────────
 
 _METRIC_MAP = {

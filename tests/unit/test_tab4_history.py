@@ -14,7 +14,7 @@ def pandas_python_string_backend():
     pd.options.mode.string_storage = old
 
 
-from tabs.tab5_history import (
+from tabs.tab4_history import (
     _BACKBONE_ABBREV,
     _METRIC_MAP,
     _build_table_df,

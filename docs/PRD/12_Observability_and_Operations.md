@@ -155,7 +155,7 @@ class TrainingWorker(threading.Thread):
 
 **콘솔 출력** (JSON 1줄):
 ```json
-{"timestamp":"2026-05-09T14:00:23.456+09:00","level":"INFO","experiment_id":"efficientad_20260509_140023_7f3a","tab":"tab4","event":"training_started","message":"학습이 시작되었습니다.","data":{"model_type":"efficientad","train_steps":70000}}
+{"timestamp":"2026-05-09T14:00:23.456+09:00","level":"INFO","experiment_id":"efficientad_20260509_140023_7f3a","tab":"tab3","event":"training_started","message":"학습이 시작되었습니다.","data":{"model_type":"efficientad","train_steps":70000}}
 ```
 
 **파일 출력** (`./logs/{exp_id}.log`):
@@ -177,17 +177,17 @@ class TrainingWorker(threading.Thread):
 | `dataset_validated` | `tab1._validate_dataset()` 성공 시 | `{"train_good_count": int, "defect_classes": list}` |
 | `dataset_validation_failed` | `tab1._validate_dataset()` 실패 시 | `{"error_code": str, "path": str}` |
 | `preprocessing_config_saved` | `tab2._save_preprocessing()` | `{"method": str, "image_size": int}` |
-| `model_config_saved` | `tab3._save_model_config()` | `{"model_type": str, "device": str}` |
-| `training_started` | `tab4._handle_start_training()` | `{"experiment_id": str, "model_type": str, "train_steps": int}` |
+| `model_config_saved` | `tab2._save_model_config()` | `{"model_type": str, "device": str}` |
+| `training_started` | `tab3_training.py._handle_start_training()` | `{"experiment_id": str, "model_type": str, "train_steps": int}` |
 | `training_step` | `TrainingWorker` 내 매 N step | `{"step": int, "total_steps": int, "loss": float, "elapsed_s": float}` |
-| `training_completed` | `tab4._handle_terminal()` completed 분기 | `{"experiment_id": str, "duration_s": int, "auc": float}` |
-| `training_stopped` | `tab4._handle_terminal()` stopped 분기 | `{"experiment_id": str, "step": int}` |
-| `training_failed` | `tab4._handle_terminal()` error 분기 | `{"experiment_id": str, "traceback": str}` |
-| `model_saved` | `tab5._save_model()` | `{"experiment_id": str, "path": str, "size_mb": float}` |
-| `experiment_deleted` | `tab5._delete_experiment()` | `{"experiment_id": str}` |
+| `training_completed` | `tab3_training.py._handle_terminal()` completed 분기 | `{"experiment_id": str, "duration_s": int, "auc": float}` |
+| `training_stopped` | `tab3_training.py._handle_terminal()` stopped 분기 | `{"experiment_id": str, "step": int}` |
+| `training_failed` | `tab3_training.py._handle_terminal()` error 분기 | `{"experiment_id": str, "traceback": str}` |
+| `model_saved` | `tab4_history.py._save_model()` | `{"experiment_id": str, "path": str, "size_mb": float}` |
+| `experiment_deleted` | `tab4_history.py._delete_experiment()` | `{"experiment_id": str}` |
 
 `training_step` 이벤트 주기 (00절 §9 A-08):
-- EfficientAD: 매 500 step마다 → `queue.put({"type": "progress", "step": N, "loss": float, ...})`
+- EfficientAD: 매 100 step마다 → `queue.put({"type": "progress", "step": N, "loss": float, ...})`
 - PatchCore: 에포크 단위
 
 ---
@@ -213,13 +213,13 @@ class TrainingWorker(threading.Thread):
 |------|------|
 | 보관 기간 | 무제한 (로컬 스토리지 — 사용자 수동 삭제) |
 | 최대 크기 | 단일 파일 상한 없음 (70k step 기준 약 2~5 MB) |
-| 실험 삭제 시 | 탭5 [실험 삭제] 클릭 시 해당 `{exp_id}.log` 도 함께 삭제 |
+| 실험 삭제 시 | 탭4 [실험 삭제] 클릭 시 해당 `{exp_id}.log` 도 함께 삭제 |
 | 앱 재시작 시 | `.tmp` 파일 탐색 후 삭제 (09절 §E.2 참조) |
 
 ### C.3 실험 삭제 시 로그 파일 처리
 
 ```python
-# tab5._delete_experiment() 내부
+# tab4_history.py._delete_experiment() 내부
 def _delete_experiment(experiment_id: str) -> None:
     # history.json에서 제거
     history = load_history()
@@ -244,7 +244,7 @@ def _delete_experiment(experiment_id: str) -> None:
     log_warning(
         "experiment_deleted",
         f"실험 {experiment_id} 삭제됨",
-        tab="tab5",
+        tab="tab4",
         experiment_id=experiment_id,
     )
 ```
@@ -266,7 +266,7 @@ def _delete_experiment(experiment_id: str) -> None:
 | 폴더 구조 오류 | `st.error()` | `MSG["INVALID_FOLDER"]` |
 | Grayscale 감지 | `st.info()` | `MSG["GRAYSCALE_DETECT"]` |
 | 디스크 공간 부족 | `st.warning()` | `f"디스크 여유 공간이 {free_mb:.0f} MB로 부족합니다. 500 MB 이상 확보 후 저장해 주세요."` |
-| ImageNet penalty 디렉터리 없음 | `st.error()` (탭4 시작 버튼 클릭 시) 또는 Queue `error` 메시지 (TrainingWorker 내부 검증 실패 시) | `"EfficientAD 학습에 필요한 ImageNet penalty 데이터가 없습니다. ./dataset/imagenet_penalty/ 를 확인해 주세요."` |
+| ImageNet penalty 디렉터리 없음 | `st.error()` (탭3 시작 버튼 클릭 시) 또는 Queue `error` 메시지 (TrainingWorker 내부 검증 실패 시) | `"EfficientAD 학습에 필요한 ImageNet penalty 데이터가 없습니다. ./dataset/imagenet_penalty/ 를 확인해 주세요."` |
 | 데이터셋 없음 | `st.warning()` | `MSG["NO_DATASET"]` |
 | 전처리 설정 없음 | `st.warning()` | `MSG["NO_PREPROCESSING"]` |
 | 모델 설정 없음 | `st.warning()` | `MSG["NO_MODEL_CONFIG"]` |
@@ -294,12 +294,12 @@ def format_duration(seconds: int) -> str:
 
 ## E. Training Progress Observability
 
-탭4 학습 중 사용자에게 표시되는 3가지 관찰 수단.
+탭3 학습 중 사용자에게 표시되는 3가지 관찰 수단.
 
 ### E.1 Progress Bar
 
 ```python
-# tab4 학습 중 rerun 주기마다 업데이트
+# tab3 학습 중 rerun 주기마다 업데이트
 progress = st.session_state.get("current_step", 0) / st.session_state["model_config"]["params"]["train_steps"]
 st.progress(min(progress, 1.0), text=f"학습 진행률: {progress*100:.1f}%")
 ```
@@ -328,7 +328,7 @@ if st.session_state.get("loss_history"):
 ```
 
 `loss_history` 업데이트 조건:
-- EfficientAD: `progress` 메시지에 `loss` 필드가 있을 때만 append (매 500 step)
+- EfficientAD: `progress` 메시지에 `loss` 필드가 있을 때만 append (매 100 step)
 - PatchCore: epoch 완료 메시지마다 append
 
 ### E.3 실시간 로그
@@ -377,7 +377,7 @@ st.text_area(
 
 ---
 
-### F.2 학습 완료 후 탭5에서 실험이 안 보이는 경우
+### F.2 학습 완료 후 탭4에서 실험이 안 보이는 경우
 
 **진단**:
 1. `./experiments/history.json` 파일 존재 확인
@@ -385,7 +385,7 @@ st.text_area(
 3. `session_state["experiments"]` 가 최신 history와 동기화됐는지 확인
 
 **조치**:
-- 탭5 재진입 (탭 클릭) — `load_history()` 재호출 트리거
+- 탭4 재진입 (탭 클릭) — `load_history()` 재호출 트리거
 - `history.json` 이 존재하지 않으면: `experiments/` 디렉터리 내 `.tmp` 파일 확인 (원자적 쓰기 실패)
 
 ---
@@ -398,14 +398,14 @@ st.text_area(
 3. `history.json` 의 `model_path` 필드 확인
 
 **조치**:
-- 파일이 없으면 해당 실험은 탭6에서 추론 불가 — UI에 "(파일 없음)" 표시
-- 불완전한 레코드: 탭5에서 [삭제] 후 재학습
+- 파일이 없으면 해당 실험은 탭5에서 추론 불가 — UI에 "(파일 없음)" 표시
+- 불완전한 레코드: 탭4에서 [삭제] 후 재학습
 
 ---
 
 ### F.4 ImageNet penalty 오류 (EfficientAD)
 
-**증상**: 탭4 [학습 시작] 클릭 시 즉시 오류 메시지.
+**증상**: 탭3 [학습 시작] 클릭 시 즉시 오류 메시지.
 
 **진단**:
 ```bash
@@ -449,7 +449,7 @@ find ./logs -name "*.log" -mtime +30 -delete
 rm ./logs/*.log
 ```
 
-> 탭5에서 실험을 삭제하면 해당 로그 파일도 자동 삭제됨 (C.3 참조).
+> 탭4에서 실험을 삭제하면 해당 로그 파일도 자동 삭제됨 (C.3 참조).
 
 ---
 

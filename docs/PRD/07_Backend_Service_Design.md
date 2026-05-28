@@ -1,6 +1,6 @@
 # 07. Backend Service Design
 
-> **참조 문서**: `04_System_Architecture.md` §B.5 (비동기 처리 아키텍처), `06_API_Specification.md` §5 (tab4 소비 알고리즘), `08_AI_ML_Integration.md` §B.4~B.6 (학습 구현)
+> **참조 문서**: `04_System_Architecture.md` §B.5 (비동기 처리 아키텍처), `06_API_Specification.md` §5 (tab3 소비 알고리즘), `08_AI_ML_Integration.md` §B.4~B.6 (학습 구현)
 > **버전**: v1.1
 > **작성일**: 2026-05-09
 > **수정일**: 2026-05-26 — v1.1: 비전검사 대시보드 서비스 흐름 추가 (§12~§14)
@@ -8,9 +8,9 @@
 > 1. experiment_id 생성 규칙 (코드 포함)
 > 2. 학습 시작 버튼 핸들러 전체 흐름
 > 3. TrainingWorker 생성자 인스턴스 변수 명세
-> 4. 탭6 이상 감지 서비스 (모델 재로드 → 추론 → 캐시 → 시각화) 파이프라인
+> 4. 탭5 이상 감지 서비스 (모델 재로드 → 추론 → 캐시 → 시각화) 파이프라인
 >
-> **역할 분리**: 04.B.5의 스레드 모델, 04.B.7의 상태 머신, 06.§5의 tab4 polling loop, 08.B.4~B.6의 학습 루프 구현은 이 문서에서 반복하지 않고 참조만 한다.
+> **역할 분리**: 04.B.5의 스레드 모델, 04.B.7의 상태 머신, 06.§5의 tab3 polling loop, 08.B.4~B.6의 학습 루프 구현은 이 문서에서 반복하지 않고 참조만 한다.
 
 ---
 
@@ -22,7 +22,7 @@
 4. [TrainingWorker 생성자 명세](#4-trainingworker-생성자-명세)
 5. [학습 중 Progress 보고 주기](#5-학습-중-progress-보고-주기)
 6. [학습 완료/중단 후처리 흐름](#6-학습-완료중단-후처리-흐름)
-7. [탭6 이상 감지 서비스](#7-탭6-이상-감지-서비스)
+7. [탭5 이상 감지 서비스](#7-탭5-이상-감지-서비스)
 8. [단일 워커 보장](#8-단일-워커-보장)
 9. [메모리 관리 규칙](#9-메모리-관리-규칙)
 10. [서비스 데이터 흐름 요약](#10-서비스-데이터-흐름-요약)
@@ -39,10 +39,10 @@
 
 | 서비스 | 위치 | 핵심 결정 사항 |
 |--------|------|----------------|
-| ID 생성 | `utils/training_worker.py` 또는 `tabs/tab4_training.py` | experiment_id 생성 코드 확정 |
-| 학습 시작 | `tabs/tab4_training.py._handle_start_training()` | 버튼 클릭부터 worker.start()까지 전체 순서 |
+| ID 생성 | `utils/training_worker.py` 또는 `tabs/tab3_training.py` | experiment_id 생성 코드 확정 |
+| 학습 시작 | `tabs/tab3_training.py._handle_start_training()` | 버튼 클릭부터 worker.start()까지 전체 순서 |
 | TrainingWorker 초기화 | `utils/training_worker.py.TrainingWorker.__init__()` | 생성자 파라미터와 인스턴스 변수 전체 |
-| 이상 감지 서비스 | `tabs/tab6_anomaly_map.py` + `utils/model_factory.py` | 모델 재로드·추론·캐시·시각화 파이프라인 |
+| 이상 감지 서비스 | `tabs/tab5_anomaly_map.py` + `utils/model_factory.py` | 모델 재로드·추론·캐시·시각화 파이프라인 |
 
 ### 이 문서가 다루지 않는 것 (참조 문서)
 
@@ -50,7 +50,7 @@
 |------|------|
 | 비동기 스레드 모델 설계 | `04_System_Architecture.md §B.5` |
 | 학습 상태 머신 | `04_System_Architecture.md §B.7` |
-| tab4 Queue 소비 polling loop | `06_API_Specification.md §5` |
+| tab3 Queue 소비 polling loop | `06_API_Specification.md §5` |
 | stop_event 경쟁 조건 처리 | `06_API_Specification.md §6` |
 | EfficientAD / PatchCore 학습 루프 코드 | `08_AI_ML_Integration.md §B.4, B.5, B.6` |
 | 3단계 원자성 저장 프로토콜 | `05_Data_Model_and_Storage_Strategy.md §6` |
@@ -72,7 +72,7 @@
 ### 2.2 생성 코드 (확정)
 
 ```python
-# tabs/tab4_training.py 내부 또는 utils/training_worker.py
+# tabs/tab3_training.py 또는 utils/training_worker.py
 
 import uuid
 from datetime import datetime, timezone, timedelta
@@ -125,7 +125,7 @@ def generate_created_at() -> str:
 ### 3.2 학습 시작 핸들러 전체 구현
 
 ```python
-# tabs/tab4_training.py
+# tabs/tab3_training.py
 
 def _handle_start_training(experiment_name: str) -> None:
     """
@@ -526,7 +526,7 @@ self._write_log(
 ### 6.5 _build_experiment_record() 구현
 
 ```python
-# tabs/tab4_training.py
+# tabs/tab3_training.py
 
 def _build_experiment_record(
     exp_id: str,
@@ -635,12 +635,12 @@ accumulated_features   torch.Tensor  (shape: [N, feature_dim])
 
 ---
 
-## 7. 탭6 이상 감지 서비스
+## 7. 탭5 이상 감지 서비스
 
 ### 7.1 전체 파이프라인
 
 ```
-[탭6 진입 — selected_experiment_id 확정]
+[탭5 진입 — selected_experiment_id 확정]
   │
   ├─ [캐시 확인]
   │    get_anomaly_map_cache(exp_id)
@@ -728,7 +728,7 @@ def load_model_for_inference(
 ### 7.3 일괄 추론 서비스 (_run_batch_inference)
 
 ```python
-# tabs/tab6_anomaly_map.py 또는 utils/model_factory.py
+# tabs/tab5_anomaly_map.py 또는 utils/model_factory.py
 
 def run_batch_inference(
     model: object,
@@ -766,7 +766,7 @@ def run_batch_inference(
 ### 7.4 Threshold 슬라이더 연동
 
 ```python
-# tabs/tab6_anomaly_map.py
+# tabs/tab5_anomaly_map.py
 
 def _render_threshold_section(anomaly_map: np.ndarray) -> float:
     """
@@ -804,7 +804,7 @@ def _render_threshold_section(anomaly_map: np.ndarray) -> float:
 ### 7.5 3분할 시각화 구성
 
 ```python
-# tabs/tab6_anomaly_map.py
+# tabs/tab5_anomaly_map.py
 
 def _render_triplet(
     path: str,
@@ -856,7 +856,7 @@ def _render_triplet(
     m2.metric("Threshold", f"{threshold:.4f}")
     m3.metric("판정", verdict)
 
-    # FR-T6-05: PNG 다운로드
+    # FR-T5-05: PNG 다운로드
     triplet = create_triplet_image(original_pil, gt_mask, heatmap_display)
     buf = io.BytesIO()
     triplet.save(buf, format="PNG")
@@ -916,10 +916,10 @@ def _save_triplet_png(triplet: PIL.Image.Image, source_path: str) -> None:
     st.success(f"저장 완료: {save_path} ({size_kb:.1f} KB)")
 ```
 
-### 7.6 탭6에서 모델 로드 시점 (캐시 MISS 처리)
+### 7.6 탭5에서 모델 로드 시점 (캐시 MISS 처리)
 
 ```python
-# tabs/tab6_anomaly_map.py — render() 상단
+# tabs/tab5_anomaly_map.py — render() 상단
 
 def render() -> None:
     _guard()  # selected_experiment_id is None → st.stop()
@@ -986,7 +986,7 @@ def render() -> None:
 ### 8.1 중복 학습 시작 방지
 
 ```python
-# tabs/tab4_training.py — _render_idle_ui()
+# tabs/tab3_training.py — _render_idle_ui()
 
 def _render_idle_ui() -> None:
     """
@@ -1005,7 +1005,7 @@ def _render_idle_ui() -> None:
 ```
 
 ```python
-# tabs/tab4_training.py — _render_running_ui()
+# tabs/tab3_training.py — _render_running_ui()
 
 def _render_running_ui() -> None:
     """
@@ -1033,7 +1033,7 @@ def _render_running_ui() -> None:
 | 이벤트 | 처리 |
 |--------|------|
 | 학습 완료 (`_handle_completed()`) | `del msg["model"]` + `torch.cuda.empty_cache()` |
-| 탭6 캐시 MISS 추론 완료 | `del model` + `torch.cuda.empty_cache()` (device == "cuda"인 경우만) |
+| 탭5 캐시 MISS 추론 완료 | `del model` + `torch.cuda.empty_cache()` (device == "cuda"인 경우만) |
 | 학습 중단 (`_handle_stopped()`) | 모델 객체 없음 (TrainingWorker가 중단 시 model 미전달) |
 | 학습 오류 (`_handle_error()`) | 모델 객체 없음 |
 
@@ -1045,7 +1045,7 @@ del msg["model"]
 if st.session_state.get("device_info", {}).get("device") == "cuda":
     torch.cuda.empty_cache()
 
-# 탭6 추론 완료 후
+# 탭5 추론 완료 후
 del model
 if device == "cuda":
     torch.cuda.empty_cache()
@@ -1062,7 +1062,7 @@ if device == "cuda":
 ## 10. 서비스 데이터 흐름 요약
 
 ```
-[탭4 학습 시작 서비스]
+[탭3 학습 시작 서비스]
 
 사용자 클릭
   → generate_experiment_id()          # R-NAMING-03, R-ID-01
@@ -1090,9 +1090,9 @@ worker.run()
        → result_queue.put(completed)
 
 
-[탭6 이상 감지 서비스]
+[탭5 이상 감지 서비스]
 
-탭6 진입
+탭5 진입
   → get_anomaly_map_cache(exp_id)
        HIT: 캐시 재사용
        MISS:
@@ -1129,10 +1129,10 @@ worker.run()
 - [ ] `__init__()` — §4.1 파라미터 전체 포함
 - [ ] `run()` — `finally` 블록에서 `_log_writer.close()`
 - [ ] `_write_log()` — 파일 + Queue(log 메시지) 동시 기록
-- [ ] EfficientAD progress: 매 500 step
+- [ ] EfficientAD progress: 매 100 step
 - [ ] PatchCore progress: feature 추출 완료 1회 + coreset 완료 1회
 
-### 탭6 이상 감지
+### 탭5 이상 감지
 
 - [ ] 캐시 HIT 시 모델 로드 생략
 - [ ] 캐시 MISS 시 전체 추론 후 `set_anomaly_map_cache()` 저장
@@ -1144,7 +1144,7 @@ worker.run()
 ### 메모리
 
 - [ ] `_handle_completed()` — `del msg["model"]` + `torch.cuda.empty_cache()`
-- [ ] 탭6 추론 완료 후 모델 해제 (device == "cuda"인 경우만)
+- [ ] 탭5 추론 완료 후 모델 해제
 
 ---
 

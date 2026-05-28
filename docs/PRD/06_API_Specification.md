@@ -4,9 +4,9 @@
 > **버전**: v1.1
 > **작성일**: 2026-05-09
 > **수정일**: 2026-05-26 — v1.1: 비전검사 대시보드 인터페이스 추가 (§1 파일 목록, §2.3, §7 Guard, §9 체크리스트)
-> **목적**: 이 시스템은 REST API가 없다. 이 문서는 `utils/` 레이어의 모든 공개 함수 인터페이스, 에러 계약, Queue 메시지 프로토콜, tab4 소비 알고리즘을 단일 참조점으로 확정한다.
+> **목적**: 이 시스템은 REST API가 없다. 이 문서는 `utils/` 레이어의 모든 공개 함수 인터페이스, 에러 계약, Queue 메시지 프로토콜, tab3 소비 알고리즘을 단일 참조점으로 확정한다.
 >
-> **04와의 역할 분리**: 04.B.3에서 확정된 함수 시그니처는 이 문서에서 반복하지 않는다. 이 문서는 04에서 미정의된 항목(에러 계약, Queue 프로토콜, tab4 소비 루프, 신규 모듈)만 추가로 명세한다.
+> **04와의 역할 분리**: 04.B.3에서 확정된 함수 시그니처는 이 문서에서 반복하지 않는다. 이 문서는 04에서 미정의된 항목(에러 계약, Queue 프로토콜, tab3 소비 루프, 신규 모듈)만 추가로 명세한다.
 
 ---
 
@@ -16,7 +16,7 @@
 2. [신규 모듈 인터페이스](#2-신규-모듈-인터페이스)
 3. [공개 함수 에러 계약 통합표](#3-공개-함수-에러-계약-통합표)
 4. [Queue 메시지 프로토콜 공식 명세](#4-queue-메시지-프로토콜-공식-명세)
-5. [tab4 Queue 소비 알고리즘](#5-tab4-queue-소비-알고리즘)
+5. [tab3 Queue 소비 알고리즘](#5-tab3-queue-소비-알고리즘)
 6. [stop_event 경쟁 조건 처리 규칙](#6-stop_event-경쟁-조건-처리-규칙)
 7. [탭 Guard 조건 및 session_state 쓰기 권한](#7-탭-guard-조건-및-session_state-쓰기-권한)
 8. [모듈 간 호출 권한 매트릭스](#8-모듈-간-호출-권한-매트릭스)
@@ -117,7 +117,7 @@ def delete_experiment(experiment_id: str, model_path: str | None = None) -> None
 def validate_imagenet_penalty_dir() -> tuple[bool, int]:
     """
     Returns: (이미지 존재 여부, 이미지 수).
-    EfficientAD 학습 시작 전 tab4에서 호출.
+    EfficientAD 학습 시작 전 tab3에서 호출.
     """
 
 # ── 로그 파일 ──────────────────────────────────────────────────────────────────
@@ -386,14 +386,14 @@ def _run_impl(self) -> None:
 
 ---
 
-## 5. tab4 Queue 소비 알고리즘
+## 5. tab3 Queue 소비 알고리즘
 
-> 04.B.5에서 메인 스레드의 rerun 사이클을 개략적으로 기술했으나, tab4_training.py 구현자가 직접 참조할 수 있는 수준의 알고리즘을 이 절에서 확정한다.
+> 04.B.5에서 메인 스레드의 rerun 사이클을 개략적으로 기술했으나, tab3_training.py 구현자가 직접 참조할 수 있는 수준의 알고리즘을 이 절에서 확정한다.
 
 ### 5.1 전체 polling loop 구조
 
 ```python
-# tabs/tab4_training.py
+# tabs/tab3_training.py
 
 def render() -> None:
     _guard()
@@ -713,7 +713,7 @@ def _render_running_ui() -> None:
 ### 6.3 미아 스레드(orphan thread) 처리
 
 ```python
-# tabs/tab4_training.py — render() 최상위 guard
+# tabs/tab3_training.py — render() 최상위 guard
 
 def _guard() -> None:
     """
@@ -729,11 +729,11 @@ def _guard() -> None:
             _reset_run_state()
             st.info(
                 "새로고침으로 인해 학습 상태를 확인할 수 없습니다. "
-                "새로 학습을 시작하거나 탭5에서 히스토리를 확인하세요."
+                "새로 학습을 시작하거나 탭4에서 히스토리를 확인하세요."
             )
 ```
 
-> **참고**: `worker.daemon = True` (04.B.5.2 R-THREAD-03)이므로 Streamlit 프로세스가 살아있는 한 학습은 계속된다. 새로고침 후 탭5에서 history.json을 확인하면 완료 레코드가 있을 수 있다.
+> **참고**: `worker.daemon = True` (04.B.5.2 R-THREAD-03)이므로 Streamlit 프로세스가 살아있는 한 학습은 계속된다. 새로고침 후 탭4에서 history.json을 확인하면 완료 레코드가 있을 수 있다.
 
 ---
 
@@ -745,10 +745,9 @@ def _guard() -> None:
 |----|--------------------------------|-------------|
 | **탭1** | 없음 | — |
 | **탭2** | `dataset_path is not None` | `MSG["NO_DATASET"]` |
-| **탭3** | `preprocessing_config is not None` | `MSG["NO_PREPROCESSING"]` |
-| **탭4** | `dataset_path is not None` AND `preprocessing_config is not None` AND `model_config is not None` | 미충족 항목별 메시지 |
-| **탭5** | Guard 없음. `experiments == {}` 이면 `MSG["NO_EXPERIMENTS"]` 표시 후 렌더링 계속 | — |
-| **탭6** | `selected_experiment_id is not None` | `MSG["NO_SELECTED_EXP"]` |
+| **탭3** | `dataset_path is not None` AND `preprocessing_config is not None` AND `model_config is not None` | 미충족 항목별 메시지 |
+| **탭4** | Guard 없음. `experiments == {}` 이면 `MSG["NO_EXPERIMENTS"]` 표시 후 렌더링 계속 | — |
+| **탭5** | `selected_experiment_id is not None` | `MSG["NO_SELECTED_EXP"]` |
 
 **차단 구현 패턴**:
 ```python
@@ -793,19 +792,19 @@ def render() -> None:
 | `dataset_path` | 탭1 | 경로 검증 성공 시 |
 | `dataset_meta` | 탭1 | 경로 검증 성공 시 |
 | `preprocessing_config` | 탭2 | [설정 저장] 버튼 클릭 시 |
-| `model_config` | 탭3 | [설정 저장] 버튼 클릭 시 |
-| `device_info` | 탭3 | 탭3 최초 진입 시 1회 (idempotent) |
-| `experiments` | 탭4 (추가), 탭5 (삭제) | 학습 완료/중단, 실험 삭제 |
-| `current_run_status` | 탭4 | 학습 시작/완료/중단 |
-| `current_exp_id` | 탭4 | 학습 시작 시 설정, 완료/중단 시 None |
-| `selected_experiment_id` | 탭5 | 실험 행 클릭 시 |
-| `anomaly_map_threshold` | 탭6 | Threshold 슬라이더 변경 시 |
-| `_stop_event` | 탭4 내부 | 학습 시작 시 |
-| `_result_queue` | 탭4 내부 | 학습 시작 시 |
-| `_progress` | 탭4 내부 | `_handle_progress()` 호출 시 |
-| `_log_lines` | 탭4 내부 | `_handle_log()` 호출 시 |
-| `_loss_history` | 탭4 내부 | `_handle_progress()` 호출 시 |
-| `_anomaly_maps_{exp_id}` | 탭6 (`cache_manager`) | 캐시 미스 시 추론 후 |
+| `model_config` | 탭2 | [설정 저장] 버튼 클릭 시 |
+| `device_info` | 탭2 | 탭2 최초 진입 시 1회 (idempotent) |
+| `experiments` | 탭3 (추가), 탭4 (삭제) | 학습 완료/중단, 실험 삭제 |
+| `current_run_status` | 탭3 | 학습 시작/완료/중단 |
+| `current_exp_id` | 탭3 | 학습 시작 시 설정, 완료/중단 시 None |
+| `selected_experiment_id` | 탭4 | 실험 행 클릭 시 |
+| `anomaly_map_threshold` | 탭5 | Threshold 슬라이더 변경 시 |
+| `_stop_event` | 탭3 내부 | 학습 시작 시 |
+| `_result_queue` | 탭3 내부 | 학습 시작 시 |
+| `_progress` | 탭3 내부 | `_handle_progress()` 호출 시 |
+| `_log_lines` | 탭3 내부 | `_handle_log()` 호출 시 |
+| `_loss_history` | 탭3 내부 | `_handle_progress()` 호출 시 |
+| `_anomaly_maps_{exp_id}` | 탭5 (`cache_manager`) | 캐시 미스 시 추론 후 |
 
 #### 비전검사 대시보드 (v1.1) — insp_ 네임스페이스
 
@@ -857,7 +856,7 @@ def _handle_path_change(new_path: str) -> None:
 | `components/sidebar.py` | Read ✅ | ❌ 금지 | ❌ 금지 | ❌ | ❌ | ❌ |
 
 **특이사항**:
-- `training_worker.py`의 파일시스템 쓰기는 **로그 파일(`./logs/`)만** 허용. 모델/히스토리 저장은 반드시 완료 후 메인 스레드(탭4)가 `storage.save_completed_experiment()` 경유.
+- `training_worker.py`의 파일시스템 쓰기는 **로그 파일(`./logs/`)만** 허용. 모델/히스토리 저장은 반드시 완료 후 메인 스레드(탭3)가 `storage.save_completed_experiment()` 경유.
 - `cache_manager.py`는 session_state를 직접 쓰는 유일한 utils 모듈 — 메인 스레드에서만 호출해야 함.
 
 ---
@@ -873,7 +872,7 @@ def _handle_path_change(new_path: str) -> None:
 - [ ] `"stopped"` 메시지에 `step` 필드 포함
 - [ ] `"error"` 메시지에 `traceback` 필드 포함 (str 타입)
 
-### tab4 polling loop
+### tab3 polling loop
 
 - [ ] `q.get_nowait()` 사용 (블로킹 get 금지)
 - [ ] 종료 메시지 처리 후 즉시 `break`
@@ -891,9 +890,8 @@ def _handle_path_change(new_path: str) -> None:
 ### Guard 조건
 
 - [ ] 탭2: `dataset_path is None` 시 `st.stop()`
-- [ ] 탭3: `preprocessing_config is None` 시 `st.stop()`
-- [ ] 탭4: 3개 조건 모두 확인 후 학습 시작 버튼 활성화
-- [ ] 탭6: `selected_experiment_id is None` 시 `st.stop()`
+- [ ] 탭3: 3개 조건 모두 확인 후 학습 시작 버튼 활성화
+- [ ] 탭5: `selected_experiment_id is None` 시 `st.stop()`
 
 ### 경쟁 조건
 

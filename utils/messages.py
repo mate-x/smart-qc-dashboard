@@ -1,9 +1,9 @@
 MSG: dict[str, str] = {
     "NO_DATASET":       "먼저 탭1에서 데이터 폴더를 설정해 주세요.",
     "NO_PREPROCESSING": "먼저 탭2에서 전처리 설정을 완료해 주세요.",
-    "NO_MODEL_CONFIG":  "먼저 탭3에서 모델 파라미터를 설정해 주세요.",
-    "NO_EXPERIMENTS":   "아직 실행된 실험이 없습니다. 탭4에서 학습을 먼저 실행해 주세요.",
-    "NO_SELECTED_EXP":  "탭5에서 분석할 실험을 먼저 선택해 주세요.",
+    "NO_MODEL_CONFIG":  "먼저 탭2에서 모델 파라미터를 설정해 주세요.",
+    "NO_EXPERIMENTS":   "아직 실행된 실험이 없습니다. 탭3에서 학습을 먼저 실행해 주세요.",
+    "NO_SELECTED_EXP":  "탭4에서 분석할 실험을 먼저 선택해 주세요.",
     "GRAYSCALE_DETECT": "Grayscale 이미지가 감지되었습니다. 모델 입력을 위해 RGB 3채널로 자동 변환됩니다.",
     "INVALID_FOLDER":   "MVTec AD 형식의 폴더 구조가 아닙니다. (필수: train/good/, test/, ground_truth/)",
     "TRAIN_STOPPED":    "학습이 중단되었습니다. 해당 실험은 '중단' 상태로 히스토리에 기록되었습니다.",

@@ -388,6 +388,12 @@ def test_invalid_dataset_raises(tmp_path):
 def test_model_config_roundtrip(tmp_path):
     from utils.config_manager import save_config_section, load_config
 
+    preprocessing_config = {
+        "method": "clahe",
+        "image_size": 256,
+        "resize_mode": "padding",
+        "normalization": "imagenet",
+    }
     model_config = {
         "model_type": "efficientad",
         "image_size": 256,
@@ -401,8 +407,12 @@ def test_model_config_roundtrip(tmp_path):
         }
     }
     path = str(tmp_path / "configs.yaml")
+    # "설정 저장" 버튼 1회 → preprocessing + model 섹션 동시 저장 시나리오 (탭2)
+    save_config_section("preprocessing", preprocessing_config, path=path)
     save_config_section("model", model_config, path=path)
     loaded = load_config(path)
+    assert "preprocessing" in loaded
+    assert "model" in loaded
     assert loaded["model"]["model_type"] == "efficientad"
     assert loaded["model"]["params"]["train_steps"] == 1000
 ```
@@ -544,6 +554,41 @@ def test_stage1_failure_cleanup(tmp_path, monkeypatch):
 
 ---
 
+### C.5 Guard 체인 → 탭3 진입 검증
+
+```python
+# tests/integration/test_guard_chain.py
+# 탭2 설정 저장 후 탭3 Guard 조건 충족/미충족 시나리오 검증
+
+import pytest
+from unittest.mock import patch
+import streamlit as st
+
+def test_tab3_guard_passes_when_all_conditions_met():
+    """탭2 저장 후 세 조건(dataset_path · preprocessing_config · model_config) 동시 충족 시 탭3 진입 가능"""
+    state = {
+        "dataset_path": "/data/screw",
+        "preprocessing_config": {"method": "none", "image_size": 256},
+        "model_config": {"model_type": "patchcore"},
+    }
+    with patch.object(st, "session_state", state):
+        assert state.get("dataset_path") is not None
+        assert state.get("preprocessing_config") is not None
+        assert state.get("model_config") is not None
+
+def test_tab3_guard_blocks_when_model_config_none():
+    """model_config is None 시 탭3 Guard 발동 (탭2 설정 미완료 시나리오)"""
+    state = {
+        "dataset_path": "/data/screw",
+        "preprocessing_config": {"method": "none", "image_size": 256},
+        "model_config": None,
+    }
+    with patch.object(st, "session_state", state):
+        assert state.get("model_config") is None
+```
+
+---
+
 ## D. End-to-End Tests
 
 ### D.1 학습 완료 골든 패스
@@ -557,17 +602,31 @@ def test_stage1_failure_cleanup(tmp_path, monkeypatch):
 @pytest.mark.slow
 def test_efficientad_training_golden_path(tmp_path, mvtec_dataset):
     """EfficientAD 학습 완료 후 history.json에 completed 레코드 기록 확인"""
-    # 환경 변수로 실험 디렉터리 격리
+    # 탭 플로우 (5단계):
+    # 탭1: 데이터셋 경로 선택 → dataset_meta 저장
+    # 탭2: 전처리 및 모델 설정 (전처리 영역 + 모델 영역 통합) → preprocessing_config, model_config, device_info 저장
+    # 탭3: [학습 시작] 버튼 클릭 → TrainingWorker 실행 (train_steps=100, 빠른 완료)
+    # 탭4: 완료 레코드 선택 → 결과 상세 확인
+    # 탭5: 추론 실행 → Anomaly Map 시각화
+    # --- 테스트 실행 단계 ---
     # 1. TrainingWorker 실행 (train_steps=100, 빠른 완료)
     # 2. completed 메시지 수신 확인
     # 3. save_completed_experiment() 호출 확인
     # 4. history.json loaded → status=="completed" 확인
     pass  # 실제 구현은 전체 파이프라인 연동 후 작성
+```
 
+---
+
+### D.2 학습 중단 플로우
+
+**시나리오**: 탭3 학습 진행 중 [학습 중단] 버튼 클릭 → stopped 레코드 기록.
+
+```python
 @pytest.mark.slow
 def test_training_stop_golden_path(tmp_path, mvtec_dataset):
-    """학습 중 stop_event 설정 → stopped 레코드 기록 확인"""
-    pass
+    """탭3 학습 중 stop_event 설정 → stopped 레코드 기록 확인"""
+    pass  # 실제 구현은 전체 파이프라인 연동 후 작성
 ```
 
 ---
@@ -691,7 +750,8 @@ tests/
 │   ├── test_tab1_flow.py
 │   ├── test_config_roundtrip.py
 │   ├── test_training_worker.py
-│   └── test_save_experiment.py
+│   ├── test_save_experiment.py
+│   └── test_guard_chain.py
 └── e2e/
     ├── test_golden_path.py
     └── test_reproducibility.py

@@ -127,25 +127,23 @@ Step 2 [탭2]  전처리 방식 선택 (None / Homomorphic / HE / CLAHE)
               → 파라미터 조정
               → 적용 전·후 미리보기 확인
               → image_size, 정규화 설정
-              → session_state.preprocessing_config 저장
-
-Step 3 [탭3]  모델 선택 (EfficientAD / PatchCore)
+              → 모델 선택 (EfficientAD / PatchCore)
               → 공통·전용 파라미터 설정
               → Threshold 방식·값 설정
               → 디바이스 확인 (CUDA / CPU)
-              → session_state.model_config 저장
+              → session_state.preprocessing_config, model_config, device_info 저장
 
-Step 4 [탭4]  실험명 입력 (또는 자동 생성)
+Step 3 [탭3]  실험명 입력 (또는 자동 생성)
               → [학습 시작] 클릭
               → Progress Bar, Loss 곡선, 로그 실시간 확인
               → 완료 알림 + 소요 시간 확인
 
-Step 5 [탭5]  실험 목록에서 완료된 실험 선택
+Step 4 [탭4]  실험 목록에서 완료된 실험 선택
               → Confusion Matrix, ROC Curve, Anomaly Score 분포 확인
               → (선택) 다른 실험과 지표 비교
               → (선택) 모델 저장
 
-Step 6 [탭6]  선택된 실험의 테스트 이미지 목록 확인
+Step 5 [탭5]  선택된 실험의 테스트 이미지 목록 확인
               → 이미지 선택
               → 원본 / GT 마스크 / Heatmap 3분할 시각화 확인
               → Threshold 슬라이더로 이진화 조정
@@ -157,11 +155,10 @@ Step 6 [탭6]  선택된 실험의 테스트 이미지 목록 확인
 | 탭 | 탭명 | 핵심 입력 | 핵심 출력 | session_state Write |
 |----|------|-----------|-----------|---------------------|
 | 탭1 | 데이터 폴더 구조 | 로컬 경로 텍스트 | 폴더 트리, 이미지 수, 썸네일 | `dataset_path`, `dataset_meta` |
-| 탭2 | 전처리 파라미터 설정 | 전처리 방식, 파라미터 | 전후 미리보기, 설정 요약 | `preprocessing_config` |
-| 탭3 | 모델 파라미터 설정 | 모델 종류, 하이퍼파라미터 | 디바이스 정보, 설정 요약 | `model_config`, `device_info` |
-| 탭4 | 학습 시작 + 학습 로그 | 실험명, 학습 시작 버튼 | Progress Bar, Loss 곡선, 로그 | `experiments[exp_id]`, `current_run_status` |
-| 탭5 | 실험 히스토리 + 결과 + 저장 | 실험 선택, 저장 경로 | 지표 카드, 차트, 비교 시각화 | `selected_experiment_id` |
-| 탭6 | 이상 영역 시각화 | 이미지 선택, Threshold 슬라이더 | 3분할 시각화, PNG | `anomaly_map_threshold` |
+| 탭2 | 전처리 및 모델 설정 | 전처리 방식, 파라미터, 모델 종류, 하이퍼파라미터 | 전후 미리보기, 설정 요약, 디바이스 정보 | `preprocessing_config`, `model_config`, `device_info` |
+| 탭3 | 학습 시작 + 학습 로그 | 실험명, 학습 시작 버튼 | Progress Bar, Loss 곡선, 로그 | `experiments[exp_id]`, `current_run_status` |
+| 탭4 | 실험 히스토리 + 결과 + 저장 | 실험 선택, 저장 경로 | 지표 카드, 차트, 비교 시각화 | `selected_experiment_id` |
+| 탭5 | 이상 영역 시각화 | 이미지 선택, Threshold 슬라이더 | 3분할 시각화, PNG | `anomaly_map_threshold` |
 
 ### B.3 사이드바 구성 (v1.1 변경)
 
@@ -186,12 +183,11 @@ Step 6 [탭6]  선택된 실험의 테스트 이미지 목록 확인
 | 탭 | 차단 조건 | 표시 메시지 키 |
 |----|-----------|---------------|
 | 탭2 | `session_state.dataset_path is None` | `MSG["NO_DATASET"]` |
-| 탭3 | `session_state.preprocessing_config is None` | `MSG["NO_PREPROCESSING"]` |
-| 탭4 | `session_state.model_config is None` | `MSG["NO_MODEL_CONFIG"]` |
-| 탭5 | `len(session_state.experiments) == 0` | `MSG["NO_EXPERIMENTS"]` |
-| 탭6 | `session_state.selected_experiment_id is None` | `MSG["NO_SELECTED_EXP"]` |
+| 탭3 | `session_state.model_config is None` | `MSG["NO_MODEL_CONFIG"]` |
+| 탭4 | `len(session_state.experiments) == 0` | `MSG["NO_EXPERIMENTS"]` |
+| 탭5 | `session_state.selected_experiment_id is None` | `MSG["NO_SELECTED_EXP"]` |
 
-차단 탭에서도 탭 자체는 클릭 가능해야 한다. `st.tabs()`는 항상 6개 탭을 렌더링하되, 차단 조건에 해당하는 탭의 본문에서 guard 처리한다.
+차단 탭에서도 탭 자체는 클릭 가능해야 한다. `st.tabs()`는 항상 **5개 탭**을 렌더링하되, 차단 조건에 해당하는 탭의 본문에서 guard 처리한다.
 
 ### B.5 Edge Cases
 
@@ -252,15 +248,13 @@ Step 6 [탭6]  선택된 실험의 테스트 이미지 목록 확인
 ```
 탭1 Write: dataset_path, dataset_meta
   ↓
-탭2 Write: preprocessing_config
+탭2 Write: preprocessing_config, model_config, device_info
   ↓
-탭3 Write: model_config, device_info
+탭3 Write: experiments[exp_id], current_run_status
   ↓
-탭4 Write: experiments[exp_id], current_run_status
+탭4 Write: selected_experiment_id
   ↓
-탭5 Write: selected_experiment_id
-  ↓
-탭6 Write: anomaly_map_threshold
+탭5 Write: anomaly_map_threshold
 ```
 
 각 키의 타입·제약조건은 [00_Global_Context_Document.md 3.1절](./00_Global_Context_Document.md#31-session_state-초기화-명세)을 따른다.
@@ -316,7 +310,7 @@ N/A - 이 시스템은 REST API 서버를 포함하지 않는다.
 
 ### E.3 전처리 파이프라인 위치
 
-전처리(Homomorphic/HE/CLAHE)는 Anomalib DataModule이 아닌 **`utils/image_utils.py`에서 구현**하여 탭2 미리보기와 탭4 학습 루프가 동일 코드를 공유한다.
+전처리(Homomorphic/HE/CLAHE)는 Anomalib DataModule이 아닌 **`utils/image_utils.py`에서 구현**하여 탭2 미리보기와 탭3 학습 루프가 동일 코드를 공유한다.
 
 ```
 이미지 로드 (PIL)
@@ -366,14 +360,14 @@ N/A - 이 시스템은 REST API 서버를 포함하지 않는다.
 
 | # | 기준 | 검증 방법 |
 |---|------|-----------|
-| AC-01 | 탭1~탭6 Golden Path 플로우(B.1절)를 오류 없이 완주 | E2E 수동 테스트 |
+| AC-01 | 탭1~탭5 Golden Path 플로우(B.1절)를 오류 없이 완주 | E2E 수동 테스트 |
 | AC-02 | EfficientAD-medium 학습 완료 시 `duration_seconds ≤ 1200` | g4dn.xlarge 실측 |
 | AC-03 | PatchCore (coreset 10%) 학습 완료 시 `duration_seconds ≤ 600` | g4dn.xlarge 실측 |
 | AC-04 | MVTec AD Screw 기준 AUC ≥ 0.95 달성 실험 존재 | history.json 확인 |
 | AC-05 | 동일 seed+파라미터로 2회 실행 시 AUC 소수점 4자리 일치 | 재현성 테스트 |
 | AC-06 | Docker 이미지 빌드 성공 + GPU 컨테이너 정상 실행 | `docker run --gpus all` |
 | AC-07 | 탭 전환 응답 < 1초 (학습 중 포함) | 수동 측정 |
-| AC-08 | 잘못된 폴더 경로 입력 시 탭4 진입 차단 + 경고 메시지 표시 | 수동 테스트 |
+| AC-08 | 잘못된 폴더 경로 입력 시 탭3 진입 차단 + 경고 메시지 표시 | 수동 테스트 |
 | AC-09 | [학습 중지] 클릭 후 history.json에 status="중단" 기록 확인 | 파일 내용 검증 |
 | AC-10 | 모델 저장 후 `./models/{exp_id}/` 디렉토리에 `.pth`와 `configs.yaml` 존재 확인 | 파일 존재 검증 |
 | AC-11 | [⏸ 일시정지] 클릭 후 `./models/checkpoints/{exp_id}_step{N}.ckpt` 파일 존재 확인 | 파일 존재 검증 |
@@ -387,11 +381,10 @@ N/A - 이 시스템은 REST API 서버를 포함하지 않는다.
 Given:  MVTec AD Screw 데이터셋이 /app/dataset/screw 에 올바른 구조로 존재한다
         CUDA 디바이스가 사용 가능하다
 When:   탭1에서 /app/dataset/screw 경로 입력 → 검증 통과
-        탭2에서 전처리 = CLAHE (clipLimit=2.0), image_size=256 설정
-        탭3에서 EfficientAD-medium, train_steps=70000, seed=42 설정
-        탭4에서 [학습 시작] 클릭 → 학습 완료 대기
-        탭5에서 완료된 실험 선택
-        탭6에서 테스트 이미지 선택
+        탭2에서 전처리 = CLAHE (clipLimit=2.0), image_size=256 및 EfficientAD-medium, train_steps=70000, seed=42 설정
+        탭3에서 [학습 시작] 클릭 → 학습 완료 대기
+        탭4에서 완료된 실험 선택
+        탭5에서 테스트 이미지 선택
 Then:   history.json에 status="completed" 레코드 존재
         metrics.auc >= 0.95
         duration_seconds <= 1200
@@ -402,7 +395,7 @@ Then:   history.json에 status="completed" 레코드 존재
 #### TC-02: 학습 중단 플로우
 
 ```
-Given:  탭4에서 학습이 진행 중이다 (current_run_status == "running")
+Given:  탭3에서 학습이 진행 중이다 (current_run_status == "running")
 When:   사용자가 [학습 중지] 버튼을 클릭한다
 Then:   current_run_status == "idle"로 복귀
         history.json에 status="중단", metrics=null 레코드 추가
@@ -418,7 +411,7 @@ When:   검증 로직이 실행된다
 Then:   st.error(ERR_DATASET_NOT_FOUND) 표시
         session_state.dataset_path == None 유지
         탭2 진입 시 MSG["NO_DATASET"] 표시
-        탭4 [학습 시작] 버튼 렌더링 안됨 (guard 적용)
+        탭3 [학습 시작] 버튼 렌더링 안됨 (guard 적용)
 ```
 
 ---
@@ -461,14 +454,14 @@ Then:   st.error(ERR_DATASET_NOT_FOUND) 표시
 | Day 1 오전 1h | 09:00~10:00 | B | session_state_init.py 구현 |
 | Day 1 오전 1h | 09:00~10:00 | C | config_manager.py, configs_template.yaml |
 | Day 1 오전 2h | 10:00~12:00 | A | 탭1 구현 (폴더 검증, 트리, 썸네일) |
-| Day 1 오전 2h | 10:00~12:00 | B | 탭3 EfficientAD 파트 |
-| Day 1 오전 2h | 10:00~12:00 | C | 탭3 PatchCore 파트 |
-| Day 1 오후 | 13:00~18:00 | A | 탭2 구현 (전처리, 미리보기) |
-| Day 1 오후 | 13:00~18:00 | B | 탭4 EfficientAD 학습 루프 |
-| Day 1 오후 | 13:00~18:00 | C | 탭4 PatchCore 학습 루프 |
-| Day 2 오전 | 09:00~13:00 | A | 탭6 구현 |
-| Day 2 오전 | 09:00~13:00 | B | 탭5 전반 (히스토리, 상세 결과) |
-| Day 2 오전 | 09:00~13:00 | C | 탭5 후반 (비교 차트, 저장) + Docker |
+| Day 1 오전 2h | 10:00~12:00 | B | 통합 탭2 EfficientAD 모델 설정 파트 (tab2_config.py) |
+| Day 1 오전 2h | 10:00~12:00 | C | 통합 탭2 PatchCore 모델 설정 파트 (tab2_config.py) |
+| Day 1 오후 | 13:00~18:00 | A | 탭2 구현 (전처리·모델 설정 통합, 미리보기) (tab2_config.py) |
+| Day 1 오후 | 13:00~18:00 | B | 탭3 EfficientAD 학습 루프 |
+| Day 1 오후 | 13:00~18:00 | C | 탭3 PatchCore 학습 루프 |
+| Day 2 오전 | 09:00~13:00 | A | 탭5 구현 |
+| Day 2 오전 | 09:00~13:00 | B | 탭4 전반 (히스토리, 상세 결과) |
+| Day 2 오전 | 09:00~13:00 | C | 탭4 후반 (비교 차트, 저장) + Docker |
 | Day 2 오후 | 14:00~18:00 | A+B+C | 통합 테스트, 버그 수정 |
 
 > **역할 상세**: [역할분담표_비전검사_대시보드.md](./역할분담표_비전검사_대시보드.md) 참조

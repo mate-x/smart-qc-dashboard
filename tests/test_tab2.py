@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import pytest
 
-from tabs.tab2_preprocessing import (
+from tabs.tab2_config import (
     _IMAGENET_MEAN,
     _IMAGENET_STD,
     _METHOD_MAP,
     _REVERSE_METHOD_MAP,
-    _build_config,
+    _build_preprocessing_config as _build_config,
     _parse_float_list,
     _snap_image_size,
 )

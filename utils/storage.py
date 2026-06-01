@@ -205,7 +205,8 @@ def check_disk_space(
 def check_disk_before_save(model_type: str) -> None:
     """
     100 MB 미만: RuntimeError raise.
-    500 MB 미만: st.warning() 표시 (저장 허용).
+    PatchCore 1024 MB / 기타 500 MB 미만: st.warning() 표시 (저장 허용).
+    PatchCore는 register_buffer로 memory_bank가 .pth에 포함되어 파일 크기가 큼.
     Streamlit context에서만 호출.
     """
     import streamlit as st
@@ -216,8 +217,9 @@ def check_disk_before_save(model_type: str) -> None:
             f"ERR_DISK_SPACE: 디스크 여유 공간이 부족합니다 ({free_mb:.0f} MB). "
             "모델 저장에 최소 100 MB가 필요합니다."
         )
-    if free_mb < 500.0:
+    warn_mb = 1024.0 if model_type == "patchcore" else 500.0
+    if free_mb < warn_mb:
         st.warning(
             f"디스크 여유 공간이 {free_mb:.0f} MB입니다. "
-            "저장은 허용되지만 500 MB 이상 권장합니다."
+            f"저장은 허용되지만 {warn_mb:.0f} MB 이상 권장합니다."
         )

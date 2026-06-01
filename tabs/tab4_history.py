@@ -336,10 +336,12 @@ def _do_model_save(record: dict, save_path: str) -> None:
                 "100 MB 이상 필요합니다."
             )
             return
-        if free_mb < 500:
+        model_type = record.get("model_config", {}).get("model_type", "")
+        warn_mb = 1024 if model_type == "patchcore" else 500
+        if free_mb < warn_mb:
             st.warning(
                 f"디스크 여유 공간이 {free_mb:.0f} MB입니다. "
-                "저장은 허용되지만 500 MB 이상 권장합니다."
+                f"저장은 허용되지만 {warn_mb} MB 이상 권장합니다."
             )
     except OSError:
         pass

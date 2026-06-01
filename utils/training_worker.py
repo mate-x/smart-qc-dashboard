@@ -661,16 +661,22 @@ class TrainingWorker(threading.Thread):
         feature_stack = torch.cat(all_features, dim=0)
         coreset_ratio = params.get("coreset_sampling_ratio", 0.1)
         coreset_size  = max(1, int(len(feature_stack) * coreset_ratio))
-        indices       = torch.randperm(len(feature_stack))[:coreset_size]
+        _g = torch.Generator()
+        _g.manual_seed(self.model_config.get("random_seed", 42))
+        indices       = torch.randperm(len(feature_stack), generator=_g)[:coreset_size]
         coreset       = feature_stack[indices].to(device)
 
         # model.model.memory_bank 또는 model.memory_bank 중 존재하는 쪽에 설정
         self._emit_stage(4, "Memory Bank 설정")
         torch_model = getattr(model, "model", None)
         if torch_model is not None and hasattr(torch_model, "memory_bank"):
-            torch_model.memory_bank = coreset
+            # anomalib 내부 forward()가 인식하는 방식
+            torch_model.register_buffer("memory_bank", coreset)
         else:
-            model.memory_bank = coreset
+            # torch_model이 없거나 memory_bank 속성이 없는 경우
+            # state_dict() 포함을 위해 register_buffer 사용
+            target = torch_model if torch_model is not None else model
+            target.register_buffer("memory_bank", coreset)
 
         elapsed_total = time.time() - self._start_time
         self._write_log(
@@ -702,7 +708,7 @@ class TrainingWorker(threading.Thread):
           anomaly_scores: list[float]
           anomaly_maps:   dict[str → np.ndarray(H,W)]
         """
-        from utils.model_factory import _get_anomaly_map, _get_pred_score
+        from utils.model_factory import _get_anomaly_map
 
         model = model.to(device)
         model.eval()
@@ -721,7 +727,7 @@ class TrainingWorker(threading.Thread):
                 image_path = batch["image_path"][0]
 
                 amap  = _get_anomaly_map(model, image)
-                score = _get_pred_score(model, image)
+                score = float(amap.max())              # ← 이미 계산된 amap 재사용
 
                 y_true.append(label)
                 anomaly_scores.append(round(score, 6))

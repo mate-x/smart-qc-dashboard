@@ -11,9 +11,16 @@ from __future__ import annotations
 from datetime import datetime, timezone, timedelta
 
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
-from inspection.utils.insp_session_init import reset_inspection_state
+from inspection.utils.insp_session_init import (
+    reset_inspection_state,
+    get_sim_group_count,
+    get_sim_all_group_labels,
+    get_sim_group_label,
+    get_sim_group_index,
+)
 from utils.logger import log_warning
 from utils.messages import INSP_MSG
 
@@ -80,6 +87,9 @@ def render() -> None:
     # KPI 카드 — Guard 없음, 기록 없으면 0 표시 (FR-INSP-T2-02)
     _render_kpi(records)
 
+    # 실시간 통계 차트 3분할 (FR-INSP-T2-05~07)
+    _render_chart_section()
+
     # 이력 초기화 섹션 (FR-INSP-T2-04)
     st.divider()
     _render_clear_section()
@@ -133,6 +143,354 @@ def _render_kpi(records: list[dict]) -> None:
     col3.metric("불량",    bad)
     col4.metric("불량률",  rate)
 
+
+# ── 실시간 통계 차트 (FR-INSP-T2-05) ─────────────────────────────────────────
+
+def _get_group_records(
+    records: list[dict], group_idx: int, unit: int
+) -> list[dict]:
+    """
+    seq 번호 기준으로 특정 그룹에 속하는 검사 기록을 필터링한다 (FR-INSP-T2-06).
+    그룹 group_idx(0-indexed): seq (group_idx*unit + 1) ~ (group_idx + 1)*unit
+    """
+    return [
+        r for r in records
+        if get_sim_group_index(r.get("seq", 0), unit) == group_idx
+    ]
+
+
+def _build_histogram_fig(
+    group_records: list[dict],
+    threshold: float,
+    group_label: str,
+    unit: int,
+) -> go.Figure:
+    """
+    FR-INSP-T2-06: Anomaly Score 히스토그램 Plotly 피겨 생성.
+
+    파란색 bar: 정상 판정 (anomaly_score < threshold)
+    빨간색 bar: 불량 판정 (anomaly_score >= threshold)
+    x축: 0~1 고정 / y축: 동적 (기본 0~10, 데이터에 따라 확장)
+    threshold 수직 점선 표시
+    """
+    normal_scores = [
+        r["anomaly_score"] for r in group_records
+        if r.get("anomaly_score", 0.0) < threshold
+    ]
+    defect_scores = [
+        r["anomaly_score"] for r in group_records
+        if r.get("anomaly_score", 0.0) >= threshold
+    ]
+
+    fig = go.Figure()
+
+    _bin_cfg = dict(start=0.0, end=1.001, size=0.05)  # 20 bins, 0~1 fixed
+
+    if normal_scores:
+        fig.add_trace(go.Histogram(
+            x=normal_scores,
+            name="정상",
+            marker_color="#4e9af1",
+            opacity=0.75,
+            xbins=_bin_cfg,
+        ))
+
+    if defect_scores:
+        fig.add_trace(go.Histogram(
+            x=defect_scores,
+            name="불량",
+            marker_color="#e05555",
+            opacity=0.75,
+            xbins=_bin_cfg,
+        ))
+
+    # threshold 수직 점선
+    fig.add_vline(
+        x=threshold,
+        line_dash="dash",
+        line_color="red",
+        annotation_text=f"thr={threshold:.3f}",
+        annotation_position="top right",
+    )
+
+    # y축 기본 0~10, 데이터에 따라 동적 확장
+    max_count = max(len(normal_scores), len(defect_scores), 0)
+    y_max = max(10, max_count + 2)
+
+    fig.update_layout(
+        title=f"Anomaly Score 분포 — {group_label}",
+        xaxis=dict(range=[-0.2, 1.2], title="Anomaly Score"),  # #02: 여유 공간 확보
+        yaxis=dict(range=[0, y_max], title="검사 수"),
+        barmode="overlay",
+        height=300,
+        margin=dict(t=50, b=40, l=45, r=15),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+
+    return fig
+
+
+def _build_group_table_df(total_seqs: int, unit: int) -> pd.DataFrame:
+    """
+    단위 크기 기준 시간 범위 레이블 DataFrame 반환 (FR-INSP-T2-05).
+    컬럼: '시간 범위' (단일 컬럼).
+    빈 기록이면 빈 DataFrame (컬럼만 존재).
+    """
+    labels = get_sim_all_group_labels(total_seqs, unit)
+    if not labels:
+        return pd.DataFrame(columns=["시간 범위"])
+    return pd.DataFrame({"시간 범위": labels})
+
+
+def _render_unit_buttons(current_unit: int) -> None:
+    """
+    단위 선택 버튼 3개 렌더링 (FR-INSP-T2-05).
+    col_left 안에서 호출되므로 3분할 왼쪽 열 너비에 자동 맞춰짐.
+    """
+    b20, b40, b100 = st.columns(3)
+    with b20:
+        if st.button(
+            "20개",
+            type="primary" if current_unit == 20 else "secondary",
+            use_container_width=True,
+            key="insp_chart_unit_btn_20",
+        ):
+            st.session_state["insp_chart_unit"] = 20
+            st.session_state["insp_chart_selected_group"] = None
+            st.rerun()
+    with b40:
+        if st.button(
+            "40개",
+            type="primary" if current_unit == 40 else "secondary",
+            use_container_width=True,
+            key="insp_chart_unit_btn_40",
+        ):
+            st.session_state["insp_chart_unit"] = 40
+            st.session_state["insp_chart_selected_group"] = None
+            st.rerun()
+    with b100:
+        if st.button(
+            "100개",
+            type="primary" if current_unit == 100 else "secondary",
+            use_container_width=True,
+            key="insp_chart_unit_btn_100",
+        ):
+            st.session_state["insp_chart_unit"] = 100
+            st.session_state["insp_chart_selected_group"] = None
+            st.rerun()
+
+
+def _render_group_table(total_seqs: int, unit: int) -> int | None:
+    """
+    FR-INSP-T2-05: 시간 범위 테이블 렌더링.
+    행 클릭 시 insp_chart_selected_group 갱신.
+    기본 선택: 가장 최근(마지막) 그룹.
+    반환: 현재 선택된 그룹 인덱스(0-indexed) 또는 None.
+    """
+    df = _build_group_table_df(total_seqs, unit)
+
+    if df.empty:
+        st.caption("검사 기록이 없습니다.")
+        return None
+
+    group_count = get_sim_group_count(total_seqs, unit)
+
+    # 기본 선택: 가장 최근 그룹 (마지막 인덱스)
+    current = st.session_state.get("insp_chart_selected_group")
+    if current is None or current >= group_count:
+        current = group_count - 1
+        st.session_state["insp_chart_selected_group"] = current
+
+    event = st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True,
+        selection_mode="single-row",
+        on_select="rerun",
+        key="insp_group_table",
+    )
+
+    selected_rows = event.selection.rows if event else []
+    if selected_rows:
+        new_sel = selected_rows[0]
+        if 0 <= new_sel < group_count:
+            st.session_state["insp_chart_selected_group"] = new_sel
+            current = new_sel
+
+    return current
+
+
+def _render_histogram(records: list[dict], unit: int) -> None:
+    """FR-INSP-T2-06: 선택된 그룹의 Anomaly Score 히스토그램 렌더링."""
+    selected_group = st.session_state.get("insp_chart_selected_group")
+
+    if not records or selected_group is None:
+        st.caption("Anomaly Score 히스토그램")
+        return
+
+    group_count = get_sim_group_count(len(records), unit)
+    if selected_group >= group_count:
+        st.caption("Anomaly Score 히스토그램")
+        return
+
+    threshold   = float(
+        (st.session_state.get("insp_active_model") or {}).get("threshold", 0.5)
+    )
+    group_recs  = _get_group_records(records, selected_group, unit)
+    group_label = get_sim_group_label(selected_group, unit)
+
+    if not group_recs:
+        st.caption("선택된 그룹에 검사 기록이 없습니다.")
+        return
+
+    fig = _build_histogram_fig(group_recs, threshold, group_label, unit)
+    st.plotly_chart(fig, use_container_width=True)
+
+
+_INSP_INTERVAL_SEC = 3  # 검사 1건 = 3초 (자동 검사 간격 기준)
+
+
+def _build_scatter_fig(
+    group_records: list[dict],
+    threshold: float,
+    group_label: str,
+    unit: int,
+) -> go.Figure:
+    """
+    FR-INSP-T2-07: Anomaly Score 산점도(Control Chart 스타일) Plotly 피겨 생성.
+
+    x축: 시간(sec), 0 ~ unit×3 고정 (검사 1건 = 3초 기준)
+         tick 6개 등간격 (unit=20 → 0,12,24,36,48,60 / unit=40 → 0,24,..,120 / unit=100 → 0,60,..,300)
+    y축: [-0.2, 1.2] (정규화 score 시각적 여백 포함)
+    파란 점: 정상 (score < threshold) / 빨간 점: 불량 (score >= threshold)
+    앞뒤 점 선 연결 (control chart 스타일)
+    threshold 수평 빨간 점선 표시
+    """
+    sorted_recs = sorted(group_records, key=lambda r: r.get("seq", 0))
+
+    if sorted_recs:
+        first_seq = sorted_recs[0].get("seq", 1)
+        group_idx = (first_seq - 1) // unit
+        # x = 그룹 내 0-indexed 위치 × 검사 간격(초)
+        # 순번 p(1-indexed): time = (p-1) × 3sec
+        x_values = [
+            (r.get("seq", 0) - group_idx * unit - 1) * _INSP_INTERVAL_SEC
+            for r in sorted_recs
+        ]
+    else:
+        x_values = []
+
+    y_values = [r.get("anomaly_score", 0.0) for r in sorted_recs]
+    colors   = [
+        "#4e9af1" if r.get("anomaly_score", 0.0) < threshold else "#e05555"
+        for r in sorted_recs
+    ]
+
+    fig = go.Figure()
+
+    # 데이터 산점도 (lines + markers)
+    fig.add_trace(go.Scatter(
+        x=x_values,
+        y=y_values,
+        mode="lines+markers",
+        marker=dict(color=colors, size=8),
+        line=dict(color="lightgray", width=1),
+        showlegend=False,
+    ))
+
+    # threshold 수평 빨간 점선
+    fig.add_hline(
+        y=threshold,
+        line_dash="dash",
+        line_color="red",
+        annotation_text=f"thr={threshold:.3f}",
+        annotation_position="top right",
+    )
+
+    # x축: 0 ~ unit×3(sec), tick 6개 등간격
+    max_sec       = unit * _INSP_INTERVAL_SEC
+    tick_interval = max_sec // 5
+    tick_vals     = list(range(0, max_sec + 1, tick_interval))
+
+    fig.update_layout(
+        title=f"Anomaly Score 추이 — {group_label}",
+        xaxis=dict(
+            range=[0, max_sec],
+            title="시간 (sec)",
+            tickvals=tick_vals,
+            ticktext=[str(v) for v in tick_vals],
+        ),
+        yaxis=dict(range=[-0.2, 1.2], title="Anomaly Score"),  # #02: 여유 공간 확보
+        height=300,
+        margin=dict(t=50, b=40, l=45, r=15),
+    )
+
+    return fig
+
+
+def _render_scatter(records: list[dict], unit: int) -> None:
+    """FR-INSP-T2-07: 선택된 그룹의 Anomaly Score 산점도 렌더링."""
+    selected_group = st.session_state.get("insp_chart_selected_group")
+
+    if not records or selected_group is None:
+        st.caption("Anomaly Score 산점도")
+        return
+
+    group_count = get_sim_group_count(len(records), unit)
+    if selected_group >= group_count:
+        st.caption("Anomaly Score 산점도")
+        return
+
+    threshold   = float(
+        (st.session_state.get("insp_active_model") or {}).get("threshold", 0.5)
+    )
+    group_recs  = _get_group_records(records, selected_group, unit)
+    group_label = get_sim_group_label(selected_group, unit)
+
+    if not group_recs:
+        st.caption("선택된 그룹에 검사 기록이 없습니다.")
+        return
+
+    fig = _build_scatter_fig(group_recs, threshold, group_label, unit)
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def _render_chart_section() -> None:
+    """
+    FR-INSP-T2-05~07: KPI 카드 아래 3분할 실시간 통계 차트 영역.
+
+    [좌] 단위 선택 버튼(20/40/100개) + 시간 범위 테이블  ← 버튼이 col_left 안에 위치
+    [중] Anomaly Score 히스토그램    (FR-INSP-T2-06)
+    [우] Anomaly Score 산점도        (FR-INSP-T2-07)
+
+    버튼을 col_left 안에 배치하는 이유:
+      1. (#01) 버튼 크기가 왼쪽 열 너비에 자동 맞춰짐 (1/3 페이지 폭 = 기존 대비 절반 이하)
+      2. (#02) 버튼 컬럼이 별도의 외부 st.columns()를 만들지 않으므로
+               col_left→col_mid 간 session_state 전파가 보장됨
+    """
+    records: list[dict] = st.session_state.get("insp_records", [])
+    unit: int           = st.session_state.get("insp_chart_unit", 20)
+    total_seqs          = len(records)
+
+    st.markdown("---")
+    st.markdown("##### 실시간 통계 차트")
+
+    # 3분할 레이아웃 (단위 버튼도 col_left 안에 배치)
+    col_left, col_mid, col_right = st.columns(3)
+
+    with col_left:
+        # 단위 선택 버튼 — col_left 폭에 맞춰 렌더 (#01 수정)
+        _render_unit_buttons(unit)
+        _render_group_table(total_seqs, unit)
+
+    with col_mid:
+        _render_histogram(records, unit)
+
+    with col_right:
+        _render_scatter(records, unit)
+
+
+# ── 이력 초기화 ───────────────────────────────────────────────────────────────
 
 def _render_clear_section() -> None:
     if not st.session_state.get("_tab2_confirm_clear", False):

@@ -1,9 +1,9 @@
 # 01. Product Overview
 
 > **참조 기준**: [00_Global_Context_Document.md](./00_Global_Context_Document.md)
-> **버전**: v1.1
+> **버전**: v1.2
 > **작성일**: 2026-05-08
-> **최종수정**: 2026-05-26
+> **최종수정**: 2026-05-29
 > **후속 문서**: [02_User_Personas_and_Use_Cases.md](./02_User_Personas_and_Use_Cases.md)
 
 ---
@@ -30,12 +30,12 @@
 
 하나의 Streamlit 앱 안에 **두 개의 대시보드**를 포함한다.
 
-| 대시보드 | 대상 사용자 | 핵심 기능 |
+| 플랫폼 | 대상 사용자 | 핵심 기능 |
 |----------|------------|---------|
-| **모델 탐색 대시보드** | AI/ML 엔지니어, 데이터 분석가 | 코드 작성 없이 EfficientAD/PatchCore 학습·평가·비교·자산화 |
-| **비전검사 대시보드** | 현장 작업자, 품질 관리자 | 검증된 모델로 부품 추론·판정·이력 관리 |
+| **모델 탐색 플랫폼** | AI/ML 엔지니어, 데이터 분석가 | 코드 작성 없이 EfficientAD/PatchCore 학습·평가·비교·자산화 |
+| **비전검사 플랫폼** | 현장 작업자, 품질 관리자 | 검증된 모델로 부품 추론·판정·이력 관리 |
 
-사이드바의 전환 버튼으로 두 대시보드를 전환한다. 두 대시보드는 `session_state` 네임스페이스(`insp_` 접두사)로 격리된다.
+사이드바의 전환 버튼으로 두 플랫폼을 전환한다. 두 플랫폼은 `session_state` 네임스페이스(`insp_` 접두사)로 격리된다.
 
 ### A.2 해결하는 문제
 
@@ -60,7 +60,7 @@
 | 데이터 검증 | MVTec AD 폴더 구조 검증, OK/NG 폴더 형식 자동 감지 및 80/20 자동 분할, 이미지 수 카운트, 썸네일 렌더링, Grayscale 자동 감지 |
 | 전처리 | None / Homomorphic Filter / HE / CLAHE 선택, Resize+Padding 고정, 정규화 선택 |
 | 모델 설정 | EfficientAD (small/medium), PatchCore (WideResNet50/ResNet18/ResNet50) 파라미터 GUI |
-| 학습 실행 | 학습 루프, Progress Bar, 실시간 Loss 곡선, 학습 중지, 일시정지/재시작, 체크포인트 저장/재시작, 실험 히스토리 저장 |
+| 학습 실행 | 학습 루프, Progress Bar, 실시간 Loss 곡선, 모델별 학습 단계 스텝 인디케이터, ETA 표시, 학습 중지, 일시정지/재시작, 체크포인트 저장/재시작, 실험 히스토리 저장, 실험 대기열 구성, 일괄 학습 순차 실행 (건너뛰기·실패 처리 포함) |
 | 결과 비교 | Confusion Matrix, ROC Curve, Anomaly Score 분포, 다중 실험 비교 차트 |
 | 시각화 | 3분할 Anomaly Map (원본/GT/Heatmap), Threshold 슬라이더, PNG 저장 |
 | 모델 저장 | state_dict + configs.yaml 고정 포맷 |
@@ -83,7 +83,7 @@
 |-----------|-----------|
 | 실시간 검사 | 수동 검사(1개 검사) / 자동 검사(3초마다 1개) 버튼, 판정결과·원본·Anomaly Map 3열 표시 |
 | 불량 알림 | 불량 감지 시 팝업, 자동 검사 자동 중지, 확인 버튼으로 팝업 해제 |
-| 검사 이력 | 세션 기반 이력 테이블(5컬럼), CSV 내보내기, KPI 카드(총 검사·양품·불량·불량률) |
+| 검사 이력 | 세션 기반 이력 테이블(5컬럼), CSV 내보내기, KPI 카드(총 검사·양품·불량·불량률), 실시간 Anomaly Score 히스토그램·산점도 (3분할, 단위별 그룹화) |
 | 모델 교체 | history.json의 완료 실험 목록, F1 정렬, 교체 시 이력 초기화 |
 
 **비전검사 대시보드 — OUT OF SCOPE**
@@ -160,21 +160,22 @@ Step 5 [탭5]  선택된 실험의 테스트 이미지 목록 확인
 | 탭4 | 실험 히스토리 + 결과 + 저장 | 실험 선택, 저장 경로 | 지표 카드, 차트, 비교 시각화 | `selected_experiment_id` |
 | 탭5 | 이상 영역 시각화 | 이미지 선택, Threshold 슬라이더 | 3분할 시각화, PNG | `anomaly_map_threshold` |
 
-### B.3 사이드바 구성 (v1.1 변경)
+### B.3 사이드바 구성 (v1.2 변경)
 
 ```
 ┌─────────────────────────────────┐
-│  [ 🔬 모델 탐색 대시보드       ] │  ← 버튼 (active_dashboard == "explorer" 시 강조)
-│  [ 🏭 비전검사 대시보드        ] │  ← 버튼 (active_dashboard == "inspection" 시 강조)
+│        Smart QC Platform        │
+│  [ 🔬 모델 탐색 플랫폼         ] │  ← 버튼 (active_dashboard == "explorer" 시 강조)
+│  [ 🏭 비전검사 플랫폼          ] │  ← 버튼 (active_dashboard == "inspection" 시 강조)
 └─────────────────────────────────┘
 ```
 
-> **v1.1 변경**: 기존 사이드바(데이터셋 경로·이미지 수·디바이스 정보·현재 설정 표시)를 **대시보드 전환 버튼 2개**로 교체한다.
+> **v1.2 변경**: 사이드바 타이틀 "Smart QC Dashboard" → **"Smart QC Platform"**, 버튼 레이블 변경.
 >
-> - `active_dashboard == "explorer"`: 모델 탐색 대시보드(탭1~6) 렌더링
-> - `active_dashboard == "inspection"`: 비전검사 대시보드(탭1~3) 렌더링
+> - `active_dashboard == "explorer"`: 모델 탐색 플랫폼(탭1~5) 렌더링
+> - `active_dashboard == "inspection"`: 비전검사 플랫폼(탭1~3) 렌더링
 > - 버튼 2개 외 사이드바 추가 콘텐츠 없음
-> - 기존 사이드바 내 정보(데이터셋·디바이스·현재 설정)는 **완전 제거**
+> - 기존 사이드바 내 정보(데이터셋·디바이스·현재 설정)는 **완전 제거** (v1.1에서 확정)
 
 ### B.4 탭 진입 차단 조건 (Guard)
 

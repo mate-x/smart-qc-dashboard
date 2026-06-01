@@ -110,7 +110,7 @@ class TestSidebarRouting:
         state: dict = {"active_dashboard": "explorer"}
         monkeypatch.setattr(_st, "session_state", state)
 
-        # sidebar.py: if st.button("🏭 비전검사 대시보드", ...): st.session_state.active_dashboard = "inspection"
+        # sidebar.py: if st.button("🏭 비전검사 플랫폼", ...): st.session_state.active_dashboard = "inspection"
         state["active_dashboard"] = "inspection"
         assert state["active_dashboard"] == "inspection"
 

@@ -9,11 +9,17 @@ from __future__ import annotations
 
 import pytest
 
+import re
+
 from tabs.tab2_config import (
     build_model_config,
     build_patchcore_params,
     compute_threshold_ratio,
     _apply_patchcore_widgets,
+    _make_queue_item,
+    _build_queue_df,
+    _STATUS_COLORS,
+    _VALID_STATUSES,
 )
 
 # ─────────────────────────────────────────────
@@ -296,3 +302,125 @@ class TestComputeThresholdRatio:
         normal, defect = compute_threshold_ratio("percentile", 33.3)
         assert normal == round(normal, 6)
         assert defect == round(defect, 6)
+
+
+# ── TestMakeQueueItem ────────────────────────────────────────────────────────
+
+_SAMPLE_PRE = {"method": "clahe", "params": {"clip_limit": 2.0}, "image_size": 256}
+_SAMPLE_MDL = {"model_type": "patchcore", "batch_size": 16, "params": {"backbone": "wide_resnet50_2"}}
+
+
+class TestMakeQueueItem:
+    """_make_queue_item() — 대기열 항목 생성 검증 (FR-T2-16)."""
+
+    def test_returns_dict(self):
+        item = _make_queue_item(_SAMPLE_PRE, _SAMPLE_MDL)
+        assert isinstance(item, dict)
+
+    def test_required_keys_present(self):
+        item = _make_queue_item(_SAMPLE_PRE, _SAMPLE_MDL)
+        assert {"name", "preprocessing_config", "model_config", "status"} <= item.keys()
+
+    def test_status_is_pending(self):
+        """초기 status는 '대기중'이어야 한다."""
+        item = _make_queue_item(_SAMPLE_PRE, _SAMPLE_MDL)
+        assert item["status"] == "대기중"
+
+    def test_name_format_patchcore(self):
+        """PatchCore: 이름은 'PATCHCORE_{4hex}' 형식이어야 한다."""
+        item = _make_queue_item(_SAMPLE_PRE, _SAMPLE_MDL)
+        assert re.fullmatch(r"PATCHCORE_[0-9a-f]{4}", item["name"]), \
+            f"name={item['name']!r} does not match PATCHCORE_{{4hex}}"
+
+    def test_name_format_efficientad(self):
+        """EfficientAD: 이름은 'EFFICIENTAD_{4hex}' 형식이어야 한다."""
+        mdl = {**_SAMPLE_MDL, "model_type": "efficientad"}
+        item = _make_queue_item(_SAMPLE_PRE, mdl)
+        assert re.fullmatch(r"EFFICIENTAD_[0-9a-f]{4}", item["name"])
+
+    def test_preprocessing_config_is_copy(self):
+        """preprocessing_config는 원본과 독립적인 복사본이어야 한다."""
+        item = _make_queue_item(_SAMPLE_PRE, _SAMPLE_MDL)
+        assert item["preprocessing_config"] is not _SAMPLE_PRE
+        assert item["preprocessing_config"] == _SAMPLE_PRE
+
+    def test_model_config_is_copy(self):
+        """model_config는 원본과 독립적인 복사본이어야 한다."""
+        item = _make_queue_item(_SAMPLE_PRE, _SAMPLE_MDL)
+        assert item["model_config"] is not _SAMPLE_MDL
+        assert item["model_config"] == _SAMPLE_MDL
+
+    def test_unique_names_per_call(self):
+        """호출마다 다른 이름이 생성될 가능성이 높아야 한다 (uuid 기반)."""
+        names = {_make_queue_item(_SAMPLE_PRE, _SAMPLE_MDL)["name"] for _ in range(10)}
+        assert len(names) >= 5  # 10회 중 최소 5개 이상 고유
+
+    def test_status_is_valid_value(self):
+        """status 값이 _VALID_STATUSES에 포함되어야 한다."""
+        item = _make_queue_item(_SAMPLE_PRE, _SAMPLE_MDL)
+        assert item["status"] in _VALID_STATUSES
+
+
+# ── TestBuildQueueDf ─────────────────────────────────────────────────────────
+
+class TestBuildQueueDf:
+    """_build_queue_df() — 대기열 DataFrame 변환 검증 (FR-T2-17)."""
+
+    def _item(self, model_type: str = "patchcore", status: str = "대기중") -> dict:
+        return {
+            "name": f"test_{model_type}",
+            "preprocessing_config": _SAMPLE_PRE,
+            "model_config": {**_SAMPLE_MDL, "model_type": model_type},
+            "status": status,
+        }
+
+    def test_empty_list_returns_empty_df(self):
+        """빈 목록 → 빈 DataFrame (컬럼만 존재)."""
+        df = _build_queue_df([])
+        assert len(df) == 0
+        assert list(df.columns) == ["순번", "실험명", "모델", "상태"]
+
+    def test_single_item_row_count(self):
+        df = _build_queue_df([self._item()])
+        assert len(df) == 1
+
+    def test_multiple_items_row_count(self):
+        items = [self._item() for _ in range(5)]
+        df = _build_queue_df(items)
+        assert len(df) == 5
+
+    def test_patchcore_abbreviation(self):
+        """patchcore → 모델 컬럼값 'PC'."""
+        df = _build_queue_df([self._item("patchcore")])
+        assert df.iloc[0]["모델"] == "PC"
+
+    def test_efficientad_abbreviation(self):
+        """efficientad → 모델 컬럼값 'EAD'."""
+        df = _build_queue_df([self._item("efficientad")])
+        assert df.iloc[0]["모델"] == "EAD"
+
+    def test_sequential_sequence_numbers(self):
+        """순번 컬럼은 1부터 순서대로."""
+        items = [self._item() for _ in range(3)]
+        df = _build_queue_df(items)
+        assert list(df["순번"]) == [1, 2, 3]
+
+    def test_status_column_preserved(self):
+        """상태 컬럼값이 입력 status와 일치한다."""
+        items = [
+            self._item(status="대기중"),
+            self._item(status="완료"),
+            self._item(status="실패"),
+        ]
+        df = _build_queue_df(items)
+        assert list(df["상태"]) == ["대기중", "완료", "실패"]
+
+    def test_name_column_preserved(self):
+        """실험명 컬럼값이 입력 name과 일치한다."""
+        item = {**self._item(), "name": "my_custom_exp"}
+        df = _build_queue_df([item])
+        assert df.iloc[0]["실험명"] == "my_custom_exp"
+
+    def test_status_colors_defined_for_all_statuses(self):
+        """_STATUS_COLORS가 _VALID_STATUSES의 모든 상태를 포함한다."""
+        assert set(_STATUS_COLORS.keys()) == _VALID_STATUSES

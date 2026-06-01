@@ -42,6 +42,13 @@ def _make_ss(**overrides) -> dict:
         "_progress": {"step": 0, "total": 70000, "loss": None, "elapsed": 0.0},
         "_log_lines": [],
         "_loss_history": [],
+        "_current_stage_idx": None,
+        "_current_stage_name": None,
+        "_batch_queue_mode":     False,
+        "_batch_total_count":    0,
+        "_batch_skip_current":   False,
+        "_batch_advance_pending": False,
+        "experiment_queue":      [],
         "experiments": {},
         "model_config": {
             "model_type": "efficientad",
@@ -475,7 +482,8 @@ class TestRUi02:
              patch.object(t3.st, "info"), \
              patch.object(t3.st, "progress"), \
              patch.object(t3.st, "text_area"), \
-             patch.object(t3.st, "text_input", return_value=""):
+             patch.object(t3.st, "text_input", return_value=""), \
+             patch.object(t3.st, "markdown"):
             fn()
         return labels
 
@@ -796,3 +804,1339 @@ class TestHandleError:
         """traceback 없는 메시지도 처리 가능."""
         ss, _ = self._run({"type": "error", "exception": Exception("x"), "traceback": ""})
         assert ss["current_run_status"] == "idle"
+
+
+# ── TestHandleStage ────────────────────────────────────────────────────────────
+
+class TestHandleStage:
+    """_handle_stage() — stage 메시지 처리 (FR-T3-11/12)."""
+
+    def test_sets_stage_idx(self):
+        ss = _make_ss()
+        with _SessionCtx(ss):
+            t3._handle_stage({"type": "stage", "stage_idx": 2, "stage_name": "학습 루프"})
+        assert ss["_current_stage_idx"] == 2
+
+    def test_sets_stage_name(self):
+        ss = _make_ss()
+        with _SessionCtx(ss):
+            t3._handle_stage({"type": "stage", "stage_idx": 2, "stage_name": "학습 루프"})
+        assert ss["_current_stage_name"] == "학습 루프"
+
+    def test_overwrites_previous_stage(self):
+        ss = _make_ss()
+        ss["_current_stage_idx"] = 1
+        ss["_current_stage_name"] = "모델 초기화"
+        with _SessionCtx(ss):
+            t3._handle_stage({"type": "stage", "stage_idx": 3, "stage_name": "테스트 추론"})
+        assert ss["_current_stage_idx"] == 3
+        assert ss["_current_stage_name"] == "테스트 추론"
+
+    def test_stage_zero_sets_idx_zero(self):
+        ss = _make_ss()
+        with _SessionCtx(ss):
+            t3._handle_stage({"type": "stage", "stage_idx": 0, "stage_name": "데이터 로딩"})
+        assert ss["_current_stage_idx"] == 0
+
+
+# ── TestStageConstants ─────────────────────────────────────────────────────────
+
+class TestStageConstants:
+    """EFFICIENTAD_STAGES / PATCHCORE_STAGES 상수 검증 (FR-T3-11/12)."""
+
+    def test_efficientad_has_5_stages(self):
+        assert len(t3.EFFICIENTAD_STAGES) == 5
+
+    def test_patchcore_has_7_stages(self):
+        assert len(t3.PATCHCORE_STAGES) == 7
+
+    def test_efficientad_stage_indices_sequential(self):
+        indices = [idx for idx, _ in t3.EFFICIENTAD_STAGES]
+        assert indices == list(range(5))
+
+    def test_patchcore_stage_indices_sequential(self):
+        indices = [idx for idx, _ in t3.PATCHCORE_STAGES]
+        assert indices == list(range(7))
+
+    def test_efficientad_last_stage_name(self):
+        assert t3.EFFICIENTAD_STAGES[-1][1] == "완료"
+
+    def test_patchcore_last_stage_name(self):
+        assert t3.PATCHCORE_STAGES[-1][1] == "완료"
+
+    def test_efficientad_includes_training_loop_stage(self):
+        names = [name for _, name in t3.EFFICIENTAD_STAGES]
+        assert "학습 루프" in names
+
+    def test_patchcore_includes_coreset_stage(self):
+        names = [name for _, name in t3.PATCHCORE_STAGES]
+        assert "Coreset 구성" in names
+
+
+# ── TestRenderStageIndicator ───────────────────────────────────────────────────
+
+class TestRenderStageIndicator:
+    """_render_stage_indicator() — HTML 인디케이터 렌더링 (FR-T3-11/12)."""
+
+    def _run(self, ss: dict) -> str:
+        """_render_stage_indicator() 실행 후 st.markdown에 전달된 HTML 반환."""
+        captured: list[str] = []
+
+        def fake_markdown(html: str, **kw) -> None:
+            captured.append(html)
+
+        with _SessionCtx(ss), patch.object(t3.st, "markdown", side_effect=fake_markdown):
+            t3._render_stage_indicator()
+
+        return captured[0] if captured else ""
+
+    def _ss(self, model_type: str = "efficientad", stage_idx: int | None = None) -> dict:
+        ss = _make_ss()
+        ss["model_config"]["model_type"] = model_type
+        ss["_current_stage_idx"] = stage_idx
+        return ss
+
+    def test_all_pending_when_stage_idx_none(self):
+        """stage_idx=None → EfficientAD 5단계 모두 ○ 표시."""
+        html = self._run(self._ss(stage_idx=None))
+        assert html.count("○") == 5
+
+    def test_current_stage_shows_blue_dot(self):
+        """현재 단계 → 🔵 표시."""
+        html = self._run(self._ss(stage_idx=2))
+        assert "🔵" in html
+
+    def test_completed_stages_show_checkmark(self):
+        """stage_idx=3 → 이전 단계(0,1,2) ✅ 3개."""
+        html = self._run(self._ss(stage_idx=3))
+        assert html.count("✅") == 3
+
+    def test_pending_count_after_current(self):
+        """stage_idx=2 → 이후 단계(3,4) ○ 2개."""
+        html = self._run(self._ss(stage_idx=2))
+        assert html.count("○") == 2
+
+    def test_patchcore_pending_count(self):
+        """PatchCore stage_idx=0 → 이후 단계 ○ 6개."""
+        html = self._run(self._ss(model_type="patchcore", stage_idx=0))
+        assert html.count("○") == 6
+
+    def test_final_stage_has_no_pending(self):
+        """EfficientAD stage_idx=4(마지막) → ○ 없음, 🔵 1개(완료 현재), ✅ 4개."""
+        html = self._run(self._ss(stage_idx=4))
+        assert "○" not in html
+        assert "🔵" in html
+        assert html.count("✅") == 4
+
+    def test_markdown_called_with_unsafe_html(self):
+        """unsafe_allow_html=True 로 호출되어야 한다."""
+        called_kwargs: list[dict] = []
+
+        def fake_markdown(html: str, **kw) -> None:
+            called_kwargs.append(kw)
+
+        ss = self._ss(stage_idx=1)
+        with _SessionCtx(ss), patch.object(t3.st, "markdown", side_effect=fake_markdown):
+            t3._render_stage_indicator()
+
+        assert called_kwargs and called_kwargs[0].get("unsafe_allow_html") is True
+
+    def test_stage_name_appears_in_html(self):
+        """단계 이름이 HTML에 포함되어야 한다."""
+        html = self._run(self._ss(stage_idx=2))
+        assert "학습 루프" in html
+
+
+# ── TestDrainQueueStageHandling ────────────────────────────────────────────────
+
+class TestDrainQueueStageHandling:
+    """_drain_queue() stage 메시지 비종료(non-terminal) 처리 (FR-T3-11/12)."""
+
+    def _drain_stage_only(self, stage_idx: int, stage_name: str) -> dict:
+        """stage 메시지 1개만 큐에 넣고 drain (stopped 없음 → Empty에서 break)."""
+        ss = _make_ss()
+        q: queue.Queue = queue.Queue()
+        q.put({"type": "stage", "stage_idx": stage_idx, "stage_name": stage_name})
+        ss["_result_queue"] = q
+        with _SessionCtx(ss):
+            t3._drain_queue()
+        return ss
+
+    def test_stage_message_updates_stage_idx(self):
+        """stage 메시지 → _current_stage_idx 갱신."""
+        ss = self._drain_stage_only(2, "학습 루프")
+        assert ss["_current_stage_idx"] == 2
+
+    def test_stage_message_updates_stage_name(self):
+        """stage 메시지 → _current_stage_name 갱신."""
+        ss = self._drain_stage_only(2, "학습 루프")
+        assert ss["_current_stage_name"] == "학습 루프"
+
+    def test_stage_message_does_not_terminate_drain(self):
+        """stage → 종료 메시지 아님 → 이후 progress도 처리됨."""
+        ss = _make_ss()
+        q: queue.Queue = queue.Queue()
+        q.put({"type": "stage", "stage_idx": 0, "stage_name": "데이터 로딩"})
+        q.put({"type": "progress", "step": 100, "total": 70000, "loss": 0.1, "elapsed": 5.0})
+        ss["_result_queue"] = q
+        with _SessionCtx(ss):
+            t3._drain_queue()
+        assert ss["_current_stage_idx"] == 0
+        assert ss["_progress"]["step"] == 100
+
+    def test_status_unchanged_after_stage_only(self):
+        """stage 메시지만으로 current_run_status 변화 없음."""
+        ss = self._drain_stage_only(1, "모델 초기화")
+        assert ss["current_run_status"] == "running"
+
+
+# ── TestComputeEta ─────────────────────────────────────────────────────────────
+
+class TestComputeEta:
+    """_compute_eta() — ETA 계산 (FR-T3-13)."""
+
+    # ── 비-루프 단계 → None ────────────────────────────────────────────────────
+
+    def test_none_for_none_stage(self):
+        """stage_name=None → None."""
+        assert t3._compute_eta(None, 1000, 70000, 10.0, "efficientad") is None
+
+    def test_none_for_data_loading_stage(self):
+        """데이터 로딩 → None."""
+        assert t3._compute_eta("데이터 로딩", 0, 70000, 5.0, "efficientad") is None
+
+    def test_none_for_model_init_stage(self):
+        """모델 초기화 → None."""
+        assert t3._compute_eta("모델 초기화", 0, 70000, 10.0, "efficientad") is None
+
+    def test_none_for_test_inference_stage(self):
+        """테스트 추론 → None."""
+        assert t3._compute_eta("테스트 추론", 1, 1, 30.0, "efficientad") is None
+
+    def test_none_for_coreset_stage(self):
+        """Coreset 구성 → None."""
+        assert t3._compute_eta("Coreset 구성", 1, 1, 5.0, "patchcore") is None
+
+    def test_none_for_memory_bank_stage(self):
+        """Memory Bank 설정 → None."""
+        assert t3._compute_eta("Memory Bank 설정", 1, 1, 3.0, "patchcore") is None
+
+    def test_none_for_done_stage(self):
+        """완료 → None."""
+        assert t3._compute_eta("완료", 1, 1, 600.0, "efficientad") is None
+
+    # ── EfficientAD 루프 단계 ──────────────────────────────────────────────────
+
+    def test_efficientad_none_before_100_steps(self):
+        """EfficientAD step=99 → None (최소 100 step 미만)."""
+        assert t3._compute_eta("학습 루프", 99, 70000, 10.0, "efficientad") is None
+
+    def test_efficientad_none_at_0_steps(self):
+        """EfficientAD step=0 → None."""
+        assert t3._compute_eta("학습 루프", 0, 70000, 10.0, "efficientad") is None
+
+    def test_efficientad_calculable_at_100_steps(self):
+        """EfficientAD step=100 → ETA 반환 시작."""
+        eta = t3._compute_eta("학습 루프", 100, 70000, 10.0, "efficientad")
+        assert eta is not None
+
+    def test_efficientad_calculable_above_100_steps(self):
+        """EfficientAD step>100 → ETA 반환."""
+        eta = t3._compute_eta("학습 루프", 1000, 70000, 10.0, "efficientad")
+        assert eta is not None
+
+    def test_efficientad_eta_value_correct(self):
+        """ETA 계산: elapsed/step * remaining = 10/1000*69000 = 690s."""
+        eta = t3._compute_eta("학습 루프", 1000, 70000, 10.0, "efficientad")
+        assert eta == "690s"
+
+    # ── PatchCore 루프 단계 ────────────────────────────────────────────────────
+
+    def test_patchcore_calculable_from_first_batch(self):
+        """PatchCore step=1 → ETA 반환 (100 step 제한 없음)."""
+        eta = t3._compute_eta("특징 추출", 1, 100, 2.0, "patchcore")
+        assert eta is not None
+
+    def test_patchcore_eta_value_correct(self):
+        """PatchCore ETA: 2/1*99 = 198s."""
+        eta = t3._compute_eta("특징 추출", 1, 100, 2.0, "patchcore")
+        assert eta == "198s"
+
+    # ── 경계 조건 ──────────────────────────────────────────────────────────────
+
+    def test_none_when_step_zero(self):
+        """step=0 → None (0 나누기 방어)."""
+        assert t3._compute_eta("학습 루프", 0, 70000, 10.0, "efficientad") is None
+
+    def test_none_when_elapsed_zero(self):
+        """elapsed=0.0 → None."""
+        assert t3._compute_eta("학습 루프", 1000, 70000, 0.0, "efficientad") is None
+
+    def test_none_when_all_steps_complete(self):
+        """remaining=0 (step==total) → None."""
+        assert t3._compute_eta("학습 루프", 70000, 70000, 600.0, "efficientad") is None
+
+    def test_returns_string(self):
+        """반환값 타입: str."""
+        eta = t3._compute_eta("학습 루프", 1000, 70000, 10.0, "efficientad")
+        assert isinstance(eta, str)
+
+    def test_format_ends_with_s(self):
+        """반환 형식: '{N}s'."""
+        eta = t3._compute_eta("학습 루프", 1000, 70000, 10.0, "efficientad")
+        assert eta is not None and eta.endswith("s")
+
+
+# ── TestFullStageSequenceDrainQueue ───────────────────────────────────────────
+
+class TestFullStageSequenceDrainQueue:
+    """EfficientAD/PatchCore 전체 단계 시퀀스가 drain_queue를 통해 올바르게
+    처리되는지 통합 검증 (FR-T3-11/12, FR-T3-13).
+
+    실제 TrainingWorker 없이 큐에 메시지를 직접 주입하여
+    각 단계 전환 시 session_state가 올바르게 갱신되는지 확인한다.
+    """
+
+    def _drain(self, messages: list[dict], ss: dict) -> None:
+        """메시지를 큐에 넣고 _drain_queue() 실행 (stopped 종료 메시지 전용 헬퍼)."""
+        q: queue.Queue = queue.Queue()
+        for m in messages:
+            q.put(m)
+        ss["_result_queue"] = q
+        with _SessionCtx(ss), \
+             patch("tabs.tab3_training.load_config", return_value=_EXP_CFG_MOCK), \
+             patch("tabs.tab3_training.append_experiment"):
+            t3._drain_queue()
+
+    # ── EfficientAD 단계 시퀀스 ────────────────────────────────────────────────
+
+    def test_efficientad_each_stage_updates_session(self):
+        """EfficientAD 각 단계(0~4)가 큐를 통해 처리되면 세션에 정확히 반영된다."""
+        from utils.training_worker import EFFICIENTAD_STAGES
+
+        for expected_idx, expected_name in EFFICIENTAD_STAGES:
+            ss = _make_ss()
+            q: queue.Queue = queue.Queue()
+            q.put({"type": "stage", "stage_idx": expected_idx, "stage_name": expected_name})
+            ss["_result_queue"] = q
+            with _SessionCtx(ss):
+                t3._drain_queue()
+            assert ss["_current_stage_idx"] == expected_idx, \
+                f"stage {expected_idx} '{expected_name}': _current_stage_idx 불일치"
+            assert ss["_current_stage_name"] == expected_name, \
+                f"stage {expected_idx}: _current_stage_name 불일치"
+
+    def test_efficientad_stage_progression_0_to_2(self):
+        """EfficientAD stage 0→1→2가 순서대로 처리될 때 마지막 단계가 세션에 반영된다."""
+        ss = _make_ss()
+        q: queue.Queue = queue.Queue()
+        for msg in [
+            {"type": "stage", "stage_idx": 0, "stage_name": "데이터 로딩"},
+            {"type": "stage", "stage_idx": 1, "stage_name": "모델 초기화"},
+            {"type": "stage", "stage_idx": 2, "stage_name": "학습 루프"},
+        ]:
+            q.put(msg)
+        ss["_result_queue"] = q
+        with _SessionCtx(ss):
+            t3._drain_queue()
+        assert ss["_current_stage_idx"] == 2
+        assert ss["_current_stage_name"] == "학습 루프"
+        assert ss["current_run_status"] == "running"  # 종료 없음 → 상태 유지
+
+    def test_efficientad_loop_stage_with_enough_steps_has_eta(self):
+        """EfficientAD '학습 루프' + step ≥ 100 → ETA 계산 가능 (FR-T3-13)."""
+        eta = t3._compute_eta("학습 루프", 1000, 70000, 10.0, "efficientad")
+        assert eta is not None
+        assert eta == "690s"
+
+    def test_efficientad_loop_stage_under_100_no_eta(self):
+        """EfficientAD '학습 루프' + step < 100 → ETA None (신뢰도 미확보)."""
+        assert t3._compute_eta("학습 루프", 50, 70000, 5.0, "efficientad") is None
+
+    def test_efficientad_non_loop_stages_no_eta(self):
+        """EfficientAD 비-루프 단계 4종 → ETA None."""
+        for stage in ["데이터 로딩", "모델 초기화", "테스트 추론", "완료"]:
+            assert t3._compute_eta(stage, 1000, 70000, 10.0, "efficientad") is None, \
+                f"{stage}: ETA가 None이어야 하는데 값이 있음"
+
+    def test_efficientad_complete_sequence_stopped(self):
+        """EfficientAD 0→1→2 + progress + stopped → 최종 상태 idle, stage reset."""
+        ss = _make_ss()
+        self._drain([
+            {"type": "stage",    "stage_idx": 0, "stage_name": "데이터 로딩"},
+            {"type": "stage",    "stage_idx": 1, "stage_name": "모델 초기화"},
+            {"type": "stage",    "stage_idx": 2, "stage_name": "학습 루프"},
+            {"type": "progress", "step": 35000, "total": 70000, "loss": 0.02, "elapsed": 300.0},
+            {"type": "stage",    "stage_idx": 3, "stage_name": "테스트 추론"},
+            {"type": "stopped",  "step": 35000},
+        ], ss)
+        assert ss["current_run_status"] == "idle"
+        assert ss["_current_stage_idx"] is None   # _reset_run_state 호출됨
+        assert ss["_current_stage_name"] is None
+
+    # ── PatchCore 단계 시퀀스 ──────────────────────────────────────────────────
+
+    def test_patchcore_each_stage_updates_session(self):
+        """PatchCore 각 단계(0~6)가 큐를 통해 처리되면 세션에 정확히 반영된다."""
+        from utils.training_worker import PATCHCORE_STAGES
+
+        for expected_idx, expected_name in PATCHCORE_STAGES:
+            ss = _make_ss()
+            q: queue.Queue = queue.Queue()
+            q.put({"type": "stage", "stage_idx": expected_idx, "stage_name": expected_name})
+            ss["_result_queue"] = q
+            with _SessionCtx(ss):
+                t3._drain_queue()
+            assert ss["_current_stage_idx"] == expected_idx, \
+                f"PatchCore stage {expected_idx} '{expected_name}': _current_stage_idx 불일치"
+            assert ss["_current_stage_name"] == expected_name
+
+    def test_patchcore_feature_extraction_eta(self):
+        """PatchCore '특징 추출' + step ≥ 1 → ETA 계산 가능 (100 step 제한 없음)."""
+        eta = t3._compute_eta("특징 추출", 5, 50, 10.0, "patchcore")
+        assert eta is not None
+        assert eta == "90s"  # 10/5 * (50-5) = 90
+
+    def test_patchcore_non_feature_stages_no_eta(self):
+        """PatchCore '특징 추출' 외 단계 → ETA None."""
+        for stage in ["데이터 로딩", "모델 초기화", "Coreset 구성",
+                      "Memory Bank 설정", "테스트 추론", "완료"]:
+            assert t3._compute_eta(stage, 5, 50, 10.0, "patchcore") is None, \
+                f"PatchCore {stage}: ETA가 None이어야 하는데 값이 있음"
+
+    def test_patchcore_complete_sequence_stopped(self):
+        """PatchCore 0→1→2→3→4 + stopped → 최종 상태 idle, stage reset."""
+        ss = _make_ss()
+        ss["model_config"]["model_type"] = "patchcore"
+        self._drain([
+            {"type": "stage",    "stage_idx": 0, "stage_name": "데이터 로딩"},
+            {"type": "stage",    "stage_idx": 1, "stage_name": "모델 초기화"},
+            {"type": "stage",    "stage_idx": 2, "stage_name": "특징 추출"},
+            {"type": "progress", "step": 25, "total": 50, "loss": 0.0, "elapsed": 12.0},
+            {"type": "stage",    "stage_idx": 3, "stage_name": "Coreset 구성"},
+            {"type": "stage",    "stage_idx": 4, "stage_name": "Memory Bank 설정"},
+            {"type": "stopped",  "step": 50},
+        ], ss)
+        assert ss["current_run_status"] == "idle"
+        assert ss["_current_stage_idx"] is None
+        assert ss["_current_stage_name"] is None
+
+    # ── 공통 통합 시나리오 ─────────────────────────────────────────────────────
+
+    def test_stage_and_progress_interleaved(self):
+        """stage + progress 메시지가 섞여 있을 때 둘 다 올바르게 처리된다."""
+        ss = _make_ss()
+        q: queue.Queue = queue.Queue()
+        for msg in [
+            {"type": "stage",    "stage_idx": 2, "stage_name": "학습 루프"},
+            {"type": "progress", "step": 100,  "total": 70000, "loss": 0.05, "elapsed": 10.0},
+            {"type": "progress", "step": 200,  "total": 70000, "loss": 0.04, "elapsed": 20.0},
+        ]:
+            q.put(msg)
+        ss["_result_queue"] = q
+        with _SessionCtx(ss):
+            t3._drain_queue()
+        assert ss["_current_stage_idx"] == 2
+        assert ss["_current_stage_name"] == "학습 루프"
+        assert ss["_progress"]["step"] == 200
+        assert ss["_progress"]["loss"] == pytest.approx(0.04)
+
+    def test_progress_does_not_overwrite_stage(self):
+        """progress 메시지는 _current_stage_idx / _current_stage_name을 변경하지 않는다."""
+        ss = _make_ss()
+        ss["_current_stage_idx"]  = 2
+        ss["_current_stage_name"] = "학습 루프"
+        q: queue.Queue = queue.Queue()
+        q.put({"type": "progress", "step": 500, "total": 70000, "loss": 0.03, "elapsed": 50.0})
+        ss["_result_queue"] = q
+        with _SessionCtx(ss):
+            t3._drain_queue()
+        assert ss["_current_stage_idx"] == 2
+        assert ss["_current_stage_name"] == "학습 루프"
+
+    def test_stage_sequence_followed_by_log_messages(self):
+        """stage → log 메시지 순서도 올바르게 처리된다."""
+        ss = _make_ss()
+        q: queue.Queue = queue.Queue()
+        for msg in [
+            {"type": "stage", "stage_idx": 0, "stage_name": "데이터 로딩"},
+            {"type": "log",   "message": "[초기화] 데이터셋 로딩 중..."},
+            {"type": "stage", "stage_idx": 1, "stage_name": "모델 초기화"},
+            {"type": "log",   "message": "[초기화] EfficientAD 모델 준비 완료"},
+        ]:
+            q.put(msg)
+        ss["_result_queue"] = q
+        with _SessionCtx(ss):
+            t3._drain_queue()
+        assert ss["_current_stage_idx"] == 1
+        assert len(ss["_log_lines"]) == 2
+
+
+# ── TestQueueSessionKeys ───────────────────────────────────────────────────────
+
+class TestQueueSessionKeys:
+    """experiment_queue / _batch_queue_mode / _batch_total_count 키 스키마 및
+    init_session_state() 초기화 검증 (FR-T2-16, FR-T3-15)."""
+
+    # ── 스키마 기본값 ──────────────────────────────────────────────────────────
+
+    def test_queue_schema_default_is_empty_list(self):
+        """experiment_queue 기본값: 빈 리스트."""
+        from utils.session_state_init import SESSION_STATE_SCHEMA
+        assert SESSION_STATE_SCHEMA["experiment_queue"] == []
+        assert isinstance(SESSION_STATE_SCHEMA["experiment_queue"], list)
+
+    def test_batch_mode_schema_default_is_false(self):
+        """_batch_queue_mode 기본값: False."""
+        from utils.session_state_init import SESSION_STATE_SCHEMA
+        assert SESSION_STATE_SCHEMA["_batch_queue_mode"] is False
+
+    def test_batch_total_count_schema_default_is_zero(self):
+        """_batch_total_count 기본값: 0."""
+        from utils.session_state_init import SESSION_STATE_SCHEMA
+        assert SESSION_STATE_SCHEMA["_batch_total_count"] == 0
+
+    def test_queue_status_values_documented(self):
+        """experiment_queue 항목의 status 값은 5종이어야 한다."""
+        valid_statuses = {"대기중", "진행중", "완료", "실패", "건너뜀"}
+        item = {
+            "name": "test_exp",
+            "preprocessing_config": {},
+            "model_config": {},
+            "status": "대기중",
+        }
+        assert item["status"] in valid_statuses
+
+    # ── init_session_state() 초기화 ────────────────────────────────────────────
+
+    def test_queue_key_initialized(self, monkeypatch):
+        """init_session_state() → experiment_queue 키 생성 및 빈 리스트."""
+        import streamlit as _st
+        state: dict = {}
+        monkeypatch.setattr(_st, "session_state", state)
+        from utils.session_state_init import init_session_state
+        init_session_state()
+        assert "experiment_queue" in state
+        assert state["experiment_queue"] == []
+
+    def test_batch_mode_key_initialized(self, monkeypatch):
+        """init_session_state() → _batch_queue_mode = False."""
+        import streamlit as _st
+        state: dict = {}
+        monkeypatch.setattr(_st, "session_state", state)
+        from utils.session_state_init import init_session_state
+        init_session_state()
+        assert "_batch_queue_mode" in state
+        assert state["_batch_queue_mode"] is False
+
+    def test_batch_total_count_key_initialized(self, monkeypatch):
+        """init_session_state() → _batch_total_count = 0."""
+        import streamlit as _st
+        state: dict = {}
+        monkeypatch.setattr(_st, "session_state", state)
+        from utils.session_state_init import init_session_state
+        init_session_state()
+        assert "_batch_total_count" in state
+        assert state["_batch_total_count"] == 0
+
+    # ── 멱등성 (idempotency) ───────────────────────────────────────────────────
+
+    def test_existing_queue_not_overwritten(self, monkeypatch):
+        """experiment_queue가 이미 설정되어 있으면 덮어쓰지 않는다."""
+        import streamlit as _st
+        existing_queue = [{"name": "exp1", "status": "대기중"}]
+        state: dict = {"experiment_queue": existing_queue}
+        monkeypatch.setattr(_st, "session_state", state)
+        from utils.session_state_init import init_session_state
+        init_session_state()
+        assert state["experiment_queue"] is existing_queue
+        assert len(state["experiment_queue"]) == 1
+
+    def test_active_batch_mode_not_overwritten(self, monkeypatch):
+        """_batch_queue_mode=True 상태는 init으로 덮어쓰지 않는다."""
+        import streamlit as _st
+        state: dict = {"_batch_queue_mode": True}
+        monkeypatch.setattr(_st, "session_state", state)
+        from utils.session_state_init import init_session_state
+        init_session_state()
+        assert state["_batch_queue_mode"] is True
+
+    # ── _make_ss() 반영 확인 ───────────────────────────────────────────────────
+
+    def test_make_ss_includes_queue_key(self):
+        """_make_ss()가 experiment_queue 키를 포함한다."""
+        ss = _make_ss()
+        assert "experiment_queue" in ss
+        assert ss["experiment_queue"] == []
+
+    def test_make_ss_includes_batch_mode_key(self):
+        """_make_ss()가 _batch_queue_mode 키를 포함한다."""
+        ss = _make_ss()
+        assert "_batch_queue_mode" in ss
+        assert ss["_batch_queue_mode"] is False
+
+    def test_make_ss_includes_batch_total_key(self):
+        """_make_ss()가 _batch_total_count 키를 포함한다."""
+        ss = _make_ss()
+        assert "_batch_total_count" in ss
+        assert ss["_batch_total_count"] == 0
+
+
+# ── TestHandleBatchStart ───────────────────────────────────────────────────────
+
+class TestHandleBatchStart:
+    """_handle_batch_start() — 일괄 학습 시작 처리 검증 (FR-T3-15)."""
+
+    _PRE = {"method": "none", "image_size": 256, "params": None}
+    _MDL = {"model_type": "patchcore", "batch_size": 16, "params": {"backbone": "wide_resnet50_2"}}
+
+    def _queue_items(self, count: int = 2, start_status: str = "대기중") -> list[dict]:
+        return [
+            {
+                "name": f"exp_{i}",
+                "preprocessing_config": dict(self._PRE),
+                "model_config": dict(self._MDL),
+                "status": start_status,
+            }
+            for i in range(count)
+        ]
+
+    def _run(self, ss: dict):
+        with _SessionCtx(ss), \
+             patch("tabs.tab3_training._handle_start_training") as mock_start, \
+             patch.object(t3.st, "warning") as mock_warn, \
+             patch.object(t3.st, "error") as mock_err:
+            t3._handle_batch_start()
+        return ss, mock_start, mock_warn, mock_err
+
+    # ── 정상 케이스 ────────────────────────────────────────────────────────────
+
+    def test_sets_batch_mode_true(self):
+        """일괄 학습 시작 시 _batch_queue_mode = True."""
+        ss = _make_ss(current_run_status="idle",
+                      experiment_queue=self._queue_items(3),
+                      dataset_path="/data/mvtec")
+        ss, *_ = self._run(ss)
+        assert ss["_batch_queue_mode"] is True
+
+    def test_sets_batch_total_count(self):
+        """pending 항목 수가 _batch_total_count에 저장됨."""
+        ss = _make_ss(current_run_status="idle",
+                      experiment_queue=self._queue_items(3),
+                      dataset_path="/data/mvtec")
+        ss, *_ = self._run(ss)
+        assert ss["_batch_total_count"] == 3
+
+    def test_first_pending_item_marked_running(self):
+        """첫 번째 대기중 항목이 '진행중'으로 변경됨."""
+        ss = _make_ss(current_run_status="idle",
+                      experiment_queue=self._queue_items(3),
+                      dataset_path="/data/mvtec")
+        ss, *_ = self._run(ss)
+        assert ss["experiment_queue"][0]["status"] == "진행중"
+
+    def test_other_items_remain_pending(self):
+        """첫 항목 이후의 항목들은 여전히 '대기중'이어야 한다."""
+        ss = _make_ss(current_run_status="idle",
+                      experiment_queue=self._queue_items(3),
+                      dataset_path="/data/mvtec")
+        ss, *_ = self._run(ss)
+        assert ss["experiment_queue"][1]["status"] == "대기중"
+        assert ss["experiment_queue"][2]["status"] == "대기중"
+
+    def test_first_completed_item_is_skipped(self):
+        """이미 완료된 항목을 건너뛰고 첫 번째 대기중 항목이 진행중이 됨."""
+        items = self._queue_items(3)
+        items[0]["status"] = "완료"   # 첫 번째 항목은 이미 완료
+        ss = _make_ss(current_run_status="idle",
+                      experiment_queue=items,
+                      dataset_path="/data/mvtec")
+        ss, *_ = self._run(ss)
+        assert ss["experiment_queue"][0]["status"] == "완료"   # 변경 없음
+        assert ss["experiment_queue"][1]["status"] == "진행중"  # 두 번째가 선택됨
+
+    def test_loads_first_item_preprocessing_config(self):
+        """첫 항목의 preprocessing_config가 session_state에 로드됨."""
+        items = self._queue_items(2)
+        expected_pre = dict(items[0]["preprocessing_config"])
+        ss = _make_ss(current_run_status="idle",
+                      experiment_queue=items,
+                      dataset_path="/data/mvtec")
+        ss, *_ = self._run(ss)
+        assert ss["preprocessing_config"] == expected_pre
+
+    def test_loads_first_item_model_config(self):
+        """첫 항목의 model_config가 session_state에 로드됨."""
+        items = self._queue_items(2)
+        expected_mdl = dict(items[0]["model_config"])
+        ss = _make_ss(current_run_status="idle",
+                      experiment_queue=items,
+                      dataset_path="/data/mvtec")
+        ss, *_ = self._run(ss)
+        assert ss["model_config"] == expected_mdl
+
+    def test_calls_handle_start_training_with_item_name(self):
+        """_handle_start_training()이 첫 항목의 name으로 호출됨."""
+        items = self._queue_items(2)
+        items[0]["name"] = "my_batch_exp"
+        ss = _make_ss(current_run_status="idle",
+                      experiment_queue=items,
+                      dataset_path="/data/mvtec")
+        ss, mock_start, *_ = self._run(ss)
+        mock_start.assert_called_once_with("my_batch_exp")
+
+    # ── 예외 케이스 ────────────────────────────────────────────────────────────
+
+    def test_no_action_when_no_pending_items(self):
+        """대기중 항목 없으면 배치 모드 미설정 + 경고."""
+        items = self._queue_items(2, start_status="완료")
+        ss = _make_ss(current_run_status="idle",
+                      experiment_queue=items,
+                      dataset_path="/data/mvtec")
+        ss, mock_start, mock_warn, _ = self._run(ss)
+        assert ss["_batch_queue_mode"] is False
+        mock_warn.assert_called_once()
+        mock_start.assert_not_called()
+
+    def test_no_action_when_training_running(self):
+        """학습 중(current_run_status='running') → 배치 모드 미설정 + 경고."""
+        ss = _make_ss(current_run_status="running",
+                      experiment_queue=self._queue_items(2),
+                      dataset_path="/data/mvtec")
+        ss, mock_start, mock_warn, _ = self._run(ss)
+        assert ss["_batch_queue_mode"] is False
+        mock_warn.assert_called_once()
+        mock_start.assert_not_called()
+
+    def test_no_action_when_dataset_path_is_none(self):
+        """dataset_path 미설정 → 배치 모드 미설정 + 오류."""
+        ss = _make_ss(current_run_status="idle",
+                      experiment_queue=self._queue_items(2),
+                      dataset_path=None)
+        ss, mock_start, _, mock_err = self._run(ss)
+        assert ss["_batch_queue_mode"] is False
+        mock_err.assert_called_once()
+        mock_start.assert_not_called()
+
+    def test_only_one_item_marked_running_at_a_time(self):
+        """한 번에 하나의 항목만 '진행중'으로 변경됨."""
+        ss = _make_ss(current_run_status="idle",
+                      experiment_queue=self._queue_items(4),
+                      dataset_path="/data/mvtec")
+        ss, *_ = self._run(ss)
+        running_count = sum(
+            1 for item in ss["experiment_queue"]
+            if item.get("status") == "진행중"
+        )
+        assert running_count == 1
+
+
+# ── TestMarkCurrentBatchItem ───────────────────────────────────────────────────
+
+class TestMarkCurrentBatchItem:
+    """_mark_current_batch_item() — '진행중' 항목 상태 변경 검증."""
+
+    def _make_queue(self, statuses: list[str]) -> list[dict]:
+        return [{"name": f"exp_{i}", "status": s,
+                 "preprocessing_config": {}, "model_config": {}}
+                for i, s in enumerate(statuses)]
+
+    def test_marks_running_item_as_given_status(self):
+        ss = _make_ss(experiment_queue=self._make_queue(["대기중", "진행중", "대기중"]))
+        with _SessionCtx(ss):
+            t3._mark_current_batch_item("완료")
+        assert ss["experiment_queue"][1]["status"] == "완료"
+
+    def test_other_items_unchanged(self):
+        ss = _make_ss(experiment_queue=self._make_queue(["대기중", "진행중", "대기중"]))
+        with _SessionCtx(ss):
+            t3._mark_current_batch_item("완료")
+        assert ss["experiment_queue"][0]["status"] == "대기중"
+        assert ss["experiment_queue"][2]["status"] == "대기중"
+
+    def test_no_running_item_no_change(self):
+        original = self._make_queue(["대기중", "완료"])
+        ss = _make_ss(experiment_queue=list(original))
+        with _SessionCtx(ss):
+            t3._mark_current_batch_item("실패")
+        assert ss["experiment_queue"][0]["status"] == "대기중"
+        assert ss["experiment_queue"][1]["status"] == "완료"
+
+    def test_mark_as_failed(self):
+        ss = _make_ss(experiment_queue=self._make_queue(["진행중"]))
+        with _SessionCtx(ss):
+            t3._mark_current_batch_item("실패")
+        assert ss["experiment_queue"][0]["status"] == "실패"
+
+    def test_mark_as_skipped(self):
+        ss = _make_ss(experiment_queue=self._make_queue(["대기중", "진행중"]))
+        with _SessionCtx(ss):
+            t3._mark_current_batch_item("건너뜀")
+        assert ss["experiment_queue"][1]["status"] == "건너뜀"
+
+
+# ── TestAdvanceBatchQueue ──────────────────────────────────────────────────────
+
+class TestAdvanceBatchQueue:
+    """_advance_batch_queue() — 다음 항목 자동 진행 검증."""
+
+    _PRE = {"method": "none", "image_size": 256}
+    _MDL = {"model_type": "patchcore", "batch_size": 4,
+             "threshold_method": "percentile", "threshold_value": 95.0,
+             "params": {"backbone": "wide_resnet50_2"}}
+
+    def _item(self, status: str, name: str = "exp") -> dict:
+        return {"name": name, "status": status,
+                "preprocessing_config": dict(self._PRE),
+                "model_config": dict(self._MDL)}
+
+    def _run(self, ss: dict) -> tuple[dict, "MagicMock"]:
+        with _SessionCtx(ss), \
+             patch("tabs.tab3_training._handle_start_training") as mock_start, \
+             patch.object(t3.st, "warning"), \
+             patch.object(t3.st, "error"):
+            t3._advance_batch_queue()
+        return ss, mock_start
+
+    def test_starts_first_pending_item(self):
+        items = [self._item("완료"), self._item("대기중", "exp_next")]
+        ss = _make_ss(current_run_status="idle",
+                      experiment_queue=items, dataset_path="/data")
+        ss, mock_start = self._run(ss)
+        mock_start.assert_called_once_with("exp_next")
+
+    def test_marks_next_item_as_running(self):
+        items = [self._item("완료"), self._item("대기중")]
+        ss = _make_ss(current_run_status="idle",
+                      experiment_queue=items, dataset_path="/data")
+        self._run(ss)
+        assert ss["experiment_queue"][1]["status"] == "진행중"
+
+    def test_loads_next_item_config(self):
+        pre = {"method": "clahe", "image_size": 128}
+        mdl = {"model_type": "efficientad", "params": {}}
+        items = [self._item("완료"),
+                 {"name": "next", "status": "대기중",
+                  "preprocessing_config": pre, "model_config": mdl}]
+        ss = _make_ss(current_run_status="idle",
+                      experiment_queue=items, dataset_path="/data")
+        self._run(ss)
+        assert ss["preprocessing_config"] == pre
+        assert ss["model_config"] == mdl
+
+    def test_ends_batch_when_no_pending(self):
+        items = [self._item("완료"), self._item("실패")]
+        ss = _make_ss(current_run_status="idle",
+                      experiment_queue=items, dataset_path="/data",
+                      _batch_queue_mode=True)
+        ss, mock_start = self._run(ss)
+        assert ss["_batch_queue_mode"] is False
+        mock_start.assert_not_called()
+
+    def test_sets_last_result_on_batch_end(self):
+        items = [self._item("완료"), self._item("건너뜀")]
+        ss = _make_ss(current_run_status="idle",
+                      experiment_queue=items, dataset_path="/data",
+                      _batch_queue_mode=True)
+        self._run(ss)
+        assert "level" in ss["_last_result"]
+
+
+# ── TestHandleCompletedBatch ───────────────────────────────────────────────────
+
+class TestHandleCompletedBatch:
+    """_handle_completed() 배치 모드 — 완료 마킹 + advance 예약 검증."""
+
+    _METRICS = {
+        "auc": 0.95, "accuracy": 0.9, "precision": 0.9,
+        "recall": 0.9, "f1_score": 0.9, "f2_score": 0.9,
+        "confusion_matrix": {"tp": 9, "fp": 1, "tn": 9, "fn": 1},
+        "anomaly_scores": [0.1, 0.9], "image_labels": [0, 1],
+    }
+
+    def _run(self, ss: dict) -> dict:
+        msg = {
+            "type": "completed", "y_true": [0, 1],
+            "anomaly_scores": [0.1, 0.9], "anomaly_maps": {},
+            "image_paths": [], "model": MagicMock(), "duration_seconds": 30,
+        }
+        with _SessionCtx(ss), \
+             patch("tabs.tab3_training.load_config", return_value=_EXP_CFG_MOCK), \
+             patch("tabs.tab3_training.compute_threshold", return_value=0.5), \
+             patch("tabs.tab3_training.compute_metrics", return_value=self._METRICS), \
+             patch("tabs.tab3_training.check_disk_before_save"), \
+             patch("tabs.tab3_training.save_completed_experiment"), \
+             patch("tabs.tab3_training.set_anomaly_map_cache"), \
+             patch.object(t3.st, "success"), \
+             patch.object(t3.st, "warning"), \
+             patch.object(t3.st, "error"):
+            t3._handle_completed(msg)
+        return ss
+
+    def test_marks_current_item_as_completed(self):
+        items = [{"name": "e", "status": "진행중",
+                  "preprocessing_config": {}, "model_config": {}}]
+        ss = _make_ss(_batch_queue_mode=True, experiment_queue=items)
+        self._run(ss)
+        assert ss["experiment_queue"][0]["status"] == "완료"
+
+    def test_sets_advance_pending(self):
+        items = [{"name": "e", "status": "진행중",
+                  "preprocessing_config": {}, "model_config": {}}]
+        ss = _make_ss(_batch_queue_mode=True, experiment_queue=items)
+        self._run(ss)
+        assert ss["_batch_advance_pending"] is True
+
+    def test_no_batch_effect_in_single_mode(self):
+        ss = _make_ss(_batch_queue_mode=False, experiment_queue=[])
+        self._run(ss)
+        assert ss["_batch_advance_pending"] is False
+
+
+# ── TestHandleErrorBatch ───────────────────────────────────────────────────────
+
+class TestHandleErrorBatch:
+    """_handle_error() 배치 모드 — 실패 기록 + advance 예약 검증."""
+
+    def _run_error(self, ss: dict) -> dict:
+        msg = {"type": "error", "exception": RuntimeError("GPU OOM"),
+               "traceback": "OOM error"}
+        with _SessionCtx(ss), \
+             patch("tabs.tab3_training.load_config", return_value=_EXP_CFG_MOCK), \
+             patch("tabs.tab3_training.append_experiment"), \
+             patch.object(t3.st, "warning"), \
+             patch.object(t3.st, "error"):
+            t3._handle_error(msg)
+        return ss
+
+    def test_marks_item_as_failed(self):
+        items = [{"name": "e", "status": "진행중",
+                  "preprocessing_config": {}, "model_config": {}}]
+        ss = _make_ss(_batch_queue_mode=True, experiment_queue=items)
+        self._run_error(ss)
+        assert ss["experiment_queue"][0]["status"] == "실패"
+
+    def test_sets_advance_pending_on_error(self):
+        items = [{"name": "e", "status": "진행중",
+                  "preprocessing_config": {}, "model_config": {}}]
+        ss = _make_ss(_batch_queue_mode=True, experiment_queue=items)
+        self._run_error(ss)
+        assert ss["_batch_advance_pending"] is True
+
+    def test_last_result_level_warning_in_batch_mode(self):
+        ss = _make_ss(_batch_queue_mode=True, experiment_queue=[])
+        self._run_error(ss)
+        assert ss["_last_result"]["level"] == "warning"
+
+    def test_last_result_level_error_in_single_mode(self):
+        ss = _make_ss(_batch_queue_mode=False)
+        self._run_error(ss)
+        assert ss["_last_result"]["level"] == "error"
+
+
+# ── TestHandleStoppedBatch ─────────────────────────────────────────────────────
+
+class TestHandleStoppedBatch:
+    """_handle_stopped() 배치 모드 — 중단/건너뜀 처리 검증."""
+
+    def _run_stopped(self, ss: dict, step: int = 0) -> dict:
+        msg = {"type": "stopped", "step": step}
+        with _SessionCtx(ss), \
+             patch("tabs.tab3_training.load_config", return_value=_EXP_CFG_MOCK), \
+             patch("tabs.tab3_training.append_experiment"), \
+             patch.object(t3.st, "warning"), \
+             patch.object(t3.st, "info"):
+            t3._handle_stopped(msg)
+        return ss
+
+    def test_batch_full_stop_marks_item_as_stopped(self):
+        """⏹ 전체 중단 → '진행중' 항목 '중단' 처리."""
+        items = [{"name": "e", "status": "진행중",
+                  "preprocessing_config": {}, "model_config": {}}]
+        ss = _make_ss(_batch_queue_mode=True, experiment_queue=items,
+                      _batch_advance_pending=False)
+        self._run_stopped(ss)
+        assert ss["experiment_queue"][0]["status"] == "중단"
+
+    def test_batch_full_stop_ends_batch_mode(self):
+        """⏹ 전체 중단 → _batch_queue_mode = False."""
+        ss = _make_ss(_batch_queue_mode=True,
+                      experiment_queue=[{"name": "e", "status": "진행중",
+                                         "preprocessing_config": {}, "model_config": {}}],
+                      _batch_advance_pending=False)
+        self._run_stopped(ss)
+        assert ss["_batch_queue_mode"] is False
+
+    def test_ghost_stop_after_skip_is_ignored(self):
+        """advance_pending=True이면 ghost stop 무시 → queue 상태 불변."""
+        items = [{"name": "e", "status": "건너뜀",
+                  "preprocessing_config": {}, "model_config": {}}]
+        ss = _make_ss(_batch_queue_mode=True, experiment_queue=items,
+                      _batch_advance_pending=True)
+        self._run_stopped(ss)
+        assert ss["experiment_queue"][0]["status"] == "건너뜀"  # 변경 없음
+
+    def test_skip_via_stop_path_marks_item_skipped(self):
+        """_batch_skip_current=True + stopped → '건너뜀' 처리 + advance 예약."""
+        items = [{"name": "e", "status": "진행중",
+                  "preprocessing_config": {}, "model_config": {}}]
+        ss = _make_ss(_batch_queue_mode=True, _batch_skip_current=True,
+                      experiment_queue=items, _batch_advance_pending=False)
+        self._run_stopped(ss)
+        assert ss["experiment_queue"][0]["status"] == "건너뜀"
+        assert ss["_batch_advance_pending"] is True
+        assert ss["_batch_skip_current"] is False
+
+
+# ── TestBatchQueueIntegration ──────────────────────────────────────────────────
+
+class TestBatchQueueIntegration:
+    """대기열 배치 학습 시나리오 통합 검증 (FR-T3-15).
+
+    실제 TrainingWorker 없이 메시지 시퀀스를 직접 주입하여
+    완료→자동 다음, 건너뛰기(B안), 실패→계속 흐름을 종합 검증한다.
+    """
+
+    _PRE = {"method": "none", "image_size": 256,
+            "normalization": "imagenet",
+            "mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225],
+            "params": None, "resize_mode": "padding"}
+    _MDL = {"model_type": "patchcore", "batch_size": 4, "random_seed": 42,
+            "image_size": 256, "threshold_method": "percentile",
+            "threshold_value": 95.0,
+            "params": {"backbone": "wide_resnet50_2",
+                       "coreset_sampling_ratio": 0.1,
+                       "neighbourhood_kernel_size": 3,
+                       "pretrained_source": "torchvision",
+                       "pretrained_path": None,
+                       "max_train": 100, "knn": 9, "top_k_ratio": 0.1}}
+    _METRICS = {
+        "auc": 0.95, "accuracy": 0.9, "precision": 0.9, "recall": 0.9,
+        "f1_score": 0.9, "f2_score": 0.9,
+        "confusion_matrix": {"tp": 9, "fp": 1, "tn": 9, "fn": 1},
+        "anomaly_scores": [0.1, 0.9], "image_labels": [0, 1],
+    }
+
+    def _item(self, status: str, name: str) -> dict:
+        return {"name": name, "status": status,
+                "preprocessing_config": dict(self._PRE),
+                "model_config": dict(self._MDL)}
+
+    def _base_ss(self, items: list, **kw) -> dict:
+        """배치 학습 기본 session_state 생성."""
+        return _make_ss(
+            current_run_status="running",
+            current_exp_id=EXP_ID,
+            _batch_queue_mode=True,
+            _batch_total_count=len(items),
+            experiment_queue=items,
+            dataset_path="/data/mvtec",
+            **kw,
+        )
+
+    def _simulate_complete(self, ss: dict) -> None:
+        """completed 메시지 시뮬레이션 (저장 관련 모두 mock)."""
+        # Ensure running state before each completion
+        ss["current_run_status"] = "running"
+        if not ss.get("current_exp_id"):
+            ss["current_exp_id"] = EXP_ID
+        msg = {
+            "type": "completed", "y_true": [0, 1],
+            "anomaly_scores": [0.1, 0.9], "anomaly_maps": {},
+            "image_paths": [], "model": MagicMock(), "duration_seconds": 10,
+        }
+        with _SessionCtx(ss), \
+             patch("tabs.tab3_training.load_config", return_value=_EXP_CFG_MOCK), \
+             patch("tabs.tab3_training.compute_threshold", return_value=0.5), \
+             patch("tabs.tab3_training.compute_metrics", return_value=self._METRICS), \
+             patch("tabs.tab3_training.check_disk_before_save"), \
+             patch("tabs.tab3_training.save_completed_experiment"), \
+             patch("tabs.tab3_training.set_anomaly_map_cache"), \
+             patch.object(t3.st, "success"), \
+             patch.object(t3.st, "warning"), \
+             patch.object(t3.st, "error"):
+            t3._handle_completed(msg)
+
+    def _simulate_error(self, ss: dict) -> None:
+        """error 메시지 시뮬레이션 (GPU OOM 등 학습 오류)."""
+        ss["current_run_status"] = "running"
+        if not ss.get("current_exp_id"):
+            ss["current_exp_id"] = EXP_ID
+        msg = {"type": "error", "exception": Exception("GPU OOM"),
+               "traceback": "CUDA out of memory"}
+        with _SessionCtx(ss), \
+             patch("tabs.tab3_training.load_config", return_value=_EXP_CFG_MOCK), \
+             patch("tabs.tab3_training.append_experiment"), \
+             patch.object(t3.st, "warning"), \
+             patch.object(t3.st, "error"):
+            t3._handle_error(msg)
+
+    def _simulate_paused_skip(self, ss: dict) -> None:
+        """⏭ 건너뛰기: pause(checkpoint저장) → _handle_paused 처리 (B안)."""
+        ss["current_run_status"] = "running"
+        if not ss.get("current_exp_id"):
+            ss["current_exp_id"] = EXP_ID
+        ss["_batch_skip_current"] = True
+        msg = {"type": "paused", "ckpt_path": "/tmp/mock.ckpt"}
+        with _SessionCtx(ss), \
+             patch("tabs.tab3_training.load_config", return_value=_EXP_CFG_MOCK), \
+             patch("tabs.tab3_training.append_experiment"), \
+             patch.object(t3.st, "warning"), \
+             patch.object(t3.st, "error"):
+            t3._handle_paused(msg)
+
+    def _simulate_advance(self, ss: dict) -> "MagicMock":
+        """_batch_advance_pending 소비 → 다음 항목 시작 시뮬레이션.
+
+        _render_queue_at_tab3_top()이 다음 rerun에서 하는 동작을 모방.
+        """
+        ss["_batch_advance_pending"] = False
+        with _SessionCtx(ss), \
+             patch("tabs.tab3_training._handle_start_training") as mock_start, \
+             patch.object(t3.st, "warning"), \
+             patch.object(t3.st, "error"):
+            t3._advance_batch_queue()
+        return mock_start
+
+    # ── 시나리오 1: 3개 항목 순차 완료 ────────────────────────────────────────
+
+    def test_three_items_complete_sequentially(self):
+        """3개 항목이 순서대로 완료되어 배치가 종료된다."""
+        items = [
+            self._item("진행중", "exp_1"),
+            self._item("대기중", "exp_2"),
+            self._item("대기중", "exp_3"),
+        ]
+        ss = self._base_ss(items)
+
+        # ── 1번 완료 ──
+        self._simulate_complete(ss)
+        assert ss["experiment_queue"][0]["status"] == "완료", "1번 완료 마킹 실패"
+        assert ss["_batch_advance_pending"] is True
+
+        # ── 2번 시작 ──
+        mock_start = self._simulate_advance(ss)
+        assert ss["experiment_queue"][1]["status"] == "진행중", "2번 진행중 마킹 실패"
+        mock_start.assert_called_once_with("exp_2")
+
+        # ── 2번 완료 ──
+        self._simulate_complete(ss)
+        assert ss["experiment_queue"][1]["status"] == "완료"
+        assert ss["_batch_advance_pending"] is True
+
+        # ── 3번 시작 ──
+        mock_start = self._simulate_advance(ss)
+        assert ss["experiment_queue"][2]["status"] == "진행중"
+        mock_start.assert_called_once_with("exp_3")
+
+        # ── 3번 완료 ──
+        self._simulate_complete(ss)
+        assert ss["experiment_queue"][2]["status"] == "완료"
+
+        # ── 대기중 없음 → 배치 종료 ──
+        mock_start = self._simulate_advance(ss)
+        mock_start.assert_not_called()
+        assert ss["_batch_queue_mode"] is False
+
+    def test_all_items_completed_after_sequential_batch(self):
+        """순차 완료 후 모든 항목이 '완료' 상태이어야 한다."""
+        items = [
+            self._item("진행중", "exp_1"),
+            self._item("대기중", "exp_2"),
+        ]
+        ss = self._base_ss(items)
+
+        self._simulate_complete(ss)
+        self._simulate_advance(ss)
+        self._simulate_complete(ss)
+        self._simulate_advance(ss)  # batch ends
+
+        assert all(item["status"] == "완료"
+                   for item in ss["experiment_queue"])
+        assert ss["_batch_queue_mode"] is False
+
+    def test_batch_end_result_success_when_all_complete(self):
+        """모든 항목 완료 시 배치 종료 _last_result.level == 'success'."""
+        items = [self._item("진행중", "exp_1")]
+        ss = self._base_ss(items)
+
+        self._simulate_complete(ss)
+        self._simulate_advance(ss)  # batch ends
+
+        assert ss["_last_result"]["level"] == "success"
+
+    # ── 시나리오 2: 건너뛰기(B안 — 체크포인트 후 건너뜀) ─────────────────────
+
+    def test_skip_marks_item_skipped_and_advances_to_next(self):
+        """⏭ 건너뛰기 시 항목이 '건너뜀'이 되고 다음 항목이 시작된다."""
+        items = [
+            self._item("진행중", "exp_1"),
+            self._item("대기중", "exp_2"),
+            self._item("대기중", "exp_3"),
+        ]
+        ss = self._base_ss(items)
+
+        self._simulate_paused_skip(ss)
+
+        assert ss["experiment_queue"][0]["status"] == "건너뜀"
+        assert ss["_batch_advance_pending"] is True
+        assert ss["_batch_skip_current"] is False
+
+        mock_start = self._simulate_advance(ss)
+        assert ss["experiment_queue"][1]["status"] == "진행중"
+        mock_start.assert_called_once_with("exp_2")
+
+    def test_ghost_stop_after_skip_does_not_overwrite_status(self):
+        """건너뛰기 후 ghost stopped 메시지가 '건너뜀' 상태를 덮어쓰지 않는다."""
+        items = [self._item("건너뜀", "exp_1"),
+                 self._item("대기중", "exp_2")]
+        ss = self._base_ss(items, _batch_advance_pending=True)
+        ss["current_exp_id"] = EXP_ID
+
+        msg = {"type": "stopped", "step": 100}
+        with _SessionCtx(ss), \
+             patch("tabs.tab3_training.load_config", return_value=_EXP_CFG_MOCK), \
+             patch("tabs.tab3_training.append_experiment"), \
+             patch.object(t3.st, "warning"), \
+             patch.object(t3.st, "info"):
+            t3._handle_stopped(msg)
+
+        # Ghost stop은 무시 → 건너뜀 상태 유지
+        assert ss["experiment_queue"][0]["status"] == "건너뜀"
+        # advance_pending은 _render_queue_at_tab3_top이 소비하므로 여기선 유지
+        assert ss["_batch_advance_pending"] is True
+
+    def test_skip_saves_to_history(self):
+        """건너뛰기 시 history.json에 '건너뜀' 상태로 기록된다."""
+        items = [self._item("진행중", "exp_skip")]
+        ss = self._base_ss(items)
+
+        with _SessionCtx(ss), \
+             patch("tabs.tab3_training.load_config", return_value=_EXP_CFG_MOCK), \
+             patch("tabs.tab3_training.append_experiment") as mock_append, \
+             patch.object(t3.st, "warning"), \
+             patch.object(t3.st, "error"):
+            ss["_batch_skip_current"] = True
+            t3._handle_paused({"type": "paused", "ckpt_path": "/tmp/c.ckpt"})
+
+        mock_append.assert_called_once()
+        saved_record = mock_append.call_args[0][0]
+        assert saved_record["status"] == "건너뜀"
+
+    # ── 시나리오 3: 실패 시뮬레이션 ──────────────────────────────────────────
+
+    def test_failure_marks_item_failed_and_continues(self):
+        """GPU OOM 등 오류 발생 시 항목이 '실패'로 마킹되고 다음 항목이 시작된다."""
+        items = [
+            self._item("진행중", "exp_1"),
+            self._item("대기중", "exp_2"),
+            self._item("대기중", "exp_3"),
+        ]
+        ss = self._base_ss(items)
+
+        self._simulate_error(ss)
+
+        assert ss["experiment_queue"][0]["status"] == "실패"
+        assert ss["_batch_advance_pending"] is True
+
+        mock_start = self._simulate_advance(ss)
+        assert ss["experiment_queue"][1]["status"] == "진행중"
+        mock_start.assert_called_once_with("exp_2")
+
+    def test_failure_saves_to_history(self):
+        """학습 오류 시 history.json에 '실패' 상태로 기록된다."""
+        items = [self._item("진행중", "exp_fail")]
+        ss = self._base_ss(items)
+
+        with _SessionCtx(ss), \
+             patch("tabs.tab3_training.load_config", return_value=_EXP_CFG_MOCK), \
+             patch("tabs.tab3_training.append_experiment") as mock_append, \
+             patch.object(t3.st, "warning"), \
+             patch.object(t3.st, "error"):
+            t3._handle_error({
+                "type": "error", "exception": Exception("OOM"),
+                "traceback": "CUDA OOM",
+            })
+
+        mock_append.assert_called_once()
+        saved_record = mock_append.call_args[0][0]
+        assert saved_record["status"] == "실패"
+
+    def test_batch_continues_after_failure(self):
+        """항목 실패 후에도 배치 모드가 유지되고 다음 항목으로 진행된다."""
+        items = [
+            self._item("진행중", "exp_1"),
+            self._item("대기중", "exp_2"),
+        ]
+        ss = self._base_ss(items)
+
+        self._simulate_error(ss)
+
+        # 배치 모드 유지 확인
+        assert ss["_batch_queue_mode"] is True
+
+        self._simulate_advance(ss)
+        assert ss["experiment_queue"][1]["status"] == "진행중"
+
+    # ── 시나리오 4: 완료 + 실패 + 건너뜀 혼합 ─────────────────────────────────
+
+    def test_mixed_complete_fail_skip_scenario(self):
+        """완료 1 + 실패 1 + 건너뜀 1 혼합 시나리오 — 최종 배치 종료 확인."""
+        items = [
+            self._item("진행중", "exp_1"),
+            self._item("대기중", "exp_2"),
+            self._item("대기중", "exp_3"),
+        ]
+        ss = self._base_ss(items)
+
+        # exp_1 완료
+        self._simulate_complete(ss)
+        self._simulate_advance(ss)
+
+        # exp_2 실패
+        self._simulate_error(ss)
+        self._simulate_advance(ss)
+
+        # exp_3 건너뜀
+        self._simulate_paused_skip(ss)
+        mock_start = self._simulate_advance(ss)  # No more pending → batch ends
+
+        mock_start.assert_not_called()
+        assert ss["_batch_queue_mode"] is False
+
+        statuses = [item["status"] for item in ss["experiment_queue"]]
+        assert "대기중" not in statuses
+        assert "완료" in statuses
+        assert "실패" in statuses
+        assert "건너뜀" in statuses
+
+    def test_batch_end_result_warning_when_failure_exists(self):
+        """실패 항목이 있으면 배치 종료 _last_result.level == 'warning'."""
+        items = [
+            self._item("진행중", "exp_1"),
+            self._item("대기중", "exp_2"),
+        ]
+        ss = self._base_ss(items)
+
+        # exp_1 fails, exp_2 completes
+        self._simulate_error(ss)
+        self._simulate_advance(ss)
+        self._simulate_complete(ss)
+        self._simulate_advance(ss)  # batch ends
+
+        assert ss["_last_result"]["level"] == "warning"
+
+    def test_advance_pending_cleared_before_next_starts(self):
+        """advance_pending은 다음 항목 시작 전 False로 초기화된다."""
+        items = [
+            self._item("진행중", "exp_1"),
+            self._item("대기중", "exp_2"),
+        ]
+        ss = self._base_ss(items)
+
+        self._simulate_complete(ss)
+        assert ss["_batch_advance_pending"] is True
+
+        # _simulate_advance clears advance_pending (mirrors render logic)
+        self._simulate_advance(ss)
+        assert ss["_batch_advance_pending"] is False

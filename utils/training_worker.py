@@ -20,6 +20,26 @@ except ImportError:
 
 KST = timezone(timedelta(hours=9))
 
+# FR-T3-11: EfficientAD 학습 단계 정의 (5단계)
+EFFICIENTAD_STAGES: list[tuple[int, str]] = [
+    (0, "데이터 로딩"),
+    (1, "모델 초기화"),
+    (2, "학습 루프"),
+    (3, "테스트 추론"),
+    (4, "완료"),
+]
+
+# FR-T3-12: PatchCore 학습 단계 정의 (7단계)
+PATCHCORE_STAGES: list[tuple[int, str]] = [
+    (0, "데이터 로딩"),
+    (1, "모델 초기화"),
+    (2, "특징 추출"),
+    (3, "Coreset 구성"),
+    (4, "Memory Bank 설정"),
+    (5, "테스트 추론"),
+    (6, "완료"),
+]
+
 
 def _now_kst() -> str:
     return datetime.now(tz=KST).strftime("%Y-%m-%dT%H:%M:%S+09:00")
@@ -143,6 +163,14 @@ class TrainingWorker(threading.Thread):
                 pass
         self.result_queue.put({"type": "log", "message": message})
 
+    def _emit_stage(self, stage_idx: int, stage_name: str) -> None:
+        """학습 단계 전환 시 stage 메시지를 Queue에 전송 (FR-T3-11, FR-T3-12)."""
+        self.result_queue.put({
+            "type": "stage",
+            "stage_idx": stage_idx,
+            "stage_name": stage_name,
+        })
+
     def _run_impl(self) -> None:
         # 1. 재현성 시드 고정 (R-SEED-01)
         seed = self.model_config.get("random_seed", 42)
@@ -185,9 +213,21 @@ class TrainingWorker(threading.Thread):
 
         model_type = self.model_config.get("model_type", "")
 
-        # 3. EfficientAD — imagenet penalty 사전 검증 (Z.1)
+        # 3. EfficientAD — 사전 검증
         use_imagenet_penalty = False
         if model_type == "efficientad":
+            # 3-a. image_size 최소값 검사 (AutoEncoder 인코더 구조 제약)
+            # 인코더가 입력을 2^5=32배 줄이고 마지막 Conv 커널=8×8이므로
+            # 최소 image_size = 8 × 32 = 256 필요
+            image_size = self.model_config.get("image_size", 256)
+            if image_size < 256:
+                raise ValueError(
+                    f"EfficientAD는 image_size ≥ 256이 필요합니다. "
+                    f"현재 설정: {image_size}px. "
+                    f"탭2에서 image_size를 256 이상으로 변경한 뒤 다시 시도해 주세요."
+                )
+
+            # 3-b. imagenet penalty 사전 검증 (Z.1)
             use_imagenet_penalty = self.model_config.get("params", {}).get("use_imagenet_penalty", False)
             if use_imagenet_penalty:
                 from utils.storage import validate_imagenet_penalty_dir
@@ -196,6 +236,7 @@ class TrainingWorker(threading.Thread):
                     raise ValueError("ImageNet penalty 디렉터리에 이미지가 없습니다.")
 
         # 4. DataLoader 구성
+        self._emit_stage(0, "데이터 로딩")
         self._write_log("[초기화] 데이터셋 로딩 중...")
         from utils.mvtec_dataset import build_dataloaders
         train_loader, test_loader = build_dataloaders(
@@ -208,6 +249,7 @@ class TrainingWorker(threading.Thread):
             f"[초기화] 데이터셋 로딩 완료 — "
             f"train {len(train_loader.dataset)}장 / test {len(test_loader.dataset)}장"
         )
+        self._emit_stage(1, "모델 초기화")
 
         # 5. 모델 생성 + 학습
         from utils.model_factory import (
@@ -245,6 +287,8 @@ class TrainingWorker(threading.Thread):
             return
 
         # 6. 전체 테스트셋 추론
+        _test_stage_idx = 3 if model_type == "efficientad" else 5
+        self._emit_stage(_test_stage_idx, "테스트 추론")
         self._write_log("[평가] 테스트셋 추론 중...")
         y_true, anomaly_scores, anomaly_maps = self._run_full_test_inference(
             model, test_loader, device
@@ -261,6 +305,8 @@ class TrainingWorker(threading.Thread):
             f"[결과] 테스트 이미지 {len(y_true)}장 완료 | 소요: {elapsed:.1f}s"
         )
 
+        _done_stage_idx = 4 if model_type == "efficientad" else 6
+        self._emit_stage(_done_stage_idx, "완료")
         self.result_queue.put({
             "type":             "completed",
             "y_true":           y_true,
@@ -298,6 +344,7 @@ class TrainingWorker(threading.Thread):
 
         model = model.to(device)
         model.train()
+        self._emit_stage(2, "학습 루프")
         self._write_log("[학습] EfficientAD GPU 전송 완료. 학습 루프 시작...")
 
         # anomalib 버전별로 student/autoencoder 위치가 다름
@@ -522,6 +569,7 @@ class TrainingWorker(threading.Thread):
                 f"({self.accumulated_features.shape[0]:,}개 패치)"
             )
 
+        self._emit_stage(2, "특징 추출")
         self._write_log(
             f"[학습] PatchCore 특징 추출 시작 — "
             f"총 {total_batches}배치 / 재개: {self.start_batch_idx}배치부터"
@@ -608,6 +656,7 @@ class TrainingWorker(threading.Thread):
             raise ValueError("특징 추출된 배치가 없습니다. 데이터셋을 확인해 주세요.")
 
         # ── coreset 구성 → memory_bank 직접 설정
+        self._emit_stage(3, "Coreset 구성")
         self._write_log("[PatchCore] 특징 추출 완료. Coreset 구성 중...")
         feature_stack = torch.cat(all_features, dim=0)
         coreset_ratio = params.get("coreset_sampling_ratio", 0.1)
@@ -616,6 +665,7 @@ class TrainingWorker(threading.Thread):
         coreset       = feature_stack[indices].to(device)
 
         # model.model.memory_bank 또는 model.memory_bank 중 존재하는 쪽에 설정
+        self._emit_stage(4, "Memory Bank 설정")
         torch_model = getattr(model, "model", None)
         if torch_model is not None and hasattr(torch_model, "memory_bank"):
             torch_model.memory_bank = coreset

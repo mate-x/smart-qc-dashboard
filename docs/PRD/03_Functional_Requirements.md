@@ -2,9 +2,9 @@
 
 > **참조 기준**: [00_Global_Context_Document.md](./00_Global_Context_Document.md)
 > **선행 문서**: [01_Product_Overview.md](./01_Product_Overview.md), [02_User_Personas_and_Use_Cases.md](./02_User_Personas_and_Use_Cases.md)
-> **버전**: v1.1
+> **버전**: v1.2
 > **작성일**: 2026-05-08
-> **수정일**: 2026-05-26 — v1.1: 비전검사 대시보드 기능 요구사항 추가 (B.8절)
+> **수정일**: 2026-05-29 — v1.2: #01 명칭 변경(플랫폼), #02 학습 단계 시각화+ETA, #03 실험 대기열+일괄 학습, #04 검사 실시간 차트 추가
 > **후속 문서**: [04_System_Architecture.md](./04_System_Architecture.md)
 
 ---
@@ -88,7 +88,7 @@
 | **설명** | 앱 최초 실행 시 session_state를 초기화하고 전체 레이아웃을 구성한다 |
 | **트리거** | `app.py` 실행 (Streamlit 프로세스 시작) |
 | **구현 위치** | `app.py` |
-| **동작** | 1. `utils/session_state_init.py`의 `init_session_state()` 호출 (00_Global_Context 3.1절 스키마 기준) <br> 2. `st.set_page_config(page_title="비전검사 대시보드", layout="wide")` <br> 3. `components/sidebar.py`의 사이드바 렌더링 <br> 4. `st.tabs(["📁 데이터", "⚙️ 전처리 및 모델 설정", "🚀 학습", "📊 히스토리", "🔍 Anomaly Map"])` 로 5탭 렌더링 <br> 5. 각 탭 내부에서 해당 `tabs/tab{n}_*.py` 함수 호출 |
+| **동작** | 1. `utils/session_state_init.py`의 `init_session_state()` 호출 (00_Global_Context 3.1절 스키마 기준) <br> 2. `st.set_page_config(page_title="Smart QC Platform", layout="wide")` <br> 3. `components/sidebar.py`의 사이드바 렌더링 <br> 4. `st.tabs(["📁 데이터", "⚙️ 전처리 및 모델 설정", "🚀 학습", "📊 히스토리", "🔍 Anomaly Map"])` 로 5탭 렌더링 <br> 5. 각 탭 내부에서 해당 `tabs/tab{n}_*.py` 함수 호출 |
 | **멱등성** | Streamlit rerun 발생 시 `init_session_state()`는 이미 설정된 키를 덮어쓰지 않는다 |
 
 ---
@@ -440,6 +440,44 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 
 ---
 
+#### FR-T2-16 (M): 대기열 추가 버튼 — v1.2 추가
+
+| 항목 | 내용 |
+|------|------|
+| **설명** | 탭2 설정 저장 버튼 우측에 "대기열에 추가" 버튼을 배치한다. 현재 UI 설정 스냅샷을 `experiment_queue`에 추가한다 |
+| **Streamlit 컴포넌트** | `st.button("📋 대기열에 추가", key="tab2_btn_enqueue")` |
+| **동작** | 1. preprocessing_config + model_config 현재 값으로 스냅샷 생성 <br> 2. 실험명 자동 생성 (FR-T3-01 규칙 동일) <br> 3. `st.session_state.experiment_queue.append({"name": name, "preprocessing_config": ..., "model_config": ..., "status": "대기중"})` <br> 4. `st.success(f"'{name}'이(가) 대기열에 추가되었습니다.")` |
+| **비활성화 조건** | `preprocessing_config is None` OR `model_config is None` |
+| **session_state Write** | `experiment_queue` |
+
+---
+
+#### FR-T2-17 (M): 대기열 테이블 + 순서 조정 (Tab2 하단 좌측) — v1.2 추가
+
+| 항목 | 내용 |
+|------|------|
+| **설명** | 탭2 하단 2분할 좌측에 대기열 항목 테이블과 순서 조정 버튼을 표시한다 |
+| **레이아웃** | `col_left, col_right = st.columns(2)` — 하단 2분할 |
+| **테이블 컬럼** | 순번 / 실험명 / 모델 타입 / 상태 |
+| **상태 색상** | 대기중: 회색 / 진행중: 파란색 / 완료: 초록색 / 실패: 빨간색 / 건너뜀: 주황색 (pandas Styler 적용) |
+| **순서 조정** | 행 선택 후 `[▲ 위로]` / `[▼ 아래로]` 버튼. 인덱스 swap으로 구현 |
+| **항목 삭제** | `[🗑 삭제]` 버튼 — "대기중" 상태 항목만 삭제 가능 |
+| **Streamlit 컴포넌트** | `st.dataframe(df, selection_mode="single-row", on_select="rerun")` |
+| **session_state Read/Write** | `experiment_queue` (Read + 순서 변경 시 Write) |
+
+---
+
+#### FR-T2-18 (M): 대기열 모델 상세 보기 (Tab2 하단 우측) — v1.2 추가
+
+| 항목 | 내용 |
+|------|------|
+| **설명** | 대기열 테이블에서 선택한 항목의 전처리·모델 파라미터 전체를 우측에 표시한다 |
+| **표시 조건** | FR-T2-17 테이블에서 행이 선택된 경우 |
+| **표시 내용** | `st.subheader(f"{selected_name} — 설정 상세")` <br> `st.json({"preprocessing": preprocessing_config, "model": model_config})` |
+| **미선택 시** | `st.info("항목을 선택하면 상세 설정이 표시됩니다.")` |
+
+---
+
 ### B.4 탭3 — 학습 시작 + 학습 로그
 
 ---
@@ -488,6 +526,8 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 | **설명** | 학습 중 Progress Bar, Loss 곡선, 로그 텍스트를 주기적으로 갱신한다 |
 | **갱신 메커니즘** | `st.empty()` 컨테이너 + `time.sleep(0.3)` + `st.rerun()` 루프 |
 | **Progress Bar** | `st.progress(current_step / total_steps, text=f"진행: {current_step}/{total_steps} ({pct:.1f}%)")` |
+| **학습 단계 인디케이터** | FR-T3-11 / FR-T3-12 참조. 진행률 바 위에 단계 인디케이터 배치 |
+| **ETA 표시** | FR-T3-13 참조. 학습 루프 단계에서만 ETA 표시 |
 | **EfficientAD Loss 갱신 주기** | 매 100 step마다 queue에 `{"step": int, "loss": float}` 전송 (가정 A-08) |
 | **PatchCore Loss 갱신 주기** | 에포크 단위 (PatchCore는 단일 에포크 학습) |
 | **Loss 곡선 차트** | `st.line_chart(data={"step": [...], "loss": [...]})` 또는 `plotly` 라인 차트 |
@@ -564,6 +604,70 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 | **PatchCore 재시작** | `start_batch_idx`, `accumulated_features`를 `TrainingWorker`에 전달하여 이미 추출된 특징부터 재개 |
 | **ID 충돌 방지** | 체크포인트의 `experiment_id`가 history.json에 이미 존재하면 새 ID 자동 생성 |
 | **삭제** | `[🗑 삭제]` 클릭 → `delete_checkpoint(path)` → `st.rerun()` |
+
+---
+
+#### FR-T3-11 (M): EfficientAD 학습 단계 스텝 인디케이터 — v1.2 추가
+
+| 항목 | 내용 |
+|------|------|
+| **설명** | EfficientAD 학습 중 현재 단계를 순서형 인디케이터로 표시한다 |
+| **단계 정의** | ① 데이터 로딩 → ② 모델 초기화 (사전학습 가중치 포함) → ③ 학습 루프 → ④ 테스트 추론 → ⑤ 완료 |
+| **TrainingWorker 변경** | `queue.put({"type": "stage", "stage_idx": int, "stage_name": str})` 메시지 타입 추가. 각 단계 전환 시 전송 |
+| **UI 구현** | 진행률 바 **위**에 가로 인디케이터 배치. 현재 단계 bold + 파란색, 완료 단계 회색, 미완료 단계 연회색 |
+| **표시 예시** | `✅ 데이터 로딩  ✅ 모델 초기화  🔵 학습 루프  ○ 테스트 추론  ○ 완료` |
+| **session_state Write** | `_current_stage_idx`, `_current_stage_name` |
+
+---
+
+#### FR-T3-12 (M): PatchCore 학습 단계 스텝 인디케이터 — v1.2 추가
+
+| 항목 | 내용 |
+|------|------|
+| **설명** | PatchCore 학습 중 현재 단계를 순서형 인디케이터로 표시한다 |
+| **단계 정의** | ① 데이터 로딩 → ② 모델 초기화 → ③ 특징 추출 (배치별) → ④ Coreset 구성 → ⑤ Memory Bank 설정 → ⑥ 테스트 추론 → ⑦ 완료 |
+| **TrainingWorker 변경** | FR-T3-11과 동일한 `"stage"` 메시지 타입 사용 |
+| **표시 예시** | `✅ 데이터 로딩  ✅ 모델 초기화  🔵 특징 추출  ○ Coreset 구성  ○ Memory Bank  ○ 테스트 추론  ○ 완료` |
+
+---
+
+#### FR-T3-13 (M): 학습 예상 완료 시간 (ETA) 표시 — v1.2 추가
+
+| 항목 | 내용 |
+|------|------|
+| **설명** | 학습 루프 단계에서 예상 완료 시간(ETA)을 계산하여 진행률 바 레이블에 포함 표시한다 |
+| **EfficientAD ETA** | `ETA = elapsed / step * (total_steps - step)` — 100 step 이상 진행 후부터 표시 |
+| **PatchCore ETA** | `ETA = elapsed / batch_idx * (total_batches - batch_idx)` |
+| **비-루프 단계 처리** | 모델 초기화 등 예측 불가 단계는 ETA 없이 "진행 중..." 표시 |
+| **표시 형식** | `f"Step {step}/{total} ({pct:.1f}%) | Loss: {loss:.4f} | 경과: {elapsed:.0f}s | ETA: {eta:.0f}s"` |
+| **표시 위치** | `st.progress(pct, text=label)` 레이블에 포함 |
+
+---
+
+#### FR-T3-14 (M): 탭3 상단 대기열 표시 — v1.2 추가
+
+| 항목 | 내용 |
+|------|------|
+| **설명** | 탭3 최상단에 FR-T2-17과 동일한 대기열 테이블을 표시한다. 탭2와 동일한 `experiment_queue` 키를 공유한다 |
+| **표시 조건** | `len(experiment_queue) > 0` 인 경우에만 렌더링 |
+| **테이블 스펙** | FR-T2-17과 동일 (컬럼, 색상, 선택 기능) |
+| **위치** | 기존 "현재 학습 설정 요약" expander 위 |
+| **목적** | 일괄 학습 시작 전 대기열 최종 확인 |
+
+---
+
+#### FR-T3-15 (M): 일괄 학습 시작 + 제어 버튼 — v1.2 추가
+
+| 항목 | 내용 |
+|------|------|
+| **설명** | 대기열에 있는 모델들을 순서대로 자동 학습한다 |
+| **[일괄 학습 시작] 버튼** | `st.button("🚀 일괄 학습 시작", type="primary")` — `len(experiment_queue) > 0` AND `current_run_status == "idle"` 시 활성화 |
+| **일괄 학습 로직** | 1. `experiment_queue[0]` 부터 순서대로 학습 시작 <br> 2. 현재 학습 완료/실패/건너뜀 시 다음 항목 자동 시작 <br> 3. 완료: history.json에 "completed" 저장, 상태 → 초록 <br> 4. 실패: history.json에 "실패" 저장, 상태 → 빨간, **다음 항목 자동 진행** <br> 5. 건너뜀: history.json에 "건너뜀" 저장, 상태 → 주황, **다음 항목 자동 진행** |
+| **일괄 학습 중 제어 버튼** | `st.columns(3)` — `[⏸ 일시정지]` / `[⏭ 현재 학습 건너뛰기]` / `[⏹ 전체 학습 중단]` |
+| **건너뛰기 처리** | 현재 TrainingWorker의 `stop_event.set()` + pause 체크포인트 저장 후 "건너뜀" 기록 |
+| **전체 중단 처리** | `stop_event.set()` + 대기열 나머지 항목 상태 유지 (대기중 그대로) |
+| **진행 표시** | 기존 단일 학습과 동일한 학습 모니터링 UI 사용. 상단에 `f"일괄 학습 진행 중: {완료수}/{전체수}"` 배너 추가 |
+| **session_state Write** | `experiment_queue` (상태 갱신), `_batch_queue_mode: bool`, `_batch_total_count: int` |
 
 ---
 
@@ -790,7 +894,7 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 |------|------|
 | **설명** | 사이드바에 두 대시보드 전환 버튼을 렌더링한다. 데이터셋·디바이스 정보 섹션은 표시하지 않는다 |
 | **구현 위치** | `components/sidebar.py` (v1.1 업데이트) |
-| **렌더링** | `🔬 모델 탐색 대시보드` 버튼 + `🏭 비전검사 대시보드` 버튼 (항상 표시) |
+| **렌더링** | 사이드바 타이틀 `"Smart QC Platform"` + `🔬 모델 탐색 플랫폼` 버튼 + `🏭 비전검사 플랫폼` 버튼 (항상 표시) |
 | **활성 상태** | 현재 `active_dashboard` 값과 일치하는 버튼에 `type="primary"`, 나머지는 `type="secondary"` |
 | **전환 동작** | 버튼 클릭 시 `st.session_state.active_dashboard = <대상>`, `st.rerun()` 즉시 호출 |
 | **Streamlit 컴포넌트** | `st.sidebar.button(label, use_container_width=True, type=...)` |
@@ -955,6 +1059,57 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 
 ---
 
+#### FR-INSP-T2-05 (M): 검사 단위 선택 버튼 + 시간 범위 테이블 (3분할 왼쪽) — v1.2 추가
+
+| 항목 | 내용 |
+|------|------|
+| **설명** | 탭2 기존 UI 하단에 3분할 레이아웃을 추가한다. 왼쪽 열에 단위 선택 버튼과 그룹 시간 범위 테이블을 표시한다 |
+| **레이아웃** | `col_left, col_mid, col_right = st.columns(3)` — 기존 KPI 카드 아래에 배치 |
+| **단위 선택 버튼** | `st.columns(3)` 안에 `[20개 단위]` / `[40개 단위]` / `[100개 단위]` 버튼. 기본값: 20 |
+| **시간 계산 규칙** | 고정 시작 시각 `2026-06-24 14:00:00` 기준. 검사 간격 = 3초 <br> seq=1의 시작 시각 = 14:00:00 <br> 그룹 n의 시작 시각 = 14:00:00 + (n-1) * unit * 3초 <br> 그룹 n의 종료 시각 = 시작 시각 + unit * 3초 |
+| **시간 범위 레이블** | `f"2026-06-24 {start_hh:02d}:{start_mm:02d}~{end_hh:02d}:{end_mm:02d}"` |
+| **테이블 컬럼** | 시간 범위 (단일 컬럼) |
+| **단위 변경 처리** | `insp_records` 전체를 새 단위로 재계산하여 그룹 재분류 (기존 데이터 유지, 그룹 경계만 재설정) |
+| **행 선택** | 클릭 시 `insp_chart_selected_group` 갱신 → 중앙/우측 차트 갱신. 기본 선택: 가장 최근 그룹 |
+| **session_state Write** | `insp_chart_unit` (int, 기본 20), `insp_chart_selected_group` (int, 그룹 인덱스) |
+
+---
+
+#### FR-INSP-T2-06 (M): 실시간 Anomaly Score 히스토그램 (3분할 중앙) — v1.2 추가
+
+| 항목 | 내용 |
+|------|------|
+| **설명** | 선택된 그룹의 Anomaly Score 분포를 히스토그램으로 실시간 표시한다 |
+| **데이터 소스** | `insp_records` 중 선택 그룹 범위의 레코드 |
+| **x축** | 0~1 고정 (Anomaly Score). Bin 범위: 0~1 |
+| **y축** | 기본 0~10, 데이터에 따라 동적 확장 |
+| **막대 색상** | 파란색: `anomaly_score < threshold` (정상 판정) / 빨간색: `anomaly_score >= threshold` (불량 판정) |
+| **갱신 방식** | 탭2 진입/탭 전환 시 최신 `insp_records` 기준으로 렌더링. 자동 검사 중에는 3초 rerun에 따라 갱신 |
+| **완성 그룹** | 단위 수만큼 채워진 그룹은 이후 변경 없음 (고정 상태) |
+| **미완성(최신) 그룹** | 현재 진행 중. 탭 전환/자동 검사 rerun마다 업데이트 |
+| **차트 제목** | `f"Anomaly Score 분포 — {선택_그룹_시간_범위}"` |
+| **Plotly 컴포넌트** | `go.Histogram` 두 개 overlay (`barmode="overlay"`) |
+| **Threshold 적용** | 판정 기준은 `insp_active_model["threshold"]` 사용. 차트 내 threshold 수직선 표시 |
+
+---
+
+#### FR-INSP-T2-07 (M): 실시간 Anomaly Score 산점도 / Control Chart (3분할 오른쪽) — v1.2 추가
+
+| 항목 | 내용 |
+|------|------|
+| **설명** | 선택된 그룹의 Anomaly Score 순차 변화를 산점도(control chart 스타일)로 표시한다 |
+| **데이터 소스** | `insp_records` 중 선택 그룹 범위의 레코드 |
+| **x축** | 1 ~ N 고정 (N = `insp_chart_unit`). 그룹 내 검사 순번 |
+| **y축** | 0~1 고정 (Anomaly Score) |
+| **Threshold 선** | 빨간 점선 수평선 (`add_hline(y=threshold, line_dash="dash", line_color="red")`) |
+| **점 색상** | 파란색: `anomaly_score < threshold` / 빨간색: `anomaly_score >= threshold` |
+| **선 연결** | 인접한 점들을 선으로 연결 (control chart 스타일). `mode="lines+markers"` |
+| **미완성(최신) 그룹** | 현재까지 찍힌 점만 표시. 탭 전환/자동 검사 rerun마다 업데이트 |
+| **차트 제목** | `f"Anomaly Score 추이 — {선택_그룹_시간_범위}"` |
+| **Plotly 컴포넌트** | `go.Scatter(mode="lines+markers")` |
+
+---
+
 ### B.8.4 검사 탭3 — 딥러닝 모델 교체 (INSP-T3)
 
 ---
@@ -993,7 +1148,7 @@ ae_loss_weight(α)는 학습 루프 내에서 `total = α * loss_ae + (1-α) * l
 | **설명** | completed 실험이 없으면 안내 메시지를 표시한다 |
 | **조건** | `len([e for e in load_history() if e["status"] == "completed"]) == 0` |
 | **처리** | `st.info(INSP_MSG["NO_COMPLETED_EXP"])` |
-| **INSP_MSG["NO_COMPLETED_EXP"]** | `"사용 가능한 완료된 실험이 없습니다. 모델 탐색 대시보드에서 학습을 먼저 완료하세요."` |
+| **INSP_MSG["NO_COMPLETED_EXP"]** | `"사용 가능한 완료된 실험이 없습니다. 모델 탐색 플랫폼에서 학습을 먼저 완료하세요."` |
 
 ---
 

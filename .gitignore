@@ -230,7 +230,7 @@ results/*/
 !results/.gitkeep
 
 # 실험 히스토리는 추적 (영속 데이터)
-experiments/history.json  ← 의도적으로 추적함
+experiments/history.json
 configs.yaml
 
 # 데이터셋은 추적 안 함 (대용량)

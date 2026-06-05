@@ -23,7 +23,7 @@ class TestMemoryBankStateDict:
         return _create_patchcore_model({
             "params": {
                 "backbone": "wide_resnet50_2",
-                "pretrained_source": "torchvision",
+                "pretrained_source": "none",
                 "coreset_sampling_ratio": 0.1,
                 "knn": 9,
                 "neighbourhood_kernel_size": 3,
@@ -64,7 +64,7 @@ class TestMemoryBankSaveLoad:
         return _create_patchcore_model({
             "params": {
                 "backbone": "wide_resnet50_2",
-                "pretrained_source": "torchvision",
+                "pretrained_source": "none",
                 "coreset_sampling_ratio": 0.1,
                 "knn": 9,
                 "neighbourhood_kernel_size": 3,

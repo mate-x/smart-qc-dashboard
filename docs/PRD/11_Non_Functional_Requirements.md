@@ -219,14 +219,23 @@
 
 ### D.4 디스크 공간 경고
 
-**요구사항 (00절 §6)**: 모델 저장 전 여유 공간 < 500 MB 시 경고 메시지.
+**요구사항 (00절 §6)**: 모델 저장 전 여유 공간이 모델 타입별 기준 미만이면 경고 메시지.
+
+PatchCore는 `register_buffer`로 memory_bank가 `.pth`에 포함되어 파일 크기가 크므로 기준을 높게 설정한다.
+
+| 모델 타입 | 경고 기준 | 근거 |
+|----------|----------|------|
+| EfficientAD | 500 MB | backbone만 저장 (~200~400MB) |
+| PatchCore | 1024 MB | backbone + memory_bank 포함 (~600~1000MB) |
 
 **합격 기준**:
 ```python
 import shutil
 usage = shutil.disk_usage("./models")
-if usage.free < 500 * 1024 * 1024:
-    st.warning(f"디스크 여유 공간이 {usage.free // (1024*1024):.0f} MB로 부족합니다. 500 MB 이상 확보 후 저장해 주세요.")
+free_mb = usage.free / (1024 * 1024)
+warn_mb = 1024 if model_type == "patchcore" else 500
+if free_mb < warn_mb:
+    st.warning(f"디스크 여유 공간이 {free_mb:.0f} MB입니다. {warn_mb} MB 이상 권장합니다.")
 ```
 - 위 조건에서 `st.warning()` 가 렌더링되어야 함
 - 경고 상태에서도 사용자가 강제 저장 가능해야 함 (차단 아닌 경고)

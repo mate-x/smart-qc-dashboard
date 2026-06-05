@@ -14,7 +14,7 @@ from tabs import (
 ensure_required_dirs()
 
 st.set_page_config(
-    page_title="Smart QC Dashboard",
+    page_title="Smart QC Platform",
     page_icon="🔍",
     layout="wide",
     initial_sidebar_state="expanded",

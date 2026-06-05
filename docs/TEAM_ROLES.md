@@ -239,3 +239,28 @@
 | Day 2 | 버퍼 (16–18) | A | 버그 수정·한국어 UI | 03_Functional_Requirements.md |
 | Day 2 | 버퍼 (16–18) | B | 버그 수정·재현성·로그 확인 | 11_Non_Functional_Requirements.md, 12_Observability_and_Operations.md |
 | Day 2 | 버퍼 (16–18) | C | 버그 수정·성능 측정 | 11_Non_Functional_Requirements.md |
+
+---
+
+## 8. 팀원 D — v1.2 추가 기능 구현 계획 (Day 3–5)
+
+> v1.2 수정사항 #01~#04 구현. 기존 코드베이스에 추가 작업.
+> 참조 기준: `00_Global_Context_Document.md` 항상 포함.
+
+| 일자 | 시간 블록 | 팀원 | 태스크명 | 참조 PRD (00 항상 포함) |
+|------|----------|------|---------|----------------------|
+| Day 3 | 오전 1h (09–10) | D | #01 — sidebar.py 타이틀·버튼 레이블 변경 + app.py page_title 변경 | 01_Product_Overview.md, 03_Functional_Requirements.md, 15_UI_UX_Design.md |
+| Day 3 | 오전 2h (10–12) | D | #02 — TrainingWorker "stage" 메시지 타입 추가 (EfficientAD 5단계, PatchCore 7단계) | 03_Functional_Requirements.md, 07_Backend_Service_Design.md, 08_AI_ML_Integration.md |
+| Day 3 | 오후 2h (13–15) | D | #02 — tab3_training.py 단계 인디케이터 UI 구현 (진행률 바 위 가로 인디케이터) | 03_Functional_Requirements.md, 15_UI_UX_Design.md, 07_Backend_Service_Design.md |
+| Day 3 | 오후 2h (15–17) | D | #02 — ETA 계산 로직 + progress 레이블 통합 + 단계별 경과 시간 표시 | 03_Functional_Requirements.md, 11_Non_Functional_Requirements.md |
+| Day 3 | 버퍼 1h (17–18) | D | #02 — 통합 테스트 (EfficientAD/PatchCore 각 단계 전환 시 UI 정상 작동 확인) | 13_QA_and_Testing_Strategy.md |
+| Day 4 | 오전 1h (09–10) | D | #03 — session_state_init.py에 `experiment_queue`, `_batch_queue_mode` 키 추가 | 00_Global_Context_Document.md, 05_Data_Model_and_Storage_Strategy.md |
+| Day 4 | 오전 2h (10–12) | D | #03 — tab2_config.py 하단 2분할 대기열 테이블 + 상세 보기 UI (FR-T2-16~18) | 03_Functional_Requirements.md, 15_UI_UX_Design.md |
+| Day 4 | 오후 1h (13–14) | D | #03 — tab3_training.py 상단 대기열 테이블 표시 (FR-T3-14) + 일괄 학습 시작 버튼 | 03_Functional_Requirements.md, 15_UI_UX_Design.md, 07_Backend_Service_Design.md |
+| Day 4 | 오후 3h (14–17) | D | #03 — 일괄 학습 순차 실행 로직 (완료→자동 다음, 실패→기록+계속, 건너뛰기→기록+다음) + 제어 버튼 3개 | 03_Functional_Requirements.md, 04_System_Architecture.md, 05_Data_Model_and_Storage_Strategy.md, 07_Backend_Service_Design.md |
+| Day 4 | 버퍼 1h (17–18) | D | #03 — 통합 테스트 (대기열 3개 모델 순차 학습, 건너뛰기, 실패 시뮬레이션) | 13_QA_and_Testing_Strategy.md |
+| Day 5 | 오전 1h (09–10) | D | #04 — 시뮬레이션 시간 계산 유틸 작성 (고정 시작 2026-06-24 14:00, 3초 간격, 그룹 시간 범위 레이블) | 03_Functional_Requirements.md, 15_UI_UX_Design.md |
+| Day 5 | 오전 2h (10–12) | D | #04 — insp_tab2_history.py 하단 3분할 레이아웃 기반 구조 + 단위 선택 버튼 + 시간 범위 테이블 (FR-INSP-T2-05) | 03_Functional_Requirements.md, 15_UI_UX_Design.md, 06_API_Specification.md |
+| Day 5 | 오후 2h (13–15) | D | #04 — Anomaly Score 히스토그램 구현 (그룹별 분리, 단위 변경 재계산, 정상/불량 색상) (FR-INSP-T2-06) | 03_Functional_Requirements.md, 15_UI_UX_Design.md, 08_AI_ML_Integration.md |
+| Day 5 | 오후 2h (15–17) | D | #04 — Anomaly Score 산점도 구현 (x축 1~N 고정, threshold 점선, 점+선 연결) (FR-INSP-T2-07) | 03_Functional_Requirements.md, 15_UI_UX_Design.md |
+| Day 5 | 버퍼 1h (17–18) | D | #04 — 통합 테스트 (자동 검사 20건 진행 후 그룹 확정, 단위 전환 재계산, 그룹 선택 차트 갱신 확인) | 01_Product_Overview.md, 13_QA_and_Testing_Strategy.md |

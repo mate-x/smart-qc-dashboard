@@ -260,15 +260,66 @@ def _efficientad_training_step(
             f"model 속성: {[a for a in dir(model) if not a.startswith('_')]}"
         )
 
+    # AutoEncoder.forward()가 버전에 따라 (batch,) 또는 (batch, image_size) 서명을 가짐.
+    # anomalib 2.x: forward(batch, image_size) — image_size 필수.
+    _h, _w = images.shape[-2], images.shape[-1]
+
     with torch.no_grad():
         teacher_out = teacher(images)
     student_out = student(images)
-    ae_out = autoencoder(images)
 
-    loss_st = torch.mean((teacher_out - student_out) ** 2)
-    loss_ae = torch.mean((images - ae_out) ** 2)
-    loss_total = alpha * loss_ae + (1.0 - alpha) * loss_st
-    return {"loss_st": loss_st, "loss_ae": loss_ae, "loss_total": loss_total}
+    try:
+        ae_out = autoencoder(images, (_h, _w))      # anomalib 2.x signature
+    except TypeError:
+        ae_out = autoencoder(images)                 # anomalib 1.x signature
+
+    # ── loss_stae: AE 재구성 이미지를 teacher/student에 다시 통과시켜 비교 ──────
+    # EfficientAD 원본 알고리즘의 핵심 3번째 손실 항목.
+    # AE가 재구성한 이미지(이상 없는 버전)에 대해 student가 teacher를 얼마나
+    # 모방하는지 학습 → AE 경로를 통한 이상 감지 능력 훈련.
+    # ae_out은 detach()하여 loss_stae의 gradient가 AE가 아닌 student만 업데이트.
+    ae_out_detached = ae_out.detach()
+    with torch.no_grad():
+        teacher_ae_out = teacher(ae_out_detached)
+    student_ae_out = student(ae_out_detached)
+    loss_stae = torch.mean((teacher_ae_out - student_ae_out) ** 2)
+
+    loss_st    = torch.mean((teacher_out - student_out) ** 2)
+    loss_ae    = torch.mean((images - ae_out) ** 2)
+    loss_total = alpha * loss_ae + (1.0 - alpha) * loss_st + loss_stae
+    return {
+        "loss_st":   loss_st,
+        "loss_ae":   loss_ae,
+        "loss_stae": loss_stae,
+        "loss_total": loss_total,
+    }
+
+
+def _mask_padding_from_anomaly_map(
+    amap: np.ndarray,
+    image: torch.Tensor,
+    padding_threshold: float = -1.7,
+) -> np.ndarray:
+    """
+    resize_with_padding()로 추가된 zero-padding 영역을 anomaly map에서 제거한다.
+
+    zero-padding은 ImageNet 정규화 후 매우 낮은 값(-2.1, -2.0, -1.8)을 가진다.
+    모든 채널이 threshold 미만인 픽셀 = padding → anomaly score를 0으로 설정.
+
+    padding 영역이 anomaly map에서 높게 나오면 heatmap 코너가 붉게 표시되는
+    시각적 버그를 유발한다.
+    """
+    try:
+        if image.dim() == 4 and image.shape[1] == 3:
+            # (1, 3, H, W) → 모든 채널이 threshold 미만인 픽셀 = padding
+            is_padding = (image[0] < padding_threshold).all(dim=0).cpu().numpy()  # (H, W)
+            # 이미지 전체가 padding이거나 padding이 없으면 마스킹 불필요
+            if is_padding.any() and not is_padding.all():
+                amap = amap.copy()
+                amap[is_padding] = 0.0
+    except Exception:
+        pass  # 마스킹 실패 시 원본 반환
+    return amap
 
 
 def _get_anomaly_map(
@@ -280,6 +331,7 @@ def _get_anomaly_map(
 
     anomalib 2.4.x: model.model(image) → InferenceBatch(anomaly_map=...) 반환.
     model(image) 보다 model.model(image)를 먼저 시도해 LightningModule forward 미정의 문제를 회피.
+    padding 영역은 자동으로 0으로 마스킹하여 heatmap 코너 아티팩트를 제거한다.
     """
     torch_model = getattr(model, "model", None)
 
@@ -296,7 +348,8 @@ def _get_anomaly_map(
             else:
                 amap = output
             if isinstance(amap, torch.Tensor):
-                return amap.squeeze().cpu().numpy().astype(np.float32)
+                raw = amap.squeeze().cpu().numpy().astype(np.float32)
+                return _mask_padding_from_anomaly_map(raw, image)
         except Exception:
             continue
 
@@ -314,39 +367,19 @@ def _get_anomaly_map(
         k = min(getattr(mem_holder, "num_neighbors", 9), dists.shape[1])
         patch_scores, _ = torch.topk(dists, k, dim=1, largest=False)
         patch_scores = patch_scores.mean(dim=1)
-        spatial_size = int(patch_scores.shape[0] ** 0.5)
+        N = patch_scores.shape[0]
+        spatial_size = int(N ** 0.5)
+        if spatial_size * spatial_size != N:
+            raise ValueError(
+                f"PatchCore feature map 크기({N}개 패치)가 정방형이 아닙니다. "
+                f"image_size를 8의 배수(예: 256)로 설정해 주세요."
+            )
         patch_map = patch_scores.reshape(spatial_size, spatial_size).cpu().numpy()
         H = W = image.shape[-1]
-        return cv2.resize(patch_map, (W, H), interpolation=cv2.INTER_LINEAR).astype(np.float32)
+        raw = cv2.resize(patch_map, (W, H), interpolation=cv2.INTER_LINEAR).astype(np.float32)
+        return _mask_padding_from_anomaly_map(raw, image)
 
     raise NotImplementedError(f"알 수 없는 모델 구조: {type(model)}")
-
-
-def _get_pred_score(
-    model: object,
-    image: torch.Tensor,
-) -> float:
-    """단일 이미지 추론 → pred_score float 반환.
-
-    anomalib 2.4.x: InferenceBatch.pred_score 우선 (num_neighbors 반영).
-    pred_score가 없으면 anomaly_map.max() fallback.
-    """
-    torch_model = getattr(model, "model", None)
-    for m in ([torch_model, model] if torch_model is not None else [model]):
-        if m is None:
-            continue
-        try:
-            output = m(image)
-            score = None
-            if hasattr(output, "pred_score") and output.pred_score is not None:
-                score = output.pred_score
-            elif isinstance(output, dict) and "pred_score" in output:
-                score = output["pred_score"]
-            if score is not None:
-                return float(score.squeeze().cpu().item() if isinstance(score, torch.Tensor) else score)
-        except Exception:
-            continue
-    return float(_get_anomaly_map(model, image).max())
 
 
 # ── Public factory functions ───────────────────────────────────────────────────

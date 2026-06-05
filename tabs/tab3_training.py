@@ -26,7 +26,8 @@ from utils.storage import (
     validate_imagenet_penalty_dir,
     IMAGENET_PENALTY_DIR,
 )
-from utils.training_worker import TrainingWorker
+from utils.training_worker import TrainingWorker, EFFICIENTAD_STAGES, PATCHCORE_STAGES
+from tabs.tab2_config import _build_queue_df, _style_queue_rows
 
 KST = timezone(timedelta(hours=9))
 
@@ -51,6 +52,8 @@ def generate_created_at() -> str:
 def render() -> None:
     st.header("탭3. 학습 시작 + 학습 로그")
 
+    _render_queue_at_tab3_top()
+
     if not _guard():
         return
 
@@ -71,6 +74,228 @@ def render() -> None:
     else:
         _show_last_result()
         _render_idle_ui()
+
+
+# ── 배치 대기열 헬퍼 함수 (FR-T3-15) ────────────────────────────────────────────
+
+def _mark_current_batch_item(status: str) -> None:
+    """배치 대기열에서 '진행중' 항목의 상태를 변경한다 (FR-T3-15)."""
+    queue_items = list(st.session_state.get("experiment_queue", []))
+    for i, item in enumerate(queue_items):
+        if item.get("status") == "진행중":
+            queue_items[i] = {**item, "status": status}
+            break
+    st.session_state["experiment_queue"] = queue_items
+
+
+def _save_batch_item_to_history(status: str) -> None:
+    """건너뜀/실패 항목을 history.json에 기록한다 (FR-T3-15)."""
+    exp_id = st.session_state.get("current_exp_id", "")
+    if not exp_id:
+        return
+    try:
+        record = _build_experiment_record(exp_id, status, None, None)
+        append_experiment(record)
+        st.session_state.setdefault("experiments", {})[exp_id] = record
+    except RuntimeError:
+        pass
+
+
+def _advance_batch_queue() -> None:
+    """
+    FR-T3-15: 배치 대기열에서 다음 '대기중' 항목으로 학습을 진행한다.
+    대기중 항목이 없으면 배치 모드를 종료하고 완료 메시지를 표시한다.
+    """
+    queue_items = list(st.session_state.get("experiment_queue", []))
+    pending = [
+        (i, item) for i, item in enumerate(queue_items)
+        if item.get("status") == "대기중"
+    ]
+
+    if not pending:
+        # 모든 항목 처리 완료 → 배치 종료
+        st.session_state["_batch_queue_mode"] = False
+        completed = sum(1 for item in queue_items if item.get("status") == "완료")
+        failed    = sum(1 for item in queue_items if item.get("status") == "실패")
+        skipped   = sum(1 for item in queue_items if item.get("status") == "건너뜀")
+        st.session_state["_last_result"] = {
+            "level": "success" if not failed else "warning",
+            "text": (
+                f"일괄 학습이 완료되었습니다. "
+                f"완료: {completed}개 | 실패: {failed}개 | 건너뜀: {skipped}개"
+            ),
+        }
+        return
+
+    # 다음 대기중 항목 시작
+    next_idx, next_item = pending[0]
+    st.session_state["preprocessing_config"] = dict(next_item["preprocessing_config"])
+    st.session_state["model_config"]         = dict(next_item["model_config"])
+
+    queue_items[next_idx] = {**queue_items[next_idx], "status": "진행중"}
+    st.session_state["experiment_queue"] = queue_items
+
+    _handle_start_training(next_item.get("name", ""))
+
+
+# ── 탭3 상단 대기열 표시 (FR-T3-14, FR-T3-15) ─────────────────────────────────
+
+def _render_queue_at_tab3_top() -> None:
+    """
+    FR-T3-14: 탭3 최상단 실험 대기열 테이블.
+    FR-T3-15: 일괄 학습 시작 버튼 / 진행 배너 / 제어 버튼(⏸/⏭/⏹) / 자동 진행.
+    len(experiment_queue) == 0 이면 렌더링하지 않는다.
+    """
+    queue_items: list[dict] = st.session_state.get("experiment_queue", [])
+
+    # ── 배치 자동 진행 처리 (advance_pending + idle 상태) ──────────────────────
+    if (
+        st.session_state.get("_batch_advance_pending", False)
+        and st.session_state.get("_batch_queue_mode", False)
+        and st.session_state.get("current_run_status", "idle") == "idle"
+        and st.session_state.get("dataset_path")
+    ):
+        st.session_state["_batch_advance_pending"] = False
+        _advance_batch_queue()
+        return  # _advance_batch_queue → _handle_start_training → st.rerun()
+
+    if not queue_items:
+        return
+
+    st.markdown("#### 실험 대기열")
+
+    # 대기열 테이블 — FR-T2-17과 동일 스타일
+    df = _build_queue_df(queue_items)
+    st.dataframe(
+        df.style.apply(_style_queue_rows, axis=1),
+        use_container_width=True,
+        hide_index=True,
+        key="tab3_queue_display",
+    )
+
+    batch_mode = st.session_state.get("_batch_queue_mode", False)
+    run_status = st.session_state.get("current_run_status", "idle")
+
+    if batch_mode:
+        # 배치 진행 중 배너
+        batch_total = st.session_state.get("_batch_total_count", len(queue_items))
+        done_count  = sum(
+            1 for item in queue_items
+            if item.get("status") in ("완료", "실패", "건너뜀")
+        )
+        st.info(f"🔄 일괄 학습 진행 중: {done_count} / {batch_total} 완료")
+
+        # ── 제어 버튼 3개 (FR-T3-15) ────────────────────────────────────────
+        b1, b2, b3 = st.columns(3)
+
+        with b1:
+            if st.button(
+                "⏸ 일시정지",
+                disabled=(run_status != "running"),
+                use_container_width=True,
+                key="tab3_batch_pause_btn",
+            ):
+                pause_ev = st.session_state.get("_pause_event")
+                if pause_ev:
+                    pause_ev.set()
+
+        with b2:
+            if st.button(
+                "⏭ 현재 학습 건너뛰기",
+                disabled=(run_status not in ("running", "paused")),
+                use_container_width=True,
+                key="tab3_batch_skip_btn",
+            ):
+                st.session_state["_batch_skip_current"] = True
+                if run_status == "running":
+                    # 체크포인트 저장 후 건너뛰기 (B안) — pause_event로 저장 트리거
+                    pause_ev = st.session_state.get("_pause_event")
+                    if pause_ev:
+                        pause_ev.set()
+                else:
+                    # 이미 일시정지 상태 → 그냥 중단
+                    stop_ev = st.session_state.get("_stop_event")
+                    if stop_ev:
+                        stop_ev.set()
+                    pause_ev = st.session_state.get("_pause_event")
+                    if pause_ev:
+                        pause_ev.clear()
+
+        with b3:
+            if st.button(
+                "⏹ 전체 학습 중단",
+                type="secondary",
+                use_container_width=True,
+                key="tab3_batch_stop_all_btn",
+            ):
+                st.session_state["_batch_queue_mode"] = False
+                stop_ev = st.session_state.get("_stop_event")
+                if stop_ev:
+                    stop_ev.set()
+                pause_ev = st.session_state.get("_pause_event")
+                if pause_ev:
+                    pause_ev.clear()
+                st.info("전체 학습 중단 신호를 전송했습니다.")
+
+    else:
+        # 일괄 학습 시작 버튼
+        pending_count = sum(
+            1 for item in queue_items if item.get("status") == "대기중"
+        )
+        can_start = pending_count > 0 and run_status == "idle"
+        if st.button(
+            f"🚀 일괄 학습 시작 ({pending_count}개 대기중)",
+            type="primary",
+            disabled=not can_start,
+            key="tab3_batch_start_btn",
+        ):
+            _handle_batch_start()
+
+    st.divider()
+
+
+def _handle_batch_start() -> None:
+    """
+    FR-T3-15: 일괄 학습 시작 처리.
+    첫 번째 '대기중' 항목의 설정을 session_state에 로드하고
+    단일 학습 시작 흐름(_handle_start_training)을 호출한다.
+    순차 실행(완료→자동 다음) 로직은 다음 태스크에서 구현.
+    """
+    queue_items: list[dict] = st.session_state.get("experiment_queue", [])
+    pending = [
+        (i, item) for i, item in enumerate(queue_items)
+        if item.get("status") == "대기중"
+    ]
+
+    if not pending:
+        st.warning("대기중인 항목이 없습니다.")
+        return
+
+    if st.session_state.get("current_run_status") != "idle":
+        st.warning("이미 학습이 진행 중입니다.")
+        return
+
+    if not st.session_state.get("dataset_path"):
+        st.error("먼저 탭1에서 데이터셋 경로를 설정해 주세요.")
+        return
+
+    # 배치 모드 + 전체 카운트 설정
+    pending_count = len(pending)
+    st.session_state["_batch_queue_mode"]  = True
+    st.session_state["_batch_total_count"] = pending_count
+
+    # 첫 번째 대기중 항목의 설정을 session_state에 로드
+    first_idx, first_item = pending[0]
+    st.session_state["preprocessing_config"] = dict(first_item["preprocessing_config"])
+    st.session_state["model_config"]         = dict(first_item["model_config"])
+
+    # 첫 번째 항목 상태 → "진행중"
+    queue = list(st.session_state["experiment_queue"])
+    queue[first_idx] = {**queue[first_idx], "status": "진행중"}
+    st.session_state["experiment_queue"] = queue
+
+    # 단일 학습 시작 (item name을 실험명으로 사용)
+    _handle_start_training(first_item.get("name", ""))
 
 
 def _show_last_result() -> None:
@@ -232,11 +457,80 @@ def _render_checkpoint_resume_section() -> None:
 
 # ── Running / Paused UI ────────────────────────────────────────────────────────
 
+# FR-T3-13: ETA 계산 대상 루프 단계 이름 집합
+_LOOP_STAGE_NAMES = frozenset({"학습 루프", "특징 추출"})
+_ETA_MIN_STEPS_EFFICIENTAD = 100  # EfficientAD: 최소 100 step 후 ETA 신뢰도 확보
+
+
+def _compute_eta(
+    stage_name: str | None,
+    step: int,
+    total: int,
+    elapsed: float,
+    model_type: str,
+) -> str | None:
+    """
+    FR-T3-13: 학습 루프 단계 ETA 계산.
+
+    루프 단계(학습 루프 / 특징 추출)에서만 계산.
+    비-루프 단계는 None 반환 → 호출자가 '진행 중...' 표시.
+
+    EfficientAD: 100 step 이상 진행 후부터 신뢰도 확보.
+    PatchCore: 1 배치 이상 진행 후 계산.
+    """
+    if stage_name not in _LOOP_STAGE_NAMES:
+        return None
+
+    remaining = total - step
+    if step <= 0 or elapsed <= 0.0 or remaining <= 0:
+        return None
+
+    if model_type == "efficientad" and step < _ETA_MIN_STEPS_EFFICIENTAD:
+        return None
+
+    eta_seconds = elapsed / step * remaining
+    return f"{eta_seconds:.0f}s"
+
+
+def _render_stage_indicator() -> None:
+    """
+    FR-T3-11/12: 학습 단계 스텝 인디케이터 (진행률 바 위 가로 배치).
+
+    완료 단계: ✅ ①이름  (회색)
+    현재 단계: 🔵 ②이름  (파란색 bold)
+    미완료 단계: ○ ③이름  (연회색)
+    """
+    model_config = st.session_state.get("model_config") or {}
+    model_type   = model_config.get("model_type", "")
+    stages       = EFFICIENTAD_STAGES if model_type == "efficientad" else PATCHCORE_STAGES
+
+    current_idx: int | None = st.session_state.get("_current_stage_idx")
+
+    _CIRCLED = "①②③④⑤⑥⑦"
+    parts: list[str] = []
+    for idx, name in stages:
+        num = _CIRCLED[idx] if idx < len(_CIRCLED) else str(idx + 1)
+        if current_idx is None or idx > current_idx:
+            parts.append(f'<span style="color:#aaaaaa">○&nbsp;{num}{name}</span>')
+        elif idx < current_idx:
+            parts.append(f'<span style="color:#777777">✅&nbsp;{num}{name}</span>')
+        else:
+            parts.append(f'<span style="color:#1f77b4"><b>🔵&nbsp;{num}{name}</b></span>')
+
+    html = "&nbsp;&nbsp;".join(parts)
+    st.markdown(
+        f'<div style="font-size:0.88em;padding:4px 0 6px 0">{html}</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def _render_running_ui() -> None:
     """current_run_status == "running" 또는 "paused" 상태 UI."""
     status = st.session_state.get("current_run_status", "running")
 
     st.info("🔄 학습이 진행 중입니다. 탭을 전환해도 학습은 계속됩니다.")
+
+    _render_stage_indicator()
 
     progress = st.session_state.get("_progress") or {}
     step     = progress.get("step", 0)
@@ -246,7 +540,12 @@ def _render_running_ui() -> None:
     start_t = st.session_state.get("_training_start_time") or time.time()
     elapsed = time.time() - start_t
 
-    pct   = step / total if total > 0 else 0.0
+    # FR-T3-13: ETA 계산
+    stage_name = st.session_state.get("_current_stage_name")
+    model_type = (st.session_state.get("model_config") or {}).get("model_type", "")
+    eta_str    = _compute_eta(stage_name, step, total, elapsed, model_type)
+
+    pct = step / total if total > 0 else 0.0
     if status == "paused":
         ckpt_path = st.session_state.get("_last_ckpt_path")
         ckpt_info = f" | 저장: {Path(ckpt_path).name}" if ckpt_path else ""
@@ -256,6 +555,10 @@ def _render_running_ui() -> None:
         if loss is not None and loss > 0:
             label += f" | Loss: {loss:.4f}"
         label += f" | 경과: {elapsed:.0f}s"
+        if eta_str is not None:
+            label += f" | ETA: {eta_str}"
+        else:
+            label += " | 진행 중..."
     st.progress(pct, text=label)
 
     # Loss 곡선 (EfficientAD만 유효, PatchCore는 loss=0)
@@ -377,6 +680,8 @@ def _handle_start_training(experiment_name: str) -> None:
     }
     st.session_state["_log_lines"]          = []
     st.session_state["_loss_history"]       = []
+    st.session_state["_current_stage_idx"]  = None
+    st.session_state["_current_stage_name"] = None
     st.session_state["_training_start_time"] = time.time()
 
     st.rerun()
@@ -473,6 +778,8 @@ def _handle_resume_training(ckpt_path: "Path", ckpt: dict) -> None:
     }
     st.session_state["_log_lines"]           = []
     st.session_state["_loss_history"]        = list(ckpt.get("loss_history", []))
+    st.session_state["_current_stage_idx"]   = None
+    st.session_state["_current_stage_name"]  = None
     st.session_state["_training_start_time"] = time.time()
 
     st.rerun()
@@ -507,6 +814,8 @@ def _drain_queue() -> bool:
         elif msg_type == "paused":
             _handle_paused(msg)
             # paused는 종료가 아니므로 계속 드레인
+        elif msg_type == "stage":
+            _handle_stage(msg)
         elif msg_type == "completed":
             _handle_completed(msg)
             return True
@@ -544,8 +853,30 @@ def _handle_log(msg: dict) -> None:
 
 def _handle_paused(msg: dict) -> None:
     """background thread가 체크포인트 저장 후 전송하는 메시지."""
-    st.session_state["current_run_status"] = "paused"
-    st.session_state["_last_ckpt_path"]    = msg.get("ckpt_path")
+    if st.session_state.get("_batch_skip_current", False):
+        # 배치 건너뛰기 (B안): 체크포인트 저장 완료 → 건너뜀 처리
+        _mark_current_batch_item("건너뜀")
+        _save_batch_item_to_history("건너뜀")
+        st.session_state["_batch_skip_current"]   = False
+        st.session_state["_batch_advance_pending"] = True
+        # 체크포인트를 저장한 worker가 아직 pause loop에 있으므로 stop으로 해제
+        stop_ev = st.session_state.get("_stop_event")
+        if stop_ev:
+            stop_ev.set()
+        pause_ev = st.session_state.get("_pause_event")
+        if pause_ev:
+            pause_ev.clear()
+        _reset_run_state()
+        # _batch_advance_pending = True → 다음 rerun에서 자동 진행
+    else:
+        st.session_state["current_run_status"] = "paused"
+        st.session_state["_last_ckpt_path"]    = msg.get("ckpt_path")
+
+
+def _handle_stage(msg: dict) -> None:
+    """FR-T3-11/12: stage 메시지 처리 — 현재 학습 단계 갱신."""
+    st.session_state["_current_stage_idx"]  = msg["stage_idx"]
+    st.session_state["_current_stage_name"] = msg["stage_name"]
 
 
 def _handle_completed(msg: dict) -> None:
@@ -612,6 +943,10 @@ def _handle_completed(msg: dict) -> None:
             "level": "success",
             "text":  f"학습이 완료되었습니다. AUC: {auc:.4f} | 소요 시간: {mins}분 {sec}초",
         }
+        # 배치 모드: 항목 완료 마킹 + 자동 진행 예약
+        if st.session_state.get("_batch_queue_mode", False):
+            _mark_current_batch_item("완료")
+            st.session_state["_batch_advance_pending"] = True
 
     except RuntimeError as e:
         err_str = str(e)
@@ -625,6 +960,10 @@ def _handle_completed(msg: dict) -> None:
                 "level": "error",
                 "text":  f"모델 저장에 실패했습니다. 디스크 공간을 확인해 주세요. {err_str}",
             }
+        # 배치 모드 저장 오류: 실패 처리 후 다음 항목 진행
+        if st.session_state.get("_batch_queue_mode", False):
+            _mark_current_batch_item("실패")
+            st.session_state["_batch_advance_pending"] = True
     finally:
         _reset_run_state()
         del msg["model"]
@@ -634,49 +973,90 @@ def _handle_completed(msg: dict) -> None:
 
 def _handle_error(msg: dict) -> None:
     tb = msg.get("traceback", "")
-    st.session_state["_last_result"] = {
-        "level": "error",
-        "text":  f"학습 중 오류가 발생했습니다.\n{tb}",
-    }
+    if st.session_state.get("_batch_queue_mode", False):
+        # 배치 모드: 실패 기록 후 다음 항목 자동 진행
+        _mark_current_batch_item("실패")
+        _save_batch_item_to_history("실패")
+        st.session_state["_batch_advance_pending"] = True
+        st.session_state["_last_result"] = {
+            "level": "warning",
+            "text":  f"항목 학습 중 오류 발생. 다음 항목으로 진행합니다.\n{tb[:300]}",
+        }
+    else:
+        st.session_state["_last_result"] = {
+            "level": "error",
+            "text":  f"학습 중 오류가 발생했습니다.\n{tb}",
+        }
     _reset_run_state()
 
 
 def _handle_stopped(msg: dict) -> None:
     """status="중단" 레코드 생성 후 history.json append."""
+    # 배치 건너뛰기/완료로 이미 advance가 예약된 경우: 이 stop은 ghost stop이므로 무시
+    if st.session_state.get("_batch_advance_pending", False):
+        _reset_run_state()
+        return
+
     exp_id: str = st.session_state.get("current_exp_id", "")
     step = msg.get("step", 0)
 
+    # 배치 건너뛰기가 paused → stopped 경로로 왔을 경우 처리
+    batch_skip = st.session_state.get("_batch_skip_current", False)
+
     if exp_id:
+        item_status = "건너뜀" if batch_skip else "중단"
         record = _build_experiment_record(
             exp_id=exp_id,
-            status="중단",
+            status=item_status,
             metrics=None,
             duration_seconds=None,
         )
         try:
             append_experiment(record)
-            if "experiments" not in st.session_state:
-                st.session_state["experiments"] = {}
-            st.session_state["experiments"][exp_id] = record
+            st.session_state.setdefault("experiments", {})[exp_id] = record
         except RuntimeError:
             pass
 
-    st.session_state["_last_result"] = {
-        "level": "warning",
-        "text":  MSG["TRAIN_STOPPED"] + (f" ({step:,} step 완료 후 중단)" if step else ""),
-    }
+    if batch_skip:
+        # paused → stopped 경로 건너뛰기
+        _mark_current_batch_item("건너뜀")
+        st.session_state["_batch_skip_current"]   = False
+        st.session_state["_batch_advance_pending"] = True
+        st.session_state["_last_result"] = {
+            "level": "warning",
+            "text": "항목이 건너뛰어졌습니다. 다음 항목으로 진행합니다.",
+        }
+    elif st.session_state.get("_batch_queue_mode", False):
+        # 배치 전체 중단 (⏹ 전체 중단 또는 기존 학습 중지)
+        _mark_current_batch_item("중단")
+        st.session_state["_batch_queue_mode"] = False
+        st.session_state["_last_result"] = {
+            "level": "warning",
+            "text": MSG["TRAIN_STOPPED"] + (f" ({step:,} step 완료 후 중단)" if step else ""),
+        }
+    else:
+        # 일반 단일 학습 중단
+        st.session_state["_last_result"] = {
+            "level": "warning",
+            "text": MSG["TRAIN_STOPPED"] + (f" ({step:,} step 완료 후 중단)" if step else ""),
+        }
+
     _reset_run_state()
 
 
 def _reset_run_state() -> None:
     """학습 종료 후 내부 상태 초기화."""
-    st.session_state["current_run_status"] = "idle"
-    st.session_state["current_exp_id"]     = None
-    st.session_state["_stop_event"]        = None
-    st.session_state["_pause_event"]       = None
-    st.session_state["_result_queue"]      = None
-    st.session_state["_worker"]            = None
-    st.session_state["_last_ckpt_path"]    = None
+    st.session_state["current_run_status"]  = "idle"
+    st.session_state["current_exp_id"]      = None
+    st.session_state["_stop_event"]         = None
+    st.session_state["_pause_event"]        = None
+    st.session_state["_result_queue"]       = None
+    st.session_state["_worker"]             = None
+    st.session_state["_last_ckpt_path"]     = None
+    st.session_state["_current_stage_idx"]  = None
+    st.session_state["_current_stage_name"] = None
+    st.session_state["_batch_skip_current"] = False
+    # _batch_queue_mode, _batch_advance_pending, _batch_total_count은 배치 흐름이 관리
 
 
 # ── 실험 레코드 구성 ───────────────────────────────────────────────────────────

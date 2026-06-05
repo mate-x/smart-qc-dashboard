@@ -3,7 +3,7 @@ inspection/tabs/insp_tab1_realtime.py — 실시간 검사 탭
 
 FR-INSP-T1-01: 수동 검사 (1개 검사)
 FR-INSP-T1-02: 자동 검사 (3초마다 1개)
-FR-INSP-T1-03: 3열 결과 패널 [1, 2, 2] — 판정카드 / 원본이미지 / Anomaly Map
+FR-INSP-T1-03: 4열 결과 패널 [1, 2, 2, 2] — 판정카드 / 원본이미지 / Anomaly Map / 오버레이
 FR-INSP-T1-04: 불량 감지 팝업
 FR-INSP-T1-06: test_pool 소진 시 재셔플 알림 + 빈 풀 guard
 
@@ -129,33 +129,82 @@ def _render_defect_popup() -> None:
             st.rerun()
 
 
+def _make_anomaly_overlay(
+    image_path: str,
+    anomaly_map: np.ndarray,
+    threshold: float,
+    score_min: float,
+    score_max: float,
+    alpha: float = 0.45,
+) -> "PIL.Image.Image":
+    """
+    원본 이미지 위에 이상 영역(threshold 초과)을 빨간색 반투명으로 오버레이.
+
+    anomaly_map: 모델 출력 raw map (padding 마스킹 이미 적용됨)
+    threshold:   정규화된 threshold (0~1)
+    score_min/max: raw → 0~1 정규화 기준값
+    alpha:       빨간색 오버레이 불투명도 (0=투명, 1=불투명)
+    """
+    import cv2
+    from PIL import Image as PIL_Image
+
+    orig = PIL_Image.open(image_path).convert("RGB")
+    orig_arr = np.array(orig, dtype=np.float32)
+    h, w = orig_arr.shape[:2]
+
+    # anomaly_map을 normalized 0~1 스케일로 변환
+    if score_max > score_min:
+        amap_norm = np.clip(
+            (anomaly_map - score_min) / (score_max - score_min), 0.0, 1.0
+        ).astype(np.float32)
+    else:
+        amap_norm = np.zeros_like(anomaly_map, dtype=np.float32)
+
+    # 원본 이미지 크기에 맞게 리사이즈 (모델 입력 해상도 → 원본 해상도)
+    amap_resized = cv2.resize(amap_norm, (w, h), interpolation=cv2.INTER_LINEAR)
+
+    # 이진 마스크: 정규화 score >= threshold → 이상 영역
+    mask = amap_resized >= threshold  # (H, W) bool
+
+    # 이상 픽셀에 빨간색 반투명 오버레이 적용
+    result = orig_arr.copy()
+    result[mask, 0] = result[mask, 0] * (1 - alpha) + 255 * alpha  # R 강조
+    result[mask, 1] = result[mask, 1] * (1 - alpha)                  # G 감소
+    result[mask, 2] = result[mask, 2] * (1 - alpha)                  # B 감소
+
+    return PIL_Image.fromarray(np.clip(result, 0, 255).astype(np.uint8), mode="RGB")
+
+
 def _render_result_panel() -> None:
-    """FR-INSP-T1-03: [1, 2, 2] 3열 패널 — 판정카드 / 원본이미지 / Anomaly Map.
+    """FR-INSP-T1-03: [1, 2, 2, 2] 4열 패널.
+
+    판정카드 / 원본이미지 / Anomaly Map / 이상영역 오버레이
 
     초기 상태(insp_last_result is None):
-      col1: 안내 텍스트
-      col2: 이미지 placeholder
-      col3: Anomaly Map placeholder
+      각 열에 placeholder 캡션 표시
     """
     from utils.image_utils import anomaly_map_to_heatmap
 
     last_result: dict | None = st.session_state.get("insp_last_result")
     last_anomaly_map: np.ndarray | None = st.session_state.get("insp_last_anomaly_map")
+    active: dict = st.session_state.get("insp_active_model") or {}
 
-    col1, col2, col3 = st.columns([1, 2, 2])
+    col1, col2, col3, col4 = st.columns([1, 2, 2, 2])
 
+    # ── col1: 판정카드 ────────────────────────────────────────────────────────
     with col1:
         if last_result is None:
             st.info("검사 버튼을 눌러 시작하세요.")
         else:
             verdict = last_result["verdict"]
-            score = last_result["anomaly_score"]
+            score   = last_result["anomaly_score"]
             if verdict == "양품":
                 st.success("✅ 양품")
             else:
                 st.error("❌ 불량")
             st.metric("Anomaly Score", f"{score:.4f}")
 
+    # ── col2: 원본이미지 ──────────────────────────────────────────────────────
     with col2:
         if last_result is not None:
             st.image(
@@ -166,12 +215,30 @@ def _render_result_panel() -> None:
         else:
             st.caption("원본 이미지가 여기에 표시됩니다.")
 
+    # ── col3: Anomaly Map (heatmap) ───────────────────────────────────────────
     with col3:
         if last_anomaly_map is not None:
             heatmap = anomaly_map_to_heatmap(last_anomaly_map)
             st.image(heatmap, caption="Anomaly Map", use_container_width=True)
         else:
             st.caption("Anomaly Map이 여기에 표시됩니다.")
+
+    # ── col4: 원본 + 이상영역 오버레이 ────────────────────────────────────────
+    with col4:
+        if last_result is not None and last_anomaly_map is not None:
+            try:
+                overlay = _make_anomaly_overlay(
+                    image_path=last_result["image_path"],
+                    anomaly_map=last_anomaly_map,
+                    threshold=float(active.get("threshold", 0.5)),
+                    score_min=float(active.get("score_min", 0.0)),
+                    score_max=float(active.get("score_max", 1.0)),
+                )
+                st.image(overlay, caption="이상 영역 오버레이", use_container_width=True)
+            except Exception as e:
+                st.caption(f"오버레이 생성 실패: {e}")
+        else:
+            st.caption("이상 영역 오버레이가 여기에 표시됩니다.")
 
 
 def _run_single_inspection() -> bool:
@@ -183,11 +250,14 @@ def _run_single_inspection() -> bool:
         True: 정상 완료. False: 오류 발생 (st.error 표시 후 반환).
     """
     from inspection.utils.test_sampler import sample_from_pool
+    from inspection.utils.insp_session_init import normalize_anomaly_score
     from utils.model_factory import run_inference
     from utils.image_utils import apply_preprocessing
 
-    active = st.session_state["insp_active_model"]
-    threshold = active["threshold"]
+    active     = st.session_state["insp_active_model"]
+    threshold  = active["threshold"]          # 이미 [0, 1] 정규화된 값
+    score_min  = active.get("score_min", 0.0)
+    score_max  = active.get("score_max", 1.0)
 
     # 1. test_pool에서 이미지 샘플링 (FR-INSP-T1-06)
     try:
@@ -214,10 +284,11 @@ def _run_single_inspection() -> bool:
     image_tensor = image_tensor.unsqueeze(0)           # (1, C, H, W)
     anomaly_map = run_inference(model, image_tensor)   # (H, W) float32
 
-    # 4. 이미지 레벨 Score
-    anomaly_score = float(np.max(anomaly_map))
+    # 4. 이미지 레벨 Score — 학습 테스트셋 min/max 기준으로 [0, 1] 정규화
+    raw_score     = float(np.max(anomaly_map))
+    anomaly_score = normalize_anomaly_score(raw_score, score_min, score_max)
 
-    # 5. 판정
+    # 5. 판정 (threshold도 동일 [0, 1] 공간)
     verdict = "불량" if anomaly_score >= threshold else "양품"
 
     # 6. inspection_record 구성 (00_Global §1.10 스키마)

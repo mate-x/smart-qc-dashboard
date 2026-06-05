@@ -458,7 +458,7 @@ def _handle_events():
       Queue에 넣는 메시지 형식:
         {"type": "progress", "step": int, "total": int, "loss": float, "elapsed": float}
         {"type": "log", "message": str}
-        {"type": "completed", "y_true": list, "scores": list, "model": object}
+        {"type": "completed", "y_true": list, "anomaly_scores": list, "anomaly_maps": dict, "image_paths": list, "model": object, "duration_seconds": int}
         {"type": "error", "exception": Exception, "traceback": str}
         {"type": "stopped"}
       """

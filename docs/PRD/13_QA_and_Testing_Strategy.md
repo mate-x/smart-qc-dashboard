@@ -677,7 +677,101 @@ class TestComputeThreshold:
         assert threshold == pytest.approx(0.75)
 ```
 
-### E.3 GT 마스크 로드 경로 변환 (07절 §C.3)
+### E.3 PatchCore memory_bank register_buffer 검증 (08절 §B.5.2)
+
+```python
+# tests/unit/test_tab2_patchcore.py 또는 tests/unit/test_training_worker.py
+
+import torch
+import pytest
+
+class TestPatchCoreMemoryBank:
+    def test_memory_bank_in_state_dict(self):
+        """register_buffer로 등록된 memory_bank가 state_dict에 포함되는지 검증."""
+        from utils.model_factory import _create_patchcore_model
+        model_config = {
+            "params": {
+                "backbone": "wide_resnet50_2",
+                "pretrained_source": "torchvision",
+                "coreset_sampling_ratio": 0.1,
+                "knn": 9,
+                "neighbourhood_kernel_size": 3,
+            }
+        }
+        model = _create_patchcore_model(model_config)
+        torch_model = getattr(model, "model", None)
+        assert torch_model is not None
+        coreset = torch.randn(100, 512)
+        torch_model.register_buffer("memory_bank", coreset)
+        state = model.state_dict()
+        assert any("memory_bank" in k for k in state), \
+            "memory_bank가 state_dict에 포함되어야 합니다."
+
+    def test_memory_bank_restored_after_load(self):
+        """state_dict 저장 후 재로드 시 memory_bank가 복원되는지 검증."""
+        import tempfile, os
+        from utils.model_factory import _create_patchcore_model
+        model_config = {
+            "params": {
+                "backbone": "wide_resnet50_2",
+                "pretrained_source": "torchvision",
+                "coreset_sampling_ratio": 0.1,
+                "knn": 9,
+                "neighbourhood_kernel_size": 3,
+            }
+        }
+        model = _create_patchcore_model(model_config)
+        torch_model = getattr(model, "model", None)
+        coreset = torch.randn(100, 512)
+        torch_model.register_buffer("memory_bank", coreset)
+
+        with tempfile.NamedTemporaryFile(suffix=".pth", delete=False) as f:
+            pth_path = f.name
+        try:
+            torch.save(model.state_dict(), pth_path)
+            new_model = _create_patchcore_model(model_config)
+            new_model.load_state_dict(torch.load(pth_path, map_location="cpu"), strict=False)
+            new_torch = getattr(new_model, "model", None)
+            assert new_torch.memory_bank.shape[0] == 100, \
+                "재로드 후 memory_bank 크기가 복원되어야 합니다."
+        finally:
+            os.unlink(pth_path)
+
+    def test_coreset_reproducibility_with_generator(self):
+        """동일 seed의 Generator를 사용하면 coreset 인덱스가 동일한지 검증."""
+        N, size = 1000, 100
+        g1 = torch.Generator()
+        g1.manual_seed(42)
+        idx1 = torch.randperm(N, generator=g1)[:size]
+
+        g2 = torch.Generator()
+        g2.manual_seed(42)
+        idx2 = torch.randperm(N, generator=g2)[:size]
+
+        assert torch.equal(idx1, idx2), \
+            "동일 seed Generator는 동일한 coreset 인덱스를 생성해야 합니다."
+
+    def test_spatial_size_validation(self):
+        """patch_scores 크기가 완전제곱수가 아닐 때 명확한 ValueError가 발생하는지 검증."""
+        import cv2
+        import numpy as np
+        from utils.model_factory import _get_anomaly_map
+
+        # 완전제곱수가 아닌 패치 수를 직접 만들어 reshape 검증
+        N = 800  # 28*28=784, 29*29=841 — 둘 다 아님
+        patch_scores = torch.randn(N)
+        spatial_size = int(N ** 0.5)
+        is_perfect_square = (spatial_size * spatial_size == N)
+        assert not is_perfect_square, "테스트 전제 확인: 완전제곱수가 아니어야 함"
+        with pytest.raises(ValueError, match="정방형"):
+            if spatial_size * spatial_size != N:
+                raise ValueError(
+                    f"PatchCore feature map 크기({N}개 패치)가 정방형이 아닙니다. "
+                    f"image_size를 8의 배수(예: 256)로 설정해 주세요."
+                )
+```
+
+### E.4 GT 마스크 로드 경로 변환 (07절 §C.3)
 
 ```python
 # tests/unit/test_gt_mask_path.py

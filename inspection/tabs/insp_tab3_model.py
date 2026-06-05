@@ -128,13 +128,26 @@ def _apply_model(selected_experiment: dict) -> None:
         "params":     selected_experiment.get("preprocessing_params") or {},
         "image_size": selected_experiment.get("image_size", 256),
     }
+    # 정규화 기준값 계산 (학습 테스트셋 anomaly_score의 min/max)
+    from inspection.utils.insp_session_init import normalize_anomaly_score
+    _metrics    = selected_experiment.get("metrics") or {}
+    _all_scores = _metrics.get("anomaly_scores") or []
+    score_min   = float(min(_all_scores)) if _all_scores else 0.0
+    score_max   = float(max(_all_scores)) if _all_scores else 1.0
+
+    # threshold도 동일 기준으로 정규화 → insp_tab1 판정과 차트 모두 [0,1] 공간
+    _raw_threshold        = _resolve_threshold(selected_experiment)
+    _threshold_normalized = normalize_anomaly_score(_raw_threshold, score_min, score_max)
+
     st.session_state["insp_active_model"] = {
         "experiment_id":        selected_experiment["experiment_id"],
         "model_path":           selected_experiment["model_path"],
         "model_type":           selected_experiment["model_type"],
-        "threshold":            _resolve_threshold(selected_experiment),
+        "threshold":            _threshold_normalized,  # [0, 1] 정규화됨
         "dataset_path":         selected_experiment["dataset_path"],
         "preprocessing_config": preprocessing_config,
+        "score_min":            score_min,   # 정규화 기준: 학습 테스트셋 최솟값
+        "score_max":            score_max,   # 정규화 기준: 학습 테스트셋 최댓값
     }
 
     # Step 4

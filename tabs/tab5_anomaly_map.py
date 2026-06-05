@@ -235,21 +235,39 @@ def _render_ui(exp_id: str, exp: dict, metrics: dict, cache: dict) -> None:
     image_paths: list[str] = cache["image_paths"]
     anomaly_maps: np.ndarray = cache["anomaly_maps"]
 
-    max_score = float(max(anomaly_scores)) if anomaly_scores else 1.0
-    slider_max = max_score * 1.2
+    # ── Min-Max 정규화: 모델별 스케일 차이를 0~1로 통일 ─────────────────────────
+    # EfficientAD raw score: ~0.001~0.01 / PatchCore raw score: ~50~100
+    # → 두 모델 모두 동일한 0~1 범위로 표시
+    _arr  = np.array(anomaly_scores, dtype=np.float64)
+    s_min = float(_arr.min())
+    s_max = float(_arr.max())
+    if s_max > s_min:
+        anomaly_scores_norm = [
+            float(max(0.0, min(1.0, (s - s_min) / (s_max - s_min))))
+            for s in anomaly_scores
+        ]
+    else:
+        anomaly_scores_norm = [0.0] * len(anomaly_scores)
+
+    slider_max = 1.2  # 정규화 후 고정 범위 0~1.2
 
     # 기본 threshold 초기화 (탭 첫 진입 또는 실험 전환 시)
     if st.session_state.get("anomaly_map_threshold") is None:
-        normal_scores = [s for s, lbl in zip(anomaly_scores, image_labels) if lbl == 0]
-        if normal_scores:
-            default_thr = compute_threshold(
-                np.array(normal_scores, dtype=np.float32),
+        # raw threshold 계산 후 동일 min/max로 정규화
+        normal_scores_raw = [s for s, lbl in zip(anomaly_scores, image_labels) if lbl == 0]
+        if normal_scores_raw:
+            raw_thr = compute_threshold(
+                np.array(normal_scores_raw, dtype=np.float32),
                 exp.get("threshold_method", "percentile"),
                 float(exp.get("threshold_value", 95.0)),
             )
+            if s_max > s_min:
+                norm_thr = float(max(0.0, min(1.0, (raw_thr - s_min) / (s_max - s_min))))
+            else:
+                norm_thr = 0.5
         else:
-            default_thr = max_score * 0.5
-        st.session_state["anomaly_map_threshold"] = round(float(default_thr), 6)
+            norm_thr = 0.5
+        st.session_state["anomaly_map_threshold"] = round(norm_thr, 4)
 
     # FR-T5-06 (S): 결함 유형 필터
     all_classes = sorted({Path(p).parent.name for p in image_paths})
@@ -259,7 +277,7 @@ def _render_ui(exp_id: str, exp: dict, metrics: dict, cache: dict) -> None:
         key="tab5_class_filter",
     )
 
-    # FR-T5-03: Threshold 슬라이더
+    # FR-T5-03: Threshold 슬라이더 (정규화된 0~1.2 범위)
     current_thr = float(st.session_state["anomaly_map_threshold"])
     current_thr = max(0.0, min(current_thr, slider_max))
     threshold = st.slider(
@@ -267,13 +285,13 @@ def _render_ui(exp_id: str, exp: dict, metrics: dict, cache: dict) -> None:
         min_value=0.0,
         max_value=float(slider_max),
         value=current_thr,
-        step=0.001,
-        format="%.3f",
+        step=0.01,
+        format="%.2f",
     )
     st.session_state["anomaly_map_threshold"] = threshold
 
-    # 행 데이터 + 필터 적용
-    rows = _build_table_rows(image_paths, anomaly_scores, image_labels, threshold)
+    # 행 데이터 + 필터 적용 (정규화된 score 사용)
+    rows = _build_table_rows(image_paths, anomaly_scores_norm, image_labels, threshold)
     df_full = pd.DataFrame(rows)
 
     if selected_class != "전체":

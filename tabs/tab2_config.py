@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 from PIL import Image
 
@@ -217,6 +219,9 @@ def render() -> None:
         threshold_value=threshold_value,
         model_params=model_params,
     )
+
+    st.divider()
+    _render_queue_section()
 
 
 # ---------------------------------------------------------------------------
@@ -690,6 +695,69 @@ def _render_threshold_ratio_preview(threshold_method: str, threshold_value: floa
 
 
 # ---------------------------------------------------------------------------
+# 실험 대기열 — 순수 헬퍼 함수 (FR-T2-16~18)
+# ---------------------------------------------------------------------------
+
+# 상태별 행 배경색 (FR-T2-17 상태 색상 규칙)
+_STATUS_COLORS: dict[str, str] = {
+    "대기중": "#e8e8e8",   # 회색
+    "진행중": "#cce5ff",   # 파란색
+    "완료":   "#d4edda",   # 초록색
+    "실패":   "#f8d7da",   # 빨간색
+    "건너뜀": "#fde8c8",   # 주황색
+}
+
+_VALID_STATUSES = frozenset(_STATUS_COLORS)
+
+
+def _make_queue_item(preprocessing_config: dict, model_config: dict) -> dict:
+    """
+    대기열 항목 dict 생성 (FR-T2-16).
+    name 형식: {MODEL_TYPE}_{uuid4().hex[:4]}
+    status 초기값: "대기중"
+    preprocessing_config / model_config 는 얕은 복사본 저장.
+    """
+    model_type = model_config.get("model_type", "model")
+    name = f"{model_type.upper()}_{uuid.uuid4().hex[:4]}"
+    return {
+        "name":                name,
+        "preprocessing_config": dict(preprocessing_config),
+        "model_config":         dict(model_config),
+        "status":              "대기중",
+    }
+
+
+def _build_queue_df(queue_items: list[dict]) -> pd.DataFrame:
+    """
+    대기열 항목 목록을 테이블 DataFrame으로 변환 (FR-T2-17).
+    컬럼: 순번 / 실험명 / 모델 / 상태
+    efficientad → "EAD", patchcore → "PC"
+    빈 목록이면 빈 DataFrame (컬럼만 존재).
+    """
+    if not queue_items:
+        return pd.DataFrame(columns=["순번", "실험명", "모델", "상태"])
+
+    rows = []
+    for i, item in enumerate(queue_items):
+        model_type = (item.get("model_config") or {}).get("model_type", "?")
+        model_abbr = "EAD" if model_type == "efficientad" else "PC"
+        rows.append({
+            "순번":   i + 1,
+            "실험명": item.get("name", f"exp_{i + 1}"),
+            "모델":   model_abbr,
+            "상태":   item.get("status", "대기중"),
+        })
+    return pd.DataFrame(rows)
+
+
+def _style_queue_rows(row: pd.Series) -> list[str]:
+    """pandas Styler용 행 배경색 적용 (FR-T2-17 상태 색상 규칙)."""
+    color = _STATUS_COLORS.get(str(row.get("상태", "")), "")
+    bg = f"background-color: {color}" if color else ""
+    return [bg] * len(row)
+
+
+# ---------------------------------------------------------------------------
 # 설정 저장 버튼 영역 (preprocessing_config + model_config 동시 Write)
 # ---------------------------------------------------------------------------
 
@@ -713,7 +781,7 @@ def _render_save_area(
         st.error("이미지 크기가 32의 배수가 아닙니다. 수정 후 저장해 주세요.")
         return
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
 
     with col1:
         if st.button("설정 저장", type="primary", key="tab2_btn_save"):
@@ -743,6 +811,19 @@ def _render_save_area(
     with col3:
         if st.button("configs.yaml 불러오기", key="tab2_btn_yaml_load"):
             st.session_state["_tab2_show_load"] = True
+
+    with col4:
+        if st.button("📋 대기열에 추가", key="tab2_btn_enqueue", use_container_width=True):
+            pre_cfg = _build_preprocessing_config(method, params, image_size, norm_label, mean, std)
+            mdl_cfg = build_model_config(
+                model_type, image_size, batch_size, random_seed,
+                threshold_method, threshold_value, model_params,
+            )
+            item = _make_queue_item(pre_cfg, mdl_cfg)
+            q = list(st.session_state.get("experiment_queue", []))
+            q.append(item)
+            st.session_state["experiment_queue"] = q
+            st.success(f"'{item['name']}'이(가) 대기열에 추가되었습니다.")
 
     if st.session_state.get("_tab2_show_load"):
         _render_load_ui()
@@ -897,3 +978,109 @@ def _apply_efficientad_widgets(params: dict) -> None:
         st.session_state["tab2_ead_use_penalty"] = bool(params["use_imagenet_penalty"])
     if params.get("penalty_batch_size") is not None:
         st.session_state["tab2_ead_pen_bs"] = int(params["penalty_batch_size"])
+
+
+# ---------------------------------------------------------------------------
+# 실험 대기열 UI (FR-T2-17, FR-T2-18)
+# ---------------------------------------------------------------------------
+
+def _render_queue_section() -> None:
+    """FR-T2-17/18: 탭2 하단 실험 대기열 2분할 UI."""
+    queue_items: list[dict] = st.session_state.get("experiment_queue", [])
+
+    st.subheader("📋 실험 대기열")
+
+    col_left, col_right = st.columns(2)
+
+    with col_left:
+        selected_idx = _render_queue_table(queue_items)
+
+    with col_right:
+        _render_queue_detail(queue_items, selected_idx)
+
+
+def _render_queue_table(queue_items: list[dict]) -> int | None:
+    """
+    FR-T2-17: 대기열 테이블 + 순서 조정(▲▼) + 삭제 버튼.
+    선택된 항목의 인덱스(int) 반환. 선택 없으면 None.
+
+    ▲/▼/🗑 은 status == "대기중" 항목에만 활성화.
+    """
+    if not queue_items:
+        st.info("대기열이 비어 있습니다. '대기열에 추가' 버튼으로 실험을 추가하세요.")
+        return None
+
+    df = _build_queue_df(queue_items)
+
+    event = st.dataframe(
+        df.style.apply(_style_queue_rows, axis=1),
+        use_container_width=True,
+        selection_mode="single-row",
+        on_select="rerun",
+        key="tab2_queue_table",
+        hide_index=True,
+    )
+
+    selected_rows = event.selection.rows if event else []
+    selected_idx: int | None = selected_rows[0] if selected_rows else None
+
+    # ▲▼🗑 활성화 조건: 선택된 항목이 "대기중"일 때만
+    is_pending = (
+        selected_idx is not None
+        and selected_idx < len(queue_items)
+        and queue_items[selected_idx].get("status") == "대기중"
+    )
+
+    col_up, col_down, col_del = st.columns(3)
+
+    with col_up:
+        if st.button(
+            "▲ 위로",
+            disabled=not (is_pending and selected_idx > 0),
+            use_container_width=True,
+            key="tab2_queue_up",
+        ):
+            q = list(st.session_state["experiment_queue"])
+            q[selected_idx], q[selected_idx - 1] = q[selected_idx - 1], q[selected_idx]
+            st.session_state["experiment_queue"] = q
+            st.rerun()
+
+    with col_down:
+        if st.button(
+            "▼ 아래로",
+            disabled=not (is_pending and selected_idx < len(queue_items) - 1),
+            use_container_width=True,
+            key="tab2_queue_down",
+        ):
+            q = list(st.session_state["experiment_queue"])
+            q[selected_idx], q[selected_idx + 1] = q[selected_idx + 1], q[selected_idx]
+            st.session_state["experiment_queue"] = q
+            st.rerun()
+
+    with col_del:
+        if st.button(
+            "🗑 삭제",
+            disabled=not is_pending,
+            use_container_width=True,
+            key="tab2_queue_delete",
+        ):
+            q = list(st.session_state["experiment_queue"])
+            q.pop(selected_idx)
+            st.session_state["experiment_queue"] = q
+            st.rerun()
+
+    return selected_idx
+
+
+def _render_queue_detail(queue_items: list[dict], selected_idx: int | None) -> None:
+    """FR-T2-18: 선택된 항목의 전처리 + 모델 파라미터 상세 표시."""
+    if selected_idx is None or selected_idx >= len(queue_items):
+        st.info("항목을 선택하면 상세 설정이 표시됩니다.")
+        return
+
+    item = queue_items[selected_idx]
+    st.markdown(f"**{item.get('name', '?')}**")
+    st.json({
+        "preprocessing": item.get("preprocessing_config", {}),
+        "model":         item.get("model_config", {}),
+    })

@@ -1,10 +1,15 @@
 """
 inspection/utils/insp_session_init.py
 
-책임: 검사 세션 초기화 + st.cache_resource 기반 모델 캐시.
+책임:
+  - 검사 세션 초기화 + st.cache_resource 기반 모델 캐시.
+  - 실시간 통계 차트용 시뮬레이션 시간 계산 유틸리티 (FR-INSP-T2-05).
+
 금지: 학습 관련 session_state 키 직접 수정, history.json 쓰기 (R-INSP-04).
 """
 from __future__ import annotations
+
+from datetime import datetime, timedelta
 
 import streamlit as st
 
@@ -118,3 +123,104 @@ def reset_inspection_state() -> None:
     st.session_state.insp_defect_popup     = False
     st.session_state.insp_test_pool    = []
     st.session_state.insp_pool_index   = 0
+
+
+# ---------------------------------------------------------------------------
+# Anomaly Score 정규화 (학습 데이터 기준 Min-Max)
+# ---------------------------------------------------------------------------
+
+def normalize_anomaly_score(
+    raw_score: float,
+    score_min: float,
+    score_max: float,
+) -> float:
+    """
+    anomaly score를 학습 테스트셋의 min/max 기준으로 [0, 1] 범위로 정규화.
+
+    score_min == score_max(모든 학습 점수가 동일): 0.0 반환.
+    범위 초과(학습보다 훨씬 높은/낮은 score): clip하여 0.0~1.0 유지.
+    """
+    if score_max <= score_min:
+        return 0.0
+    normalized = (raw_score - score_min) / (score_max - score_min)
+    return float(max(0.0, min(1.0, normalized)))
+
+
+# ---------------------------------------------------------------------------
+# 시뮬레이션 시간 계산 유틸리티 (FR-INSP-T2-05)
+# ---------------------------------------------------------------------------
+# 차트 레이블 표시 전용 — 실제 inspected_at 필드와 무관 (Q-Final-2 A안)
+
+_SIM_BASE              = datetime(2026, 6, 24, 14, 0, 0)
+_SIM_INTERVAL_SECONDS  = 3  # 검사 1건 = 3초
+
+
+def get_sim_timestamp(seq: int) -> datetime:
+    """
+    seq 번호(1-indexed)에 대응하는 시뮬레이션 타임스탬프 반환.
+
+    규칙: 고정 시작 2026-06-24 14:00:00, 검사 간격 3초.
+    seq=1 → 14:00:00 / seq=2 → 14:00:03 / seq=21 → 14:01:00
+    """
+    return _SIM_BASE + timedelta(seconds=(seq - 1) * _SIM_INTERVAL_SECONDS)
+
+
+def get_sim_group_index(seq: int, unit: int) -> int:
+    """
+    seq 번호(1-indexed)가 속하는 그룹 인덱스(0-indexed) 반환.
+
+    예: unit=20 → seq 1~20 → 0, seq 21~40 → 1
+    """
+    return (seq - 1) // unit
+
+
+def get_sim_group_label(group_idx: int, unit: int) -> str:
+    """
+    그룹 인덱스(0-indexed)와 단위로 시간 범위 레이블 반환.
+
+    형식: "YYYY-MM-DD HH:MM~HH:MM"
+
+    예:
+      group_idx=0, unit=20  → "2026-06-24 14:00~14:01"  (20×3=60s=1분)
+      group_idx=1, unit=20  → "2026-06-24 14:01~14:02"
+      group_idx=0, unit=40  → "2026-06-24 14:00~14:02"  (40×3=120s=2분)
+      group_idx=0, unit=100 → "2026-06-24 14:00~14:05"  (100×3=300s=5분)
+      group_idx=1, unit=100 → "2026-06-24 14:05~14:10"
+    """
+    start_dt = _SIM_BASE + timedelta(
+        seconds=group_idx * unit * _SIM_INTERVAL_SECONDS
+    )
+    end_dt = _SIM_BASE + timedelta(
+        seconds=(group_idx + 1) * unit * _SIM_INTERVAL_SECONDS
+    )
+    date_str  = start_dt.strftime("%Y-%m-%d")
+    start_str = start_dt.strftime("%H:%M")
+    end_str   = end_dt.strftime("%H:%M")
+    return f"{date_str} {start_str}~{end_str}"
+
+
+def get_sim_group_count(total_seqs: int, unit: int) -> int:
+    """
+    전체 seq 수와 단위로 총 그룹 수 반환 (미완성 마지막 그룹 포함).
+
+    예: total_seqs=0  → 0
+        total_seqs=1  → 1 (그룹 0: seq 1)
+        total_seqs=20 → 1 (그룹 0: seq 1~20)
+        total_seqs=21 → 2 (그룹 0: 1~20, 그룹 1: 21~진행중)
+    """
+    if total_seqs <= 0:
+        return 0
+    return (total_seqs - 1) // unit + 1
+
+
+def get_sim_all_group_labels(total_seqs: int, unit: int) -> list[str]:
+    """
+    현재까지 생성된 모든 그룹의 시간 범위 레이블 목록 반환.
+
+    예: total_seqs=25, unit=20
+        → ["2026-06-24 14:00~14:01", "2026-06-24 14:01~14:02"]
+    """
+    return [
+        get_sim_group_label(i, unit)
+        for i in range(get_sim_group_count(total_seqs, unit))
+    ]

@@ -141,6 +141,52 @@ def apply_model(experiment_id: str, source_path: str | None = None) -> dict:
     }
 
 
+def update_source_path(source_path: str | None) -> dict:
+    """
+    모델 재로드 없이 검사 이미지 풀만 교체.
+    source_path가 None 또는 빈 문자열이면 실험의 원래 dataset_path로 초기화.
+
+    Raises:
+        RuntimeError: 모델 미선택
+        LookupError: 원래 실험 기록 없음 (초기화 시)
+        FileNotFoundError: 경로 없음
+        ValueError: 빈 풀
+    """
+    state  = get_state()
+    active = state.get("insp_active_model")
+    if active is None:
+        raise RuntimeError("적용된 모델이 없습니다. 먼저 모델을 선택해 주세요.")
+
+    if not source_path or not source_path.strip():
+        all_records = load_history()
+        experiment  = next(
+            (r for r in all_records if r.get("experiment_id") == active["experiment_id"]),
+            None,
+        )
+        if experiment is None:
+            raise LookupError("원래 실험 기록을 찾을 수 없습니다.")
+        effective_path = experiment["dataset_path"]
+    else:
+        effective_path = source_path.strip()
+
+    try:
+        pool = build_test_pool(effective_path)
+    except FileNotFoundError:
+        raise
+
+    if not pool:
+        raise ValueError(
+            "ERR_INSP_TEST_POOL_EMPTY: 테스트 이미지를 찾을 수 없습니다. "
+            f"경로를 확인해 주세요: {effective_path}/test/"
+        )
+
+    state["insp_test_pool"]  = pool
+    state["insp_pool_index"] = 0
+    active["dataset_path"]   = effective_path
+
+    return {"success": True, "source_path": effective_path}
+
+
 def run_single_inspection() -> dict:
     """
     단일 이미지 추론. REST POST와 WebSocket 자동 검사 루프 공용.

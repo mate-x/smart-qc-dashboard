@@ -36,8 +36,10 @@ from api.schemas import (
     ClearRecordsResponse,
     InspectionJobStartedResponse,
     InspectionJobStatusResponse,
+    UpdateSourcePathRequest,
+    UpdateSourcePathResponse,
 )
-from api.services.inspection_service import apply_model
+from api.services.inspection_service import apply_model, update_source_path
 from api.state import get_state, reset_records_only
 from utils.image_utils import anomaly_map_to_heatmap, make_anomaly_overlay, pil_to_png_stream
 
@@ -69,6 +71,18 @@ def apply_model_endpoint(req: ApplyModelRequest) -> dict:
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.patch("/api/inspection/source-path", response_model=UpdateSourcePathResponse, summary="이미지 소스 경로 변경 (모델 재로드 없음)", tags=["탭3 · 모델 교체"])
+def update_source_path_endpoint(req: UpdateSourcePathRequest) -> dict:
+    try:
+        return update_source_path(req.source_path)
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/api/inspection/model", response_model=ActiveModelResponse, summary="현재 적용 모델 조회", tags=["탭3 · 모델 교체"])

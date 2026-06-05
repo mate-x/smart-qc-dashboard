@@ -25,6 +25,15 @@ class ActiveModelResponse(BaseModel):
     active_model: dict | None
 
 
+class UpdateSourcePathRequest(BaseModel):
+    source_path: str | None = None  # None or empty → experiment의 원래 dataset_path로 초기화
+
+
+class UpdateSourcePathResponse(BaseModel):
+    success: bool
+    source_path: str
+
+
 class ClearRecordsResponse(BaseModel):
     success: bool
 

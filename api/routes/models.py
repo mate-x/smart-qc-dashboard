@@ -27,4 +27,13 @@ def list_models() -> list[dict]:
         key=lambda r: (r.get("metrics") or {}).get("f1_score", 0.0),
         reverse=True,
     )
+    for r in completed:
+        r["created_at"] = _fmt_datetime(r.get("created_at", ""))
     return completed
+
+
+def _fmt_datetime(value: str) -> str:
+    """ISO 8601 → 'YYYY-MM-DD HH:MM:SS'. 이미 변환됐거나 빈 값이면 그대로 반환."""
+    if "T" in value:
+        return value.replace("T", " ").split("+")[0].split(".")[0][:19]
+    return value

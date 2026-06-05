@@ -806,8 +806,17 @@ def _train_patchcore(
     else:
         # Fallback: 직접 coreset 샘플링
         coreset_size = max(1, int(len(feature_stack) * params["coreset_sampling_ratio"]))
-        indices = torch.randperm(len(feature_stack))[:coreset_size]
-        model.memory_bank = feature_stack[indices].to(device)
+        # 재현성 보장: random_seed 기반 Generator 사용 필수 (resume 경로 포함)
+        _g = torch.Generator()
+        _g.manual_seed(model_config.get("random_seed", 42))
+        indices = torch.randperm(len(feature_stack), generator=_g)[:coreset_size]
+        # register_buffer 필수 — state_dict()에 포함되어야 재로드 후 추론 가능
+        # 단순 속성 할당(model.memory_bank = ...) 금지: .to(device) 시 이동 안 됨
+        torch_model = getattr(model, "model", None)
+        target = torch_model if torch_model is not None else model
+        target.register_buffer(
+            "memory_bank", feature_stack[indices].to(device)
+        )
 
     elapsed_total = time.time() - start_time
     log_line = f"{_now_kst()}\t[완료] 메모리 뱅크 구성 완료 | 경과: {elapsed_total:.1f}s"
@@ -1019,8 +1028,8 @@ def _run_full_test_inference(
             anomaly_map = _get_anomaly_map(model, image)
             # anomaly_map: np.ndarray (H, W), float32
 
-            # 이미지 레벨 Score: pred_score 우선, 없으면 anomaly_map.max() fallback
-            score = _get_pred_score(model, image)
+            # 이미 계산된 map 재사용
+            score = float(anomaly_map.max())
 
             y_true.append(label)
             anomaly_scores.append(round(score, 6))
@@ -1059,27 +1068,25 @@ def _get_anomaly_map(model, image: torch.Tensor) -> np.ndarray:
         amap = amap.squeeze().cpu().numpy().astype(np.float32)
         return amap
 
-    # Fallback: PatchCore 수동 추론
-    if hasattr(model, "memory_bank"):
-        features = _extract_patchcore_features(model, image)  # (H'*W', C)
-        # k-NN 거리 계산
-        dists = torch.cdist(
-            features.unsqueeze(0),
-            model.memory_bank.unsqueeze(0),
-            p=2,
-        ).squeeze(0)  # (H'*W', M)
-        # Top-k 최솟값 평균
-        k = min(model.num_neighbors if hasattr(model, "num_neighbors") else 9,
-                dists.shape[1])
+    # Patchcore KNN fallback — model 또는 model.model에서 memory_bank 탐색
+    mem_holder = (
+        model if hasattr(model, "memory_bank")
+        else (torch_model if (torch_model is not None and hasattr(torch_model, "memory_bank")) else None)
+    )
+    if mem_holder is not None:
+        features = _extract_patchcore_features(model, image)
+        mem = mem_holder.memory_bank
+        if mem.device != features.device:
+            mem = mem.to(features.device)
+        dists = torch.cdist(features.unsqueeze(0), mem.unsqueeze(0), p=2).squeeze(0)
+        k = min(getattr(mem_holder, "num_neighbors", 9), dists.shape[1])
         patch_scores, _ = torch.topk(dists, k, dim=1, largest=False)
-        patch_scores = patch_scores.mean(dim=1)  # (H'*W',)
-        # 패치 맵 복원
+        patch_scores = patch_scores.mean(dim=1)
         spatial_size = int(patch_scores.shape[0] ** 0.5)
         patch_map = patch_scores.reshape(spatial_size, spatial_size).cpu().numpy()
-        # 원본 이미지 크기로 upsample
         H = W = image.shape[-1]
-        amap = cv2.resize(patch_map, (W, H), interpolation=cv2.INTER_LINEAR)
-        return amap.astype(np.float32)
+        raw = cv2.resize(patch_map, (W, H), interpolation=cv2.INTER_LINEAR).astype(np.float32)
+        return _mask_padding_from_anomaly_map(raw, image)
 
     raise NotImplementedError(f"알 수 없는 모델 구조: {type(model)}")
 ```
@@ -1487,8 +1494,8 @@ ML 레이어 추가 요구사항:
 | **EfficientAD VRAM** | batch_size=8, medium 기준 ≤ 8GB. T4 16GB에서 여유 있음 |
 | **PatchCore VRAM** | WideResNet50, 특징 추출 배치=32 기준 ≤ 8GB |
 | **전처리 속도** | 1024×1024 이미지 Homomorphic 적용 ≤ 200ms/장 (CPU) |
-| **anomaly_map 캐시 크기** | float32, 256×256, 100장 = ~25MB. 허용 범위 |
-| **모델 파일 크기** | EfficientAD-medium: ~200MB / PatchCore WRN50: ~400MB |
+| **anomaly_map 캐시 크기** | float32, 256×256, 500장 = ~130MB. 허용 범위 |
+| **모델 파일 크기** | EfficientAD-medium: ~200MB / PatchCore WRN50: ~600~1000MB (register_buffer로 memory_bank 포함) |
 | **추론 속도 (탭5)** | 단일 이미지 추론 ≤ 500ms (CUDA 기준) |
 
 ---

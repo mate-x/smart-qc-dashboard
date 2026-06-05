@@ -812,7 +812,7 @@ def _render_triplet(
     dataset_path: str,
     threshold: float,
     exp_id: str,
-    score: float = 0.0,        # metrics["anomaly_scores"]에서 전달 (_get_pred_score로 계산됨)
+    score: float = 0.0,        # metrics["anomaly_scores"]에서 전달 (`anomaly_map.max()`로 계산됨)
 ) -> None:
     """
     선택된 이미지에 대해 원본 / GT 마스크 / Heatmap 3분할 시각화.

@@ -1054,7 +1054,7 @@ LOG_FORMAT = {
 | A-01 | 동시 사용자 수 | 1명 (단일 사용자). Streamlit 기본 단일 세션 모델 적용. | PRD에 다중 사용자 언급 없음 |
 | A-02 | 학습 비동기 처리 | Python `threading.Thread` + `queue.Queue`로 백그라운드 학습, 메인 스레드는 UI 갱신 전담. | PRD 5절 "UI 블로킹 없음" |
 | A-03 | Anomalib 버전 | `anomalib >= 1.0.0` (v1 API 기준). | PRD 6절 기술 스택 |
-| A-04 | 모델 저장 크기 | EfficientAD-medium ≈ 200~400 MB, PatchCore (WideResNet50) ≈ 400~800 MB. | 일반적인 모델 크기 |
+| A-04 | 모델 저장 크기 | EfficientAD-medium ≈ 200~400 MB, PatchCore (WideResNet50) ≈ 600~1000 MB (memory_bank register_buffer로 .pth 포함). | P1 fix 반영 |
 | A-05 | 테스트 이미지 추론 | 탭5에서 모델 재로드 후 전체 테스트셋 일괄 추론. 실험 완료 시 `metrics.anomaly_scores` 이미 계산·저장. | 탭5 응답성 확보 |
 | A-06 | configs.yaml 위치 | 작업 디렉토리 루트 `./configs.yaml`. Docker 실행 시 `/app/configs.yaml`. | 11.1절 Dockerfile WORKDIR /app |
 | A-07 | 데이터셋 마운트 | Docker 실행 시 `-v /path/to/dataset:/app/dataset`. 탭1에서 `/app/dataset` 하위 경로 입력. | PRD 11.3절 docker run |

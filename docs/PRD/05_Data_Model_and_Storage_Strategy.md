@@ -300,7 +300,7 @@ def save_config_section(
 | **저장 방식** | `torch.save(model.state_dict(), path)` |
 | **로드 방식** | `model.load_state_dict(torch.load(path, map_location=device))` |
 | **EfficientAD 크기** | ≈ 200~400 MB (model_size에 따라 다름) |
-| **PatchCore 크기** | ≈ 400~800 MB (backbone 및 coreset 크기에 따라 다름) |
+| **PatchCore 크기** | ≈ 600~1000 MB (backbone + register_buffer memory_bank 포함, 학습 데이터 수·coreset_ratio에 비례) |
 
 > `torch.save(model, path)` 형식 금지. `state_dict()`만 저장. 모델 클래스 import 없이도 로드 가능하도록 보장.
 

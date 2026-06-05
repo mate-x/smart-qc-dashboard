@@ -367,40 +367,19 @@ def _get_anomaly_map(
         k = min(getattr(mem_holder, "num_neighbors", 9), dists.shape[1])
         patch_scores, _ = torch.topk(dists, k, dim=1, largest=False)
         patch_scores = patch_scores.mean(dim=1)
-        spatial_size = int(patch_scores.shape[0] ** 0.5)
+        N = patch_scores.shape[0]
+        spatial_size = int(N ** 0.5)
+        if spatial_size * spatial_size != N:
+            raise ValueError(
+                f"PatchCore feature map 크기({N}개 패치)가 정방형이 아닙니다. "
+                f"image_size를 8의 배수(예: 256)로 설정해 주세요."
+            )
         patch_map = patch_scores.reshape(spatial_size, spatial_size).cpu().numpy()
         H = W = image.shape[-1]
         raw = cv2.resize(patch_map, (W, H), interpolation=cv2.INTER_LINEAR).astype(np.float32)
         return _mask_padding_from_anomaly_map(raw, image)
 
     raise NotImplementedError(f"알 수 없는 모델 구조: {type(model)}")
-
-
-def _get_pred_score(
-    model: object,
-    image: torch.Tensor,
-) -> float:
-    """단일 이미지 추론 → pred_score float 반환.
-
-    anomalib 2.4.x: InferenceBatch.pred_score 우선 (num_neighbors 반영).
-    pred_score가 없으면 anomaly_map.max() fallback.
-    """
-    torch_model = getattr(model, "model", None)
-    for m in ([torch_model, model] if torch_model is not None else [model]):
-        if m is None:
-            continue
-        try:
-            output = m(image)
-            score = None
-            if hasattr(output, "pred_score") and output.pred_score is not None:
-                score = output.pred_score
-            elif isinstance(output, dict) and "pred_score" in output:
-                score = output["pred_score"]
-            if score is not None:
-                return float(score.squeeze().cpu().item() if isinstance(score, torch.Tensor) else score)
-        except Exception:
-            continue
-    return float(_get_anomaly_map(model, image).max())
 
 
 # ── Public factory functions ───────────────────────────────────────────────────

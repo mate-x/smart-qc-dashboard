@@ -94,6 +94,7 @@ def apply_model(experiment_id: str, source_path: str | None = None) -> dict:
     state  = get_state()
     state["insp_active_model"] = {
         "experiment_id":        experiment["experiment_id"],
+        "name":                 experiment.get("name", experiment["experiment_id"]),
         "model_path":           experiment["model_path"],
         "model_type":           experiment["model_type"],
         "threshold":            threshold_normalized,

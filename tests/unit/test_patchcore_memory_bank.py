@@ -12,6 +12,8 @@ import tempfile
 import pytest
 import torch
 
+pytest.importorskip("anomalib", reason="anomalib not installed — run in ml-tests CI or locally")
+
 
 # ── ML-09: memory_bank가 state_dict에 포함되는지 ─────────────────────────────
 

@@ -22,6 +22,7 @@ def render_sidebar() -> None:
             st.session_state.active_dashboard = "explorer"
             st.rerun()
 
+        # TODO: [삭제 예정] 비전검사 대시보드가 React 앱으로 이전됨 — 버튼 제거
         if st.button(
             "🏭 비전검사 플랫폼",
             use_container_width=True,

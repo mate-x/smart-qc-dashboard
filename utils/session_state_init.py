@@ -46,6 +46,7 @@ SESSION_STATE_SCHEMA: dict = {
     # 탭6 Write
     "anomaly_map_threshold": None,  # float | None
 
+    # TODO: [삭제 예정] 비전검사 대시보드가 React 앱으로 이전됨 — 아래 insp_* 키 전체 제거
     # 비전검사 대시보드 (insp_ 네임스페이스, R-INSP-01)
     "insp_active_model":   None,    # dict | None — history.json experiment 레코드 전체
     "insp_records":        [],      # list[dict] — inspection_record 배열 (1.10절)

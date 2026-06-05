@@ -1,3 +1,4 @@
+# TODO: [삭제 예정] 비전검사 대시보드가 React 앱으로 이전됨 — 이 모듈 전체 제거
 import streamlit as st
 
 from inspection.tabs import insp_tab1_realtime, insp_tab2_history, insp_tab3_model

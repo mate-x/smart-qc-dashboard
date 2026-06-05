@@ -62,7 +62,7 @@ _KEY_MAP: dict[str, str] = {
 @router.post("/api/inspection/model", response_model=ApplyModelResponse, summary="모델 적용", tags=["탭3 · 모델 교체"])
 def apply_model_endpoint(req: ApplyModelRequest) -> dict:
     try:
-        return apply_model(req.experiment_id)
+        return apply_model(req.experiment_id, req.source_path)
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except (ValueError, FileNotFoundError) as e:

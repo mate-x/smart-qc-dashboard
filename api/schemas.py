@@ -5,6 +5,7 @@ from pydantic import BaseModel, field_validator
 
 class ApplyModelRequest(BaseModel):
     experiment_id: str
+    source_path: str | None = None
 
     @field_validator("experiment_id")
     @classmethod

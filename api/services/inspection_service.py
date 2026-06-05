@@ -44,7 +44,7 @@ def _get_device() -> str:
         return "cpu"
 
 
-def apply_model(experiment_id: str) -> dict:
+def apply_model(experiment_id: str, source_path: str | None = None) -> dict:
     """
     R-INSP-05 7단계 모델 초기화.
 
@@ -75,6 +75,8 @@ def apply_model(experiment_id: str) -> dict:
     reset_inspection_state()
 
     # 4. active_model 갱신
+    effective_source_path = source_path if source_path and source_path.strip() else experiment["dataset_path"]
+
     preprocessing_config = {
         "method":     experiment.get("preprocessing_method", "none"),
         "params":     experiment.get("preprocessing_params") or {},
@@ -95,7 +97,7 @@ def apply_model(experiment_id: str) -> dict:
         "model_path":           experiment["model_path"],
         "model_type":           experiment["model_type"],
         "threshold":            threshold_normalized,
-        "dataset_path":         experiment["dataset_path"],
+        "dataset_path":         effective_source_path,
         "preprocessing_config": preprocessing_config,
         "score_min":            score_min,
         "score_max":            score_max,
@@ -104,7 +106,7 @@ def apply_model(experiment_id: str) -> dict:
 
     # 5. test pool 구성
     try:
-        pool = build_test_pool(experiment["dataset_path"])
+        pool = build_test_pool(effective_source_path)
     except FileNotFoundError:
         state["insp_active_model"] = None
         raise
@@ -113,7 +115,7 @@ def apply_model(experiment_id: str) -> dict:
         state["insp_active_model"] = None
         raise ValueError(
             "ERR_INSP_TEST_POOL_EMPTY: 테스트 이미지를 찾을 수 없습니다. "
-            f"데이터셋 경로를 확인해 주세요: {experiment['dataset_path']}/test/"
+            f"데이터셋 경로를 확인해 주세요: {effective_source_path}/test/"
         )
 
     state["insp_test_pool"]  = pool

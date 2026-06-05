@@ -64,7 +64,7 @@ class ApplyModelRequest(BaseModel):
     experiment_id: str
 
 
-@router.post("/api/inspection/model")
+@router.post("/api/inspection/model", summary="모델 적용", tags=["탭3 · 모델 교체"])
 def apply_model(req: ApplyModelRequest) -> dict:
     """
     R-INSP-05 초기화 순서:
@@ -162,7 +162,7 @@ def apply_model(req: ApplyModelRequest) -> dict:
     }
 
 
-@router.get("/api/inspection/model")
+@router.get("/api/inspection/model", summary="현재 적용 모델 조회", tags=["탭3 · 모델 교체"])
 def get_active_model() -> dict:
     return {"active_model": get_state()["insp_active_model"]}
 
@@ -171,7 +171,7 @@ def get_active_model() -> dict:
 # 탭1 — 실시간 검사
 # ---------------------------------------------------------------------------
 
-@router.post("/api/inspection/run")
+@router.post("/api/inspection/run", summary="수동 검사 1회 실행", tags=["탭1 · 실시간 검사"])
 def run_inspection_endpoint() -> dict:
     """수동 검사 1회. 핵심 로직은 run_single_inspection()에 분리 (WebSocket 공용)."""
     try:
@@ -248,7 +248,7 @@ def run_single_inspection() -> dict:
     return {**record, "was_reshuffled": was_reshuffled}
 
 
-@router.get("/api/inspection/image/last")
+@router.get("/api/inspection/image/last", summary="마지막 원본 이미지 조회", tags=["탭1 · 실시간 검사"])
 def get_last_image():
     """마지막 검사 원본 이미지 FileResponse."""
     state = get_state()
@@ -264,7 +264,7 @@ def get_last_image():
     return FileResponse(str(path), media_type=media)
 
 
-@router.get("/api/inspection/anomaly-map/last")
+@router.get("/api/inspection/anomaly-map/last", summary="마지막 Anomaly Map 조회", tags=["탭1 · 실시간 검사"])
 def get_last_anomaly_map():
     """마지막 Anomaly Map → JET colormap PNG StreamingResponse."""
     state = get_state()
@@ -275,7 +275,7 @@ def get_last_anomaly_map():
     return StreamingResponse(_pil_to_png_stream(heatmap_pil), media_type="image/png")
 
 
-@router.get("/api/inspection/overlay/last")
+@router.get("/api/inspection/overlay/last", summary="마지막 이상영역 오버레이 조회", tags=["탭1 · 실시간 검사"])
 def get_last_overlay():
     """마지막 원본 + 이상영역 빨간 반투명 오버레이 PNG StreamingResponse."""
     state  = get_state()
@@ -302,7 +302,7 @@ def get_last_overlay():
 # 탭2 — 검사 이력
 # ---------------------------------------------------------------------------
 
-@router.get("/api/inspection/records")
+@router.get("/api/inspection/records", summary="검사 이력 목록 조회", tags=["탭2 · 검사 이력"])
 def get_records(verdict: str = "전체") -> list[dict]:
     """
     verdict query: "양품" | "불량" | "전체" (default)
@@ -320,7 +320,7 @@ def get_records(verdict: str = "전체") -> list[dict]:
     ]
 
 
-@router.get("/api/inspection/records/csv")
+@router.get("/api/inspection/records/csv", summary="검사 이력 CSV 다운로드", tags=["탭2 · 검사 이력"])
 def download_records_csv():
     """이력 전체 UTF-8 BOM CSV 다운로드."""
     records  = get_state()["insp_records"]
@@ -333,7 +333,7 @@ def download_records_csv():
     )
 
 
-@router.delete("/api/inspection/records")
+@router.delete("/api/inspection/records", summary="검사 이력 초기화", tags=["탭2 · 검사 이력"])
 def clear_records() -> dict:
     """이력 + 풀 + 마지막 결과 초기화. insp_active_model 유지 (R-INSP-05)."""
     reset_inspection_state()

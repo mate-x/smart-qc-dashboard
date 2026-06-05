@@ -12,7 +12,7 @@ from utils.storage import load_history
 router = APIRouter()
 
 
-@router.get("/api/models")
+@router.get("/api/models", summary="완료된 실험 목록 조회", tags=["탭3 · 모델 교체"])
 def list_models() -> list[dict]:
     """
     history.json에서 status == "completed" 실험만 반환.

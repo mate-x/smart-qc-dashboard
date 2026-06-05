@@ -17,7 +17,16 @@ from api.routes.inspection import router as inspection_router
 from api.routes.models import router as models_router
 from api.ws.auto_inspection import auto_inspection_ws
 
-app = FastAPI(title="Smart QC Inspection API", version="1.0.0")
+app = FastAPI(
+    title="스마트 QC 검사 API",
+    description=(
+        "비전 검사 시스템 REST API\n\n"
+        "- **탭1** 실시간 검사 — 수동/자동 추론, 이미지·Anomaly Map 조회\n"
+        "- **탭2** 검사 이력 — 목록 조회·필터·CSV 다운로드·초기화\n"
+        "- **탭3** 모델 교체 — 완료된 실험 적용 및 현재 모델 조회\n"
+    ),
+    version="1.0.0",
+)
 
 app.add_middleware(
     CORSMiddleware,

@@ -26,3 +26,13 @@ class ActiveModelResponse(BaseModel):
 
 class ClearRecordsResponse(BaseModel):
     success: bool
+
+
+class InspectionJobStartedResponse(BaseModel):
+    job_id: str
+
+
+class InspectionJobStatusResponse(BaseModel):
+    status: str           # "pending" | "running" | "completed" | "failed"
+    result: dict | None = None
+    error: str | None = None

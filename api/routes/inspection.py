@@ -23,17 +23,21 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Literal
 
+import asyncio
 import pandas as pd
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 
+from api.jobs import create_job, get_job, pop_job, run_inspection_job
 from api.schemas import (
     ActiveModelResponse,
     ApplyModelRequest,
     ApplyModelResponse,
     ClearRecordsResponse,
+    InspectionJobStartedResponse,
+    InspectionJobStatusResponse,
 )
-from api.services.inspection_service import apply_model, run_single_inspection
+from api.services.inspection_service import apply_model
 from api.state import get_state, reset_records_only
 from utils.image_utils import anomaly_map_to_heatmap, make_anomaly_overlay, pil_to_png_stream
 
@@ -76,13 +80,22 @@ def get_active_model() -> dict:
 # 탭1 — 실시간 검사
 # ---------------------------------------------------------------------------
 
-@router.post("/api/inspection/run", summary="수동 검사 1회 실행", tags=["탭1 · 실시간 검사"])
-def run_inspection_endpoint() -> dict:
-    """핵심 로직은 run_single_inspection()에 분리 (WebSocket 공용)."""
-    try:
-        return run_single_inspection()
-    except RuntimeError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+@router.post("/api/inspection/run", response_model=InspectionJobStartedResponse, summary="수동 검사 1회 실행 (비동기)", tags=["탭1 · 실시간 검사"])
+async def run_inspection_endpoint() -> dict:
+    """즉시 job_id를 반환하고, 추론은 백그라운드에서 실행."""
+    job_id = create_job()
+    asyncio.create_task(run_inspection_job(job_id))
+    return {"job_id": job_id}
+
+
+@router.get("/api/inspection/job/{job_id}", response_model=InspectionJobStatusResponse, summary="검사 Job 상태 조회", tags=["탭1 · 실시간 검사"])
+def get_job_status(job_id: str) -> dict:
+    job = get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job_id를 찾을 수 없습니다.")
+    if job["status"] in ("completed", "failed"):
+        return pop_job(job_id)
+    return job
 
 
 @router.get("/api/inspection/image/last", summary="마지막 원본 이미지 조회", tags=["탭1 · 실시간 검사"])

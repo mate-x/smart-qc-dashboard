@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 import cv2
@@ -204,6 +205,45 @@ def anomaly_map_to_heatmap(
     heatmap_bgr = cv2.applyColorMap(normalized, colormap)
     heatmap_rgb = cv2.cvtColor(heatmap_bgr, cv2.COLOR_BGR2RGB)
     return Image.fromarray(heatmap_rgb, mode="RGB")
+
+
+def make_anomaly_overlay(
+    image_path: str,
+    anomaly_map: np.ndarray,
+    threshold: float,
+    score_min: float,
+    score_max: float,
+    alpha: float = 0.45,
+) -> Image.Image:
+    """이상 영역(threshold 초과 픽셀)에 빨간 반투명 오버레이를 합성한 PIL Image 반환."""
+    orig     = Image.open(image_path).convert("RGB")
+    orig_arr = np.array(orig, dtype=np.float32)
+    h, w     = orig_arr.shape[:2]
+
+    if score_max > score_min:
+        amap_norm = np.clip(
+            (anomaly_map - score_min) / (score_max - score_min), 0.0, 1.0
+        ).astype(np.float32)
+    else:
+        amap_norm = np.zeros_like(anomaly_map, dtype=np.float32)
+
+    amap_resized    = cv2.resize(amap_norm, (w, h), interpolation=cv2.INTER_LINEAR)
+    mask            = amap_resized >= threshold
+
+    result          = orig_arr.copy()
+    result[mask, 0] = result[mask, 0] * (1 - alpha) + 255 * alpha
+    result[mask, 1] = result[mask, 1] * (1 - alpha)
+    result[mask, 2] = result[mask, 2] * (1 - alpha)
+
+    return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8), mode="RGB")
+
+
+def pil_to_png_stream(pil_image: Image.Image) -> io.BytesIO:
+    """PIL Image → PNG BytesIO 스트림."""
+    buf = io.BytesIO()
+    pil_image.save(buf, format="PNG")
+    buf.seek(0)
+    return buf
 
 
 def create_triplet_image(

@@ -22,7 +22,7 @@ import asyncio
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from api.routes.inspection import run_single_inspection
+from api.services.inspection_service import run_single_inspection
 from api.state import get_state
 
 _INSPECTION_INTERVAL = 3.0   # 자동 검사 간격 (초)

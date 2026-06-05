@@ -10,6 +10,7 @@ import pandas as pd
 import streamlit as st
 from PIL import Image
 
+from api.state import get_gpu_warning
 from utils.cache_manager import get_anomaly_map_cache, set_anomaly_map_cache
 from utils.image_utils import (
     anomaly_map_to_heatmap,
@@ -42,6 +43,10 @@ def render() -> None:
     if not metrics or not metrics.get("anomaly_scores"):
         st.warning("실험에 지표 정보가 없습니다.")
         return
+
+    gpu_warn = get_gpu_warning()
+    if gpu_warn:
+        st.warning(gpu_warn)
 
     cache = _ensure_anomaly_map_cache(exp_id, exp)
     if cache is None:

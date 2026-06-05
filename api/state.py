@@ -97,6 +97,7 @@ def reset_inspection_state() -> None:
     """
     모델 교체 시 호출. insp_active_model은 유지 (R-INSP-05).
     clear_model_cache() 를 먼저 호출한 뒤 이 함수를 호출할 것.
+    test_pool / pool_index 포함 전체 초기화 — 모델 교체 전용.
     """
     _state["insp_records"]          = []
     _state["insp_seq_counter"]      = 0
@@ -106,6 +107,19 @@ def reset_inspection_state() -> None:
     _state["insp_defect_popup"]     = False
     _state["insp_test_pool"]        = []
     _state["insp_pool_index"]       = 0
+
+
+def reset_records_only() -> None:
+    """
+    이력 초기화 시 호출 (DELETE /api/inspection/records).
+    test_pool / pool_index / active_model 은 유지 — 이력만 리셋.
+    """
+    _state["insp_records"]          = []
+    _state["insp_seq_counter"]      = 0
+    _state["insp_auto_active"]      = False
+    _state["insp_last_result"]      = None
+    _state["insp_last_anomaly_map"] = None
+    _state["insp_defect_popup"]     = False
 
 
 # ---------------------------------------------------------------------------

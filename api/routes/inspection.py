@@ -35,6 +35,7 @@ from api.state import (
     get_state,
     normalize_anomaly_score,
     reset_inspection_state,
+    reset_records_only,
     sample_from_pool,
 )
 from inspection.utils.test_sampler import build_test_pool
@@ -335,8 +336,8 @@ def download_records_csv():
 
 @router.delete("/api/inspection/records", summary="검사 이력 초기화", tags=["탭2 · 검사 이력"])
 def clear_records() -> dict:
-    """이력 + 풀 + 마지막 결과 초기화. insp_active_model 유지 (R-INSP-05)."""
-    reset_inspection_state()
+    """이력만 초기화. test_pool·active_model 유지 (초기화 후 즉시 재검사 가능)."""
+    reset_records_only()
     return {"success": True}
 
 

@@ -24,7 +24,7 @@ def add_to_queue(preprocessing_config: dict, model_config: dict) -> dict:
         "id":                   str(uuid.uuid4()),
         "name":                 name,
         "preprocessing_config": dict(preprocessing_config),
-        "model_config":         dict(model_config),
+        "model_cfg":            dict(model_config),
         "status":               "대기중",
     }
     get_state()["experiment_queue"].append(item)

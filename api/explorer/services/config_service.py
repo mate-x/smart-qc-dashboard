@@ -18,7 +18,7 @@ def get_config() -> dict:
     state = get_state()
     return {
         "preprocessing_config": state["preprocessing_config"],
-        "model_config":         state["model_config"],
+        "model_cfg":            state["model_config"],
         "device_info":          _detect_device_once(),
     }
 
@@ -74,7 +74,7 @@ def load_config_yaml() -> dict:
 
     return {
         "preprocessing_config": state["preprocessing_config"],
-        "model_config":         state["model_config"],
+        "model_cfg":            state["model_config"],
     }
 
 

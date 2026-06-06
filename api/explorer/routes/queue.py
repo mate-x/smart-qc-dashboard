@@ -25,14 +25,14 @@ from api.explorer.services.queue_service import (
 router = APIRouter(prefix="/api/queue", tags=["탭2 · 큐"])
 
 
-@router.get("", summary="대기열 조회")
+@router.get("", summary="대기열 조회", response_model_by_alias=True)
 def list_queue_route() -> list[QueueItemResponse]:
     return [QueueItemResponse(**item) for item in get_queue()]
 
 
 @router.post("", summary="대기열 항목 추가")
 def add_queue_route(body: AddQueueRequest) -> AddQueueResponse:
-    item = add_to_queue(body.preprocessing_config, body.model_config)
+    item = add_to_queue(body.preprocessing_config, body.model_cfg)
     return AddQueueResponse(id=item["id"], name=item["name"])
 
 

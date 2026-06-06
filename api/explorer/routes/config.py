@@ -30,14 +30,14 @@ from api.explorer.services.config_service import (
 router = APIRouter(prefix="/api/config", tags=["탭2 · 설정"])
 
 
-@router.get("", summary="현재 설정 조회")
+@router.get("", summary="현재 설정 조회", response_model_by_alias=True)
 def get_config_route() -> GetConfigResponse:
     return GetConfigResponse(**get_config())
 
 
-@router.post("", summary="설정 저장")
+@router.post("", summary="설정 저장", response_model_by_alias=True)
 def save_config_route(body: SaveConfigRequest) -> GetConfigResponse:
-    save_config(body.preprocessing_config, body.model_config)
+    save_config(body.preprocessing_config, body.model_cfg)
     return GetConfigResponse(**get_config())
 
 
@@ -58,7 +58,7 @@ def save_yaml_route() -> dict:
     return {"success": True}
 
 
-@router.post("/yaml/load", summary="configs.yaml 불러오기")
+@router.post("/yaml/load", summary="configs.yaml 불러오기", response_model_by_alias=True)
 def load_yaml_route() -> LoadYamlResponse:
     try:
         result = load_config_yaml()

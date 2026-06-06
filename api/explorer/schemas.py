@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 # ---------------------------------------------------------------------------
@@ -43,13 +43,15 @@ class ValidateDatasetResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 class SaveConfigRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     preprocessing_config: dict
-    model_config: dict
+    model_cfg: dict = Field(alias="model_config")
 
 
 class GetConfigResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     preprocessing_config: dict | None = None
-    model_config: dict | None = None
+    model_cfg: dict | None = Field(default=None, alias="model_config")
     device_info: dict
 
 
@@ -64,8 +66,9 @@ class PreviewThresholdResponse(BaseModel):
 
 
 class LoadYamlResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     preprocessing_config: dict | None = None
-    model_config: dict | None = None
+    model_cfg: dict | None = Field(default=None, alias="model_config")
 
 
 # ---------------------------------------------------------------------------
@@ -73,15 +76,17 @@ class LoadYamlResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 class AddQueueRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     preprocessing_config: dict
-    model_config: dict
+    model_cfg: dict = Field(alias="model_config")
 
 
 class QueueItemResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     id: str
     name: str
     preprocessing_config: dict
-    model_config: dict
+    model_cfg: dict = Field(alias="model_config")
     status: str
 
 
@@ -110,3 +115,45 @@ class SaveModelResponse(BaseModel):
 
 class DeleteExperimentResponse(BaseModel):
     success: bool
+
+
+# ---------------------------------------------------------------------------
+# 탭5 · Anomaly Map
+# ---------------------------------------------------------------------------
+
+class BuildAnomalyMapResponse(BaseModel):
+    job_id: str
+
+
+class JobStatusResponse(BaseModel):
+    status: str               # "pending" | "running" | "completed" | "failed"
+    error: str | None = None
+
+
+class ImageRowResponse(BaseModel):
+    image_name: str
+    defect_class: str
+    anomaly_score: float
+    verdict: str              # "OK" | "NG"
+    gt_match: bool
+    classification: str       # "TP" | "FP" | "TN" | "FN"
+    image_path: str           # "{class}/{filename}" — triplet 엔드포인트 키
+
+
+class AnomalyImagesResponse(BaseModel):
+    images: list[ImageRowResponse]
+    score_max: float
+    score_avg: float
+    tp: int
+    fp: int
+    tn: int
+    fn: int
+
+
+class ZipRequest(BaseModel):
+    threshold: float
+    defect_class: str = "전체"
+
+
+class ZipJobResponse(BaseModel):
+    job_id: str

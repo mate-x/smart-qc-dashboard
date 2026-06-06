@@ -17,6 +17,7 @@ from api.vision.routes.inspection import router as inspection_router
 from api.vision.routes.models import router as models_router
 from api.vision.ws.router import router as vision_ws_router
 from api.explorer.routes.experiments import router as experiments_router
+from api.explorer.routes.dataset import router as dataset_router
 
 app = FastAPI(
     title="스마트 QC 검사 API",
@@ -40,3 +41,4 @@ app.include_router(inspection_router)
 app.include_router(models_router)
 app.include_router(vision_ws_router)
 app.include_router(experiments_router)
+app.include_router(dataset_router)

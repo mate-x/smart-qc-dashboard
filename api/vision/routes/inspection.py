@@ -1,5 +1,5 @@
 """
-api/routes/inspection.py  — HTTP 레이어 전담
+api/vision/routes/inspection.py  — HTTP 레이어 전담
 
 탭3 — 모델 교체:
     POST /api/inspection/model        모델 적용  (body: {experiment_id})
@@ -28,8 +28,8 @@ import pandas as pd
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 
-from api.jobs import create_job, get_job, pop_job, run_inspection_job
-from api.schemas import (
+from api.vision.jobs import create_job, get_job, pop_job, run_inspection_job
+from api.vision.schemas import (
     ActiveModelResponse,
     ApplyModelRequest,
     ApplyModelResponse,
@@ -39,8 +39,8 @@ from api.schemas import (
     UpdateSourcePathRequest,
     UpdateSourcePathResponse,
 )
-from api.services.inspection_service import apply_model, update_source_path
-from api.state import get_state, reset_records_only
+from api.vision.services.inspection_service import apply_model, update_source_path
+from api.vision.state import get_state, reset_records_only
 from utils.image_utils import anomaly_map_to_heatmap, make_anomaly_overlay, pil_to_png_stream
 
 router = APIRouter()

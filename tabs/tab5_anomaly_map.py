@@ -10,7 +10,7 @@ import pandas as pd
 import streamlit as st
 from PIL import Image
 
-from api.state import get_gpu_warning
+from api.explorer.state import get_gpu_warning
 from utils.cache_manager import get_anomaly_map_cache, set_anomaly_map_cache
 from utils.image_utils import (
     anomaly_map_to_heatmap,

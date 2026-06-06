@@ -1,5 +1,5 @@
 """
-api/routes/models.py
+api/vision/routes/models.py
 
 GET /api/models — completed 실험 목록 (F1 내림차순, FR-INSP-T3-01)
 """

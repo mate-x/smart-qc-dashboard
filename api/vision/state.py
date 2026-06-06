@@ -1,7 +1,8 @@
 """
-api/state.py
+api/vision/state.py
 
 단일 사용자 전제 — st.session_state + @st.cache_resource 대체.
+GPU 공통 유틸은 api.common 참조.
 
 _model_cache : (model_path, model_type, device) → 로드된 모델 객체
 _state       : 검사 세션 전역 상태 (INSPECTION_SESSION_SCHEMA 대응)
@@ -155,41 +156,6 @@ def sample_from_pool() -> tuple[str, str, bool]:
     sample = pool[index]
     _state["insp_pool_index"] = index + 1
     return sample[0], sample[1], was_reshuffled
-
-
-# ---------------------------------------------------------------------------
-# GPU 메모리 체크
-# ---------------------------------------------------------------------------
-
-WARN_THRESHOLD_MB = 1024  # 1 GB 미만이면 경고
-
-
-def get_gpu_memory_info() -> dict:
-    if not torch.cuda.is_available():
-        return {"available": False}
-    free, total = torch.cuda.mem_get_info()
-    return {
-        "available": True,
-        "free_mb":  round(free  / 1024 ** 2),
-        "total_mb": round(total / 1024 ** 2),
-        "used_mb":  round((total - free) / 1024 ** 2),
-    }
-
-
-def get_gpu_warning() -> str | None:
-    """
-    여유 GPU 메모리가 WARN_THRESHOLD_MB 미만이면 경고 문자열 반환.
-    충분하거나 GPU 없으면 None.
-    """
-    info = get_gpu_memory_info()
-    if not info["available"]:
-        return None
-    if info["free_mb"] < WARN_THRESHOLD_MB:
-        return (
-            f"GPU 여유 메모리 {info['free_mb']} MB. "
-            "모델 로드에 실패할 수 있습니다."
-        )
-    return None
 
 
 # ---------------------------------------------------------------------------

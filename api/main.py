@@ -10,12 +10,13 @@ FastAPI 앱 조립 + CORS.
 """
 from __future__ import annotations
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routes.inspection import router as inspection_router
-from api.routes.models import router as models_router
-from api.ws.auto_inspection import auto_inspection_ws
+from api.vision.routes.inspection import router as inspection_router
+from api.vision.routes.models import router as models_router
+from api.vision.ws.router import router as vision_ws_router
+from api.explorer.routes.experiments import router as experiments_router
 
 app = FastAPI(
     title="스마트 QC 검사 API",
@@ -35,10 +36,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(models_router)
 app.include_router(inspection_router)
-
-
-@app.websocket("/ws/inspection/auto")
-async def ws_auto_inspection(websocket: WebSocket) -> None:
-    await auto_inspection_ws(websocket)
+app.include_router(models_router)
+app.include_router(vision_ws_router)
+app.include_router(experiments_router)

@@ -1,15 +1,15 @@
 """
-api/services/inspection_service.py
+api/vision/services/inspection_service.py
 
 비즈니스 로직 레이어. HTTP/WebSocket 관심사와 분리.
 HTTP 예외(HTTPException)를 직접 raise하지 않고, 표준 예외를 raise하여
 호출자(라우터)가 HTTP 상태 코드로 변환하도록 위임.
 
 예외 변환 규칙 (라우터 기준):
-    LookupError  → 404
-    ValueError   → 400
+    LookupError       → 404
+    ValueError        → 400
     FileNotFoundError → 400
-    RuntimeError → 500
+    RuntimeError      → 500
 """
 from __future__ import annotations
 
@@ -18,9 +18,9 @@ from pathlib import Path
 
 import numpy as np
 
-from api.state import (
+from api.common import get_device, get_gpu_warning
+from api.vision.state import (
     clear_model_cache,
-    get_gpu_warning,
     get_model,
     get_state,
     normalize_anomaly_score,
@@ -34,14 +34,6 @@ from utils.storage import load_history
 from utils.threshold_utils import resolve_threshold
 
 KST = timezone(timedelta(hours=9))
-
-
-def _get_device() -> str:
-    try:
-        import torch
-        return "cuda" if torch.cuda.is_available() else "cpu"
-    except Exception:
-        return "cpu"
 
 
 def apply_model(experiment_id: str, source_path: str | None = None) -> dict:
@@ -90,7 +82,7 @@ def apply_model(experiment_id: str, source_path: str | None = None) -> dict:
     raw_threshold        = resolve_threshold(experiment)
     threshold_normalized = normalize_anomaly_score(raw_threshold, score_min, score_max)
 
-    device = _get_device()
+    device = get_device()
     state  = get_state()
     state["insp_active_model"] = {
         "experiment_id":        experiment["experiment_id"],
@@ -207,7 +199,7 @@ def run_single_inspection() -> dict:
     threshold = active["threshold"]
     score_min = active.get("score_min", 0.0)
     score_max = active.get("score_max", 1.0)
-    device    = active.get("device", _get_device())
+    device    = active.get("device", get_device())
 
     # 1. 이미지 샘플링 (A-16)
     image_path, _gt_label, was_reshuffled = sample_from_pool()

@@ -1,5 +1,5 @@
 """
-api/ws/auto_inspection.py
+api/vision/ws/auto_inspection.py
 
 WS /ws/inspection/auto — 자동 검사 루프
 
@@ -22,8 +22,8 @@ import asyncio
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from api.services.inspection_service import run_single_inspection
-from api.state import get_state
+from api.vision.services.inspection_service import run_single_inspection
+from api.vision.state import get_state
 
 _INSPECTION_INTERVAL = 3.0   # 자동 검사 간격 (초)
 _STOP_POLL_TIMEOUT   = 3.0   # 검사 완료 후 "stop" 수신 대기 시간 (= 검사 간격과 동일)

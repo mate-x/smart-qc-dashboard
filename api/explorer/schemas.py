@@ -39,6 +39,62 @@ class ValidateDatasetResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# 탭2 · 설정
+# ---------------------------------------------------------------------------
+
+class SaveConfigRequest(BaseModel):
+    preprocessing_config: dict
+    model_config: dict
+
+
+class GetConfigResponse(BaseModel):
+    preprocessing_config: dict | None = None
+    model_config: dict | None = None
+    device_info: dict
+
+
+class PreviewThresholdRequest(BaseModel):
+    threshold_method: str
+    threshold_value: float
+
+
+class PreviewThresholdResponse(BaseModel):
+    normal_ratio: float | None = None
+    defect_ratio: float | None = None
+
+
+class LoadYamlResponse(BaseModel):
+    preprocessing_config: dict | None = None
+    model_config: dict | None = None
+
+
+# ---------------------------------------------------------------------------
+# 탭2 · 큐
+# ---------------------------------------------------------------------------
+
+class AddQueueRequest(BaseModel):
+    preprocessing_config: dict
+    model_config: dict
+
+
+class QueueItemResponse(BaseModel):
+    id: str
+    name: str
+    preprocessing_config: dict
+    model_config: dict
+    status: str
+
+
+class AddQueueResponse(BaseModel):
+    id: str
+    name: str
+
+
+class DeleteQueueResponse(BaseModel):
+    success: bool
+
+
+# ---------------------------------------------------------------------------
 # 탭4 · 실험 히스토리
 # ---------------------------------------------------------------------------
 

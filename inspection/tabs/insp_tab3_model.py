@@ -91,8 +91,10 @@ def _build_experiment_df(experiments: list[dict]) -> pd.DataFrame:
             # "2026-05-26T14:02:31+09:00" → "2026-05-26 14:02"
             created_at = created_at.replace("T", " ").split("+")[0][:16]
 
+        product = exp.get("product_name", "") or "(입력 없음)"
         rows.append({
             "실험명":    name,
+            "검사 제품": product,
             "모델 타입": exp.get("model_type", ""),
             "F1":       f"{f1:.4f}" if f1 is not None else "-",
             "AUC":      f"{auc:.4f}" if auc is not None else "-",
@@ -151,8 +153,9 @@ def _apply_model(selected_experiment: dict) -> None:
     }
 
     # Step 4
+    bg_method = selected_experiment.get("background_method", "none")
     try:
-        pool = build_test_pool(selected_experiment["dataset_path"])
+        pool = build_test_pool(selected_experiment["dataset_path"], background_method=bg_method)
     except FileNotFoundError as e:
         st.error(f"테스트 풀 구성 실패: {e}")
         st.session_state["insp_active_model"] = None

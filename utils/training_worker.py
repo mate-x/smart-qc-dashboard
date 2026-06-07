@@ -120,10 +120,11 @@ class TrainingWorker(threading.Thread):
         self.start_batch_idx     = start_batch_idx
         self.accumulated_features = accumulated_features
 
-        self._model      = None
+        self._model        = None
         self._start_time: float = 0.0
-        self._log_writer = None
+        self._log_writer   = None
         self._last_step: int = 0
+        self._early_stopped: bool = False
 
     # ── 스레드 진입점 ──────────────────────────────────────────────────────────
 
@@ -315,6 +316,7 @@ class TrainingWorker(threading.Thread):
             "image_paths":      image_paths,
             "model":            model.cpu(),
             "duration_seconds": int(elapsed),
+            "early_stopped":    self._early_stopped,
         })
 
     # ── EfficientAD 학습 루프 ──────────────────────────────────────────────────
@@ -341,6 +343,10 @@ class TrainingWorker(threading.Thread):
         params      = self.model_config["params"]
         total_steps = params.get("train_steps", 70000)
         report_every = 100
+
+        early_stopping = bool(params.get("early_stopping", False))
+        es_patience    = int(params.get("patience", 5000))
+        es_min_delta   = float(params.get("min_delta", 0.0001))
 
         model = model.to(device)
         model.train()
@@ -415,6 +421,10 @@ class TrainingWorker(threading.Thread):
         last_loss = 0.0
         _ckpt_saved = False           # 동일 pause에서 중복 저장 방지
 
+        _es_best_loss    = float("inf")
+        _es_steps_no_imp = 0
+        _es_ema_loss: float | None = None
+
         while step < total_steps:
             # ① 중지 체크
             if self.stop_event.is_set():
@@ -481,6 +491,7 @@ class TrainingWorker(threading.Thread):
                 total_loss = loss_dict["loss_total"]
 
             last_loss = total_loss.item()
+            _es_ema_loss = last_loss if _es_ema_loss is None else 0.02 * last_loss + 0.98 * _es_ema_loss
 
             if not np.isfinite(last_loss):
                 self._write_log(f"[경고] Step {step}: loss={last_loss} — 학습 발산. 학습률을 낮춰 주세요.")
@@ -506,6 +517,21 @@ class TrainingWorker(threading.Thread):
             scheduler_ae.step()
 
             step += 1
+
+            # ── Early Stopping 체크 (EMA smoothed loss 기준)
+            if early_stopping and _es_ema_loss is not None:
+                if _es_ema_loss < _es_best_loss - es_min_delta:
+                    _es_best_loss    = _es_ema_loss
+                    _es_steps_no_imp = 0
+                else:
+                    _es_steps_no_imp += 1
+                    if _es_steps_no_imp >= es_patience:
+                        self._write_log(
+                            f"[Early Stopping] {es_patience} steps 동안 loss 개선 없음 "
+                            f"(best={_es_best_loss:.4f}, ema={_es_ema_loss:.4f}). 학습 종료."
+                        )
+                        self._early_stopped = True
+                        break
 
             if step == self.start_step + 1 or step % report_every == 0 or step == total_steps:
                 elapsed = time.time() - self._start_time

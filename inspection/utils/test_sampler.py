@@ -20,19 +20,28 @@ from utils.logger import log_info
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"}
 
 
-def build_test_pool(dataset_path: str) -> list[tuple[str, str]]:
+def build_test_pool(
+    dataset_path: str,
+    background_method: str = "none",
+) -> list[tuple[str, str]]:
     """
     dataset_path/test/ 하위 이미지 스캔 → (절대경로, gt_label) 리스트.
+    background_method == "sam2" 이면 background_clean/test/ 사용.
     gt_label: "양품" (good/) | "불량" (기타 클래스) — A-17 레이블 규칙.
 
     반환 전 random.shuffle() 1회 적용.
 
     Raises:
-        FileNotFoundError: dataset_path/test/ 미존재 시.
+        FileNotFoundError: test 디렉토리 미존재 시.
     Returns:
         list[tuple[str, str]] — 이미지 없으면 빈 리스트.
     """
-    test_root = Path(dataset_path) / "test"
+    root = Path(dataset_path)
+    test_root = (
+        root / "background_clean" / "test"
+        if background_method == "sam2"
+        else root / "test"
+    )
     if not test_root.exists():
         raise FileNotFoundError(
             f"테스트 디렉토리가 없습니다: {test_root}"

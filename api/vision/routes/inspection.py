@@ -36,6 +36,7 @@ from api.vision.schemas import (
     ClearRecordsResponse,
     InspectionJobStartedResponse,
     InspectionJobStatusResponse,
+    RunInspectionRequest,
     UpdateSourcePathRequest,
     UpdateSourcePathResponse,
 )
@@ -95,10 +96,10 @@ def get_active_model() -> dict:
 # ---------------------------------------------------------------------------
 
 @router.post("/api/inspection/run", response_model=InspectionJobStartedResponse, summary="수동 검사 1회 실행 (비동기)", tags=["탭1 · 실시간 검사"])
-async def run_inspection_endpoint() -> dict:
+async def run_inspection_endpoint(req: RunInspectionRequest = RunInspectionRequest()) -> dict:
     """즉시 job_id를 반환하고, 추론은 백그라운드에서 실행."""
     job_id = create_job()
-    asyncio.create_task(run_inspection_job(job_id))
+    asyncio.create_task(run_inspection_job(job_id, defect_only=req.defect_only))
     return {"job_id": job_id}
 
 

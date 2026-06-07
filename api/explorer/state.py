@@ -15,6 +15,7 @@ _state: dict = {
     "model_config":         None,   # dict | None
     "device_info":          None,   # dict | None  — 첫 GET /api/config 시 캐싱
     "dataset_path":         None,   # str  | None  — POST /api/dataset/validate 성공 시 저장
+    "product_name":         "",     # str          — POST /api/dataset/validate 성공 시 저장
     "experiment_queue":     [],     # list[dict]
     "anomaly_map_cache":    {},     # dict[exp_id, {anomaly_maps, image_paths, cached_at}]
 }

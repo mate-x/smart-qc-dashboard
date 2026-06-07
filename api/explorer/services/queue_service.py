@@ -17,7 +17,7 @@ def get_queue() -> list[dict]:
     return get_state()["experiment_queue"]
 
 
-def add_to_queue(preprocessing_config: dict, model_config: dict) -> dict:
+def add_to_queue(preprocessing_config: dict, model_config: dict, set_id: str | None = None) -> dict:
     model_type = model_config.get("model_type", "model")
     name = f"{model_type.upper()}_{uuid.uuid4().hex[:4]}"
     item = {
@@ -26,6 +26,7 @@ def add_to_queue(preprocessing_config: dict, model_config: dict) -> dict:
         "preprocessing_config": dict(preprocessing_config),
         "model_cfg":            dict(model_config),
         "status":               "대기중",
+        "set_id":               set_id,
     }
     get_state()["experiment_queue"].append(item)
     return item

@@ -20,7 +20,7 @@ router = APIRouter(prefix="/api/dataset", tags=["탭1 · 데이터셋"])
 @router.post("/validate", summary="데이터셋 경로 검증")
 def validate_dataset_route(body: ValidateDatasetRequest) -> ValidateDatasetResponse:
     try:
-        result = validate_dataset(body.path)
+        result = validate_dataset(body.path, body.product_name)
     except FileNotFoundError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:

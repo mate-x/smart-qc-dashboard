@@ -66,6 +66,7 @@ _run: dict = {
     "batch_skip_current": False,
     "batch_advance_pending": False,
     "batch_stopping":     False,    # stop_batch_all() 진행 중 플래그
+    "set_id":             None,     # 현재 학습 중인 큐 항목의 set_id (배치 자동 실험 세트 식별자)
     # 내부
     "_poll_task":         None,
 }
@@ -349,6 +350,8 @@ def start_batch() -> tuple[str, int]:
     preprocessing_config = first_item.get("preprocessing_config", {})
     device               = (state.get("device_info") or {}).get("device", "cpu")
     exp_id               = _generate_experiment_id(model_config.get("model_type", "unknown"))
+
+    _run["set_id"] = first_item.get("set_id")
 
     _start_worker(
         exp_id=exp_id,
@@ -702,6 +705,8 @@ async def _advance_batch_queue() -> None:
     device               = (state.get("device_info") or {}).get("device", "cpu")
     exp_id               = _generate_experiment_id(model_config.get("model_type", "unknown"))
 
+    _run["set_id"] = next_item.get("set_id")
+
     _start_worker(
         exp_id=exp_id,
         experiment_name=next_item.get("name", ""),
@@ -775,6 +780,7 @@ def _build_experiment_record(
     model_config: dict   = state["model_config"] or {}
     preprocessing_config: dict = state["preprocessing_config"] or {}
     dataset_path: str    = state.get("dataset_path") or ""
+    product_name: str    = state.get("product_name") or ""
     experiment_name: str = _run.get("experiment_name") or exp_id
     created_at: str      = _run.get("created_at") or _generate_created_at()
 
@@ -790,11 +796,13 @@ def _build_experiment_record(
         "threshold_method":     model_config.get("threshold_method", "percentile"),
         "threshold_value":      model_config.get("threshold_value", 95.0),
         "dataset_path":         dataset_path,
+        "product_name":         product_name,
         "image_size":           model_config.get("image_size", 256),
         "duration_seconds":     duration_seconds,
         "metrics":              metrics,
         "model_path":           None,
         "configs_path":         None,
+        "set_id":               _run.get("set_id"),
     }
 
     if status == "중단":

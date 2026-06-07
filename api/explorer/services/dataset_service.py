@@ -28,7 +28,7 @@ _NON_IMAGE_EXTS = {
 # Public
 # ---------------------------------------------------------------------------
 
-def validate_dataset(path: str) -> dict:
+def validate_dataset(path: str, product_name: str = "") -> dict:
     """
     경로 검증 후 dataset_meta + folder_tree 를 포함한 dict 반환.
 
@@ -49,7 +49,9 @@ def validate_dataset(path: str) -> dict:
             if meta["train_good_count"] == 0:
                 raise ValueError(f"`{ok_dir.name}/` 폴더에 유효한 이미지가 없습니다.")
             meta["folder_tree"] = _build_tree_text(root, meta)
-            get_state()["dataset_path"] = path
+            state = get_state()
+            state["dataset_path"] = path
+            state["product_name"] = product_name
             return meta
         raise ValueError(
             "지원하지 않는 폴더 구조입니다. "
@@ -69,7 +71,9 @@ def validate_dataset(path: str) -> dict:
 
     meta = _build_mvtec_meta(root)
     meta["folder_tree"] = _build_tree_text(root, meta)
-    get_state()["dataset_path"] = path
+    state = get_state()
+    state["dataset_path"] = path
+    state["product_name"] = product_name
     return meta
 
 

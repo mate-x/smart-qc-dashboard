@@ -32,7 +32,7 @@ def list_queue_route() -> list[QueueItemResponse]:
 
 @router.post("", summary="대기열 항목 추가")
 def add_queue_route(body: AddQueueRequest) -> AddQueueResponse:
-    item = add_to_queue(body.preprocessing_config, body.model_cfg)
+    item = add_to_queue(body.preprocessing_config, body.model_cfg, body.set_id)
     return AddQueueResponse(id=item["id"], name=item["name"])
 
 

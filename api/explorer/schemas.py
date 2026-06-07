@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 class ValidateDatasetRequest(BaseModel):
     path: str
+    product_name: str = ""
 
     @field_validator("path")
     @classmethod
@@ -79,6 +80,7 @@ class AddQueueRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     preprocessing_config: dict
     model_cfg: dict = Field(alias="model_config")
+    set_id: str | None = None
 
 
 class QueueItemResponse(BaseModel):
@@ -88,6 +90,7 @@ class QueueItemResponse(BaseModel):
     preprocessing_config: dict
     model_cfg: dict = Field(alias="model_config")
     status: str
+    set_id: str | None = None
 
 
 class AddQueueResponse(BaseModel):

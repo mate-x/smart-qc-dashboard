@@ -29,11 +29,11 @@ def pop_job(job_id: str) -> dict | None:
     return _jobs.pop(job_id, None)
 
 
-async def run_inspection_job(job_id: str) -> None:
+async def run_inspection_job(job_id: str, defect_only: bool = False) -> None:
     _jobs[job_id] = {"status": "running"}
     loop = asyncio.get_event_loop()
     try:
-        result = await loop.run_in_executor(None, run_single_inspection)
+        result = await loop.run_in_executor(None, run_single_inspection, defect_only)
         _jobs[job_id] = {"status": "completed", "result": result}
     except Exception as e:
         _jobs[job_id] = {"status": "failed", "error": str(e)}

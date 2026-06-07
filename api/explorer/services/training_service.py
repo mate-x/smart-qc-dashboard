@@ -792,6 +792,7 @@ def _build_experiment_record(
         "model_type":           model_config.get("model_type", ""),
         "preprocessing_method": preprocessing_config.get("method", "none"),
         "preprocessing_params": preprocessing_config.get("params"),
+        "background_method":    preprocessing_config.get("background_method", "none"),
         "model_params":         model_config.get("params", {}),
         "threshold_method":     model_config.get("threshold_method", "percentile"),
         "threshold_value":      model_config.get("threshold_value", 95.0),

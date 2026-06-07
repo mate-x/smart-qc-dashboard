@@ -38,6 +38,10 @@ class ClearRecordsResponse(BaseModel):
     success: bool
 
 
+class RunInspectionRequest(BaseModel):
+    defect_only: bool = False
+
+
 class InspectionJobStartedResponse(BaseModel):
     job_id: str
 

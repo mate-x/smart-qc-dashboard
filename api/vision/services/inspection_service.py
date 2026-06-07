@@ -82,6 +82,9 @@ def apply_model(experiment_id: str, source_path: str | None = None) -> dict:
     raw_threshold        = resolve_threshold(experiment)
     threshold_normalized = normalize_anomaly_score(raw_threshold, score_min, score_max)
 
+    background_method = experiment.get("background_method", "none")
+    preprocessing_config["background_method"] = background_method
+
     device = get_device()
     state  = get_state()
     state["insp_active_model"] = {
@@ -92,6 +95,8 @@ def apply_model(experiment_id: str, source_path: str | None = None) -> dict:
         "threshold":            threshold_normalized,
         "dataset_path":         effective_source_path,
         "preprocessing_config": preprocessing_config,
+        "background_method":    background_method,
+        "product_name":         experiment.get("product_name", ""),
         "score_min":            score_min,
         "score_max":            score_max,
         "device":               device,
@@ -99,7 +104,7 @@ def apply_model(experiment_id: str, source_path: str | None = None) -> dict:
 
     # 5. test pool 구성
     try:
-        pool = build_test_pool(effective_source_path)
+        pool = build_test_pool(effective_source_path, background_method=background_method)
     except FileNotFoundError:
         state["insp_active_model"] = None
         raise
@@ -162,8 +167,9 @@ def update_source_path(source_path: str | None) -> dict:
     else:
         effective_path = source_path.strip()
 
+    background_method = active.get("background_method", "none")
     try:
-        pool = build_test_pool(effective_path)
+        pool = build_test_pool(effective_path, background_method=background_method)
     except FileNotFoundError:
         raise
 
@@ -180,15 +186,19 @@ def update_source_path(source_path: str | None) -> dict:
     return {"success": True, "source_path": effective_path}
 
 
-def run_single_inspection() -> dict:
+def run_single_inspection(defect_only: bool = False) -> dict:
     """
     단일 이미지 추론. REST POST와 WebSocket 자동 검사 루프 공용.
+
+    defect_only: True이면 test_pool 중 gt_label=="불량"인 이미지만 대상으로 샘플링.
 
     Raises:
         RuntimeError: 모델 미선택, pool 비어있음, 추론 실패
     Returns:
         inspection_record + was_reshuffled 필드
     """
+    import random as _random
+
     state  = get_state()
     active = state.get("insp_active_model")
     if active is None:
@@ -201,8 +211,17 @@ def run_single_inspection() -> dict:
     score_max = active.get("score_max", 1.0)
     device    = active.get("device", get_device())
 
-    # 1. 이미지 샘플링 (A-16)
-    image_path, _gt_label, was_reshuffled = sample_from_pool()
+    # 1. 이미지 샘플링
+    if defect_only:
+        pool = state.get("insp_test_pool", [])
+        defect_pool = [item for item in pool if item[1] == "불량"]
+        if not defect_pool:
+            raise RuntimeError("테스트 풀에 불량 이미지가 없습니다.")
+        chosen = _random.choice(defect_pool)
+        image_path, _gt_label = chosen[0], chosen[1]
+        was_reshuffled = False
+    else:
+        image_path, _gt_label, was_reshuffled = sample_from_pool()
 
     # 2. 모델 (캐시)
     model = get_model(

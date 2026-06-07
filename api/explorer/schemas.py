@@ -157,3 +157,63 @@ class ZipRequest(BaseModel):
 
 class ZipJobResponse(BaseModel):
     job_id: str
+
+
+# ---------------------------------------------------------------------------
+# 탭3 · Training
+# ---------------------------------------------------------------------------
+
+class StartTrainingRequest(BaseModel):
+    experiment_name: str = ""
+
+
+class ResumeTrainingRequest(BaseModel):
+    checkpoint_name: str
+
+
+class StartTrainingResponse(BaseModel):
+    exp_id: str
+
+
+class TrainingControlResponse(BaseModel):
+    success: bool
+    message: str = ""
+
+
+class CheckpointItem(BaseModel):
+    name: str
+    model_type: str = ""
+    created_at: str = ""
+    # EfficientAD
+    step: int | None = None
+    total_steps: int | None = None
+    # PatchCore
+    batch_idx: int | None = None
+    total_batches: int | None = None
+    n_patches: int | None = None
+
+
+class CheckpointsResponse(BaseModel):
+    checkpoints: list[CheckpointItem]
+
+
+class DeleteCheckpointResponse(BaseModel):
+    success: bool
+
+
+class TrainingStatusResponse(BaseModel):
+    status: str                           # "idle" | "running" | "paused"
+    exp_id: str | None = None
+    batch_mode: bool = False
+    batch_total: int = 0
+    progress: dict | None = None          # {step, total, loss, elapsed}
+    current_stage_idx: int | None = None
+    current_stage_name: str | None = None
+    log_lines: list[str] = []
+    loss_history: list[dict] = []
+    last_ckpt_path: str | None = None
+
+
+class BatchStartResponse(BaseModel):
+    exp_id: str
+    batch_total: int

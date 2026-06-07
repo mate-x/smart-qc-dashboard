@@ -11,6 +11,7 @@ from pathlib import Path
 
 from PIL import Image
 
+from api.explorer.state import get_state
 from utils.dataset_converter import count_images, detect_ok_ng_dirs
 from utils.image_utils import SUPPORTED_FORMATS
 
@@ -48,6 +49,7 @@ def validate_dataset(path: str) -> dict:
             if meta["train_good_count"] == 0:
                 raise ValueError(f"`{ok_dir.name}/` 폴더에 유효한 이미지가 없습니다.")
             meta["folder_tree"] = _build_tree_text(root, meta)
+            get_state()["dataset_path"] = path
             return meta
         raise ValueError(
             "지원하지 않는 폴더 구조입니다. "
@@ -67,6 +69,7 @@ def validate_dataset(path: str) -> dict:
 
     meta = _build_mvtec_meta(root)
     meta["folder_tree"] = _build_tree_text(root, meta)
+    get_state()["dataset_path"] = path
     return meta
 
 

@@ -52,24 +52,129 @@ def generate_created_at() -> str:
 def render() -> None:
     st.header("탭3. 학습 시작 + 학습 로그")
 
-    _render_queue_at_tab3_top()
+    # 배치 자동 진행 처리 (advance_pending + idle 상태)
+    if (
+        st.session_state.get("_batch_advance_pending", False)
+        and st.session_state.get("_batch_queue_mode", False)
+        and st.session_state.get("current_run_status", "idle") == "idle"
+        and st.session_state.get("dataset_path")
+    ):
+        st.session_state["_batch_advance_pending"] = False
+        _advance_batch_queue()
+        return
+
+    queue_items: list[dict] = st.session_state.get("experiment_queue", [])
+    status = st.session_state.get("current_run_status", "idle")
+    batch_mode = st.session_state.get("_batch_queue_mode", False)
+
+    if queue_items:
+        # 상단 2열: 대기열 테이블(좌) + 배치 제어/상태(우)
+        col_queue, col_ctrl = st.columns(2)
+
+        with col_queue:
+            st.markdown("#### 실험 대기열")
+            df = _build_queue_df(queue_items)
+            st.dataframe(
+                df.style.apply(_style_queue_rows, axis=1),
+                use_container_width=True,
+                hide_index=True,
+                key="tab3_queue_display",
+            )
+
+        with col_ctrl:
+            if batch_mode:
+                batch_total = st.session_state.get("_batch_total_count", len(queue_items))
+                done_count = sum(
+                    1 for item in queue_items
+                    if item.get("status") in ("완료", "실패", "건너뜀")
+                )
+                st.info(f"🔄 일괄 학습 진행 중: {done_count} / {batch_total} 완료")
+
+                b1, b2, b3 = st.columns(3)
+                with b1:
+                    if st.button(
+                        "⏸ 일시정지",
+                        disabled=(status != "running"),
+                        use_container_width=True,
+                        key="tab3_batch_pause_btn",
+                    ):
+                        pause_ev = st.session_state.get("_pause_event")
+                        if pause_ev:
+                            pause_ev.set()
+
+                with b2:
+                    if st.button(
+                        "⏭ 현재 학습 건너뛰기",
+                        disabled=(status not in ("running", "paused")),
+                        use_container_width=True,
+                        key="tab3_batch_skip_btn",
+                    ):
+                        st.session_state["_batch_skip_current"] = True
+                        if status == "running":
+                            pause_ev = st.session_state.get("_pause_event")
+                            if pause_ev:
+                                pause_ev.set()
+                        else:
+                            stop_ev = st.session_state.get("_stop_event")
+                            if stop_ev:
+                                stop_ev.set()
+                            pause_ev = st.session_state.get("_pause_event")
+                            if pause_ev:
+                                pause_ev.clear()
+
+                with b3:
+                    if st.button(
+                        "⏹ 전체 학습 중단",
+                        type="secondary",
+                        use_container_width=True,
+                        key="tab3_batch_stop_all_btn",
+                    ):
+                        st.session_state["_batch_queue_mode"] = False
+                        stop_ev = st.session_state.get("_stop_event")
+                        if stop_ev:
+                            stop_ev.set()
+                        pause_ev = st.session_state.get("_pause_event")
+                        if pause_ev:
+                            pause_ev.clear()
+                        st.info("전체 학습 중단 신호를 전송했습니다.")
+
+                if status in ("running", "paused"):
+                    st.info("학습 중 새로고침 시 학습 상태를 확인할 수 없습니다.", icon="⚠️")
+                    st.info("🔄 학습이 진행 중입니다. 탭을 전환해도 학습은 계속됩니다.")
+
+            else:
+                pending_count = sum(
+                    1 for item in queue_items if item.get("status") == "대기중"
+                )
+                can_start = pending_count > 0 and status == "idle"
+                if st.button(
+                    f"🚀 일괄 학습 시작 ({pending_count}개 대기중)",
+                    type="primary",
+                    disabled=not can_start,
+                    key="tab3_batch_start_btn",
+                ):
+                    _handle_batch_start()
+
+        st.divider()
 
     if not _guard():
         return
 
-    status = st.session_state.get("current_run_status", "idle")
-
+    # 하단 전체 너비: 진행 표시 + 로그
+    in_batch = queue_items and batch_mode
     if status == "running":
-        st.info("학습 중 새로고침 시 학습 상태를 확인할 수 없습니다.", icon="⚠️")
+        if not in_batch:
+            st.info("학습 중 새로고침 시 학습 상태를 확인할 수 없습니다.", icon="⚠️")
         finished = _drain_queue()
-        _render_running_ui()
+        _render_running_ui(show_info_banner=not in_batch)
         if not finished:
             time.sleep(0.3)
         st.rerun()
 
     elif status == "paused":
-        st.info("학습 중 새로고침 시 학습 상태를 확인할 수 없습니다.", icon="⚠️")
-        _render_running_ui()
+        if not in_batch:
+            st.info("학습 중 새로고침 시 학습 상태를 확인할 수 없습니다.", icon="⚠️")
+        _render_running_ui(show_info_banner=not in_batch)
 
     else:
         _show_last_result()
@@ -131,6 +236,7 @@ def _advance_batch_queue() -> None:
     next_idx, next_item = pending[0]
     st.session_state["preprocessing_config"] = dict(next_item["preprocessing_config"])
     st.session_state["model_config"]         = dict(next_item["model_config"])
+    st.session_state["current_set_id"]       = next_item.get("set_id")
 
     queue_items[next_idx] = {**queue_items[next_idx], "status": "진행중"}
     st.session_state["experiment_queue"] = queue_items
@@ -524,11 +630,12 @@ def _render_stage_indicator() -> None:
     )
 
 
-def _render_running_ui() -> None:
+def _render_running_ui(show_info_banner: bool = True) -> None:
     """current_run_status == "running" 또는 "paused" 상태 UI."""
     status = st.session_state.get("current_run_status", "running")
 
-    st.info("🔄 학습이 진행 중입니다. 탭을 전환해도 학습은 계속됩니다.")
+    if show_info_banner:
+        st.info("🔄 학습이 진행 중입니다. 탭을 전환해도 학습은 계속됩니다.")
 
     _render_stage_indicator()
 
@@ -639,6 +746,19 @@ def _handle_start_training(experiment_name: str) -> None:
             elif count < 1000:
                 st.warning(f"ImageNet penalty 이미지가 {count}장입니다. 1,000장 이상 권장합니다.")
 
+    # background_method에 따라 학습에 사용할 실효 경로 결정
+    bg_method = preprocessing_config.get("background_method", "none")
+    if bg_method == "sam2":
+        bg_clean_path = Path(dataset_path) / "background_clean"
+        if bg_clean_path.is_dir():
+            dataset_path = str(bg_clean_path)
+        else:
+            st.error(
+                "background_clean/ 폴더가 없습니다. "
+                "SAM2 처리된 이미지를 먼저 준비하거나 배경 분리 설정을 '없음'으로 변경해 주세요."
+            )
+            st.stop()
+
     exp_id     = generate_experiment_id(model_config["model_type"])
     created_at = generate_created_at()
 
@@ -698,6 +818,12 @@ def _handle_resume_training(ckpt_path: "Path", ckpt: dict) -> None:
     dataset_path         = ckpt["dataset_path"]
     model_type           = ckpt["model_type"]
     device_info          = st.session_state.get("device_info") or {"device": "cpu"}
+
+    bg_method = preprocessing_config.get("background_method", "none")
+    if bg_method == "sam2":
+        bg_clean_path = Path(dataset_path) / "background_clean"
+        if bg_clean_path.is_dir():
+            dataset_path = str(bg_clean_path)
 
     # 기존 exp_id가 history에 있으면 충돌 방지를 위해 새 ID 생성
     old_exp_id   = ckpt["experiment_id"]
@@ -1048,6 +1174,7 @@ def _reset_run_state() -> None:
     """학습 종료 후 내부 상태 초기화."""
     st.session_state["current_run_status"]  = "idle"
     st.session_state["current_exp_id"]      = None
+    st.session_state["current_set_id"]      = None
     st.session_state["_stop_event"]         = None
     st.session_state["_pause_event"]        = None
     st.session_state["_result_queue"]       = None
@@ -1079,7 +1206,9 @@ def _build_experiment_record(
         "name":                 exp_cfg.get("name", exp_id),
         "status":               status,
         "created_at":           exp_cfg.get("created_at", generate_created_at()),
+        "product_name":         st.session_state.get("product_name", ""),
         "model_type":           model_config["model_type"],
+        "background_method":    preprocessing_config.get("background_method", "none"),
         "preprocessing_method": preprocessing_config.get("method", "none"),
         "preprocessing_params": preprocessing_config.get("params"),
         "model_params":         model_config.get("params", {}),
@@ -1091,6 +1220,7 @@ def _build_experiment_record(
         "metrics":              metrics,
         "model_path":           None,
         "configs_path":         None,
+        "set_id":               st.session_state.get("current_set_id"),
     }
 
     if status == "중단":

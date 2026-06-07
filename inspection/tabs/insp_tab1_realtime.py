@@ -52,7 +52,7 @@ def render() -> None:
         st.warning("🔄 자동 검사 진행 중...")
 
     # 버튼 행 (D.2)
-    col_b1, col_b2, col_b3 = st.columns(3)
+    col_b1, col_b2, col_b3, col_b4 = st.columns(4)
     with col_b1:
         if st.button(
             "🔍 수동 검사 (1개 검사)",
@@ -98,6 +98,21 @@ def render() -> None:
             )
             st.session_state["insp_auto_active"] = False
             st.rerun()
+    with col_b4:
+        if st.button(
+            "⚠️ 불량만 검사 (1개)",
+            type="secondary",
+            disabled=is_auto,
+            use_container_width=True,
+        ):
+            log_info(
+                "insp_inspection_started_defect_only",
+                "불량 이미지 전용 수동 검사 1회 실행",
+                tab="insp_tab1",
+            )
+            ok = _run_single_inspection(defect_only=True)
+            if ok:
+                st.rerun()
 
     # 3열 결과 패널 (D.3)
     _render_result_panel()
@@ -241,14 +256,18 @@ def _render_result_panel() -> None:
             st.caption("이상 영역 오버레이가 여기에 표시됩니다.")
 
 
-def _run_single_inspection() -> bool:
+def _run_single_inspection(defect_only: bool = False) -> bool:
     """
     단일 이미지 추론 흐름 (07_Backend §12.3).
     수동/자동 공용. session_state 갱신 후 반환 (st.rerun 호출 없음).
 
+    defect_only: True이면 test_pool 중 gt_label=="불량"인 이미지만 대상으로 샘플링.
+
     Returns:
         True: 정상 완료. False: 오류 발생 (st.error 표시 후 반환).
     """
+    import random as _random
+
     from inspection.utils.test_sampler import sample_from_pool
     from inspection.utils.insp_session_init import normalize_anomaly_score
     from utils.model_factory import run_inference
@@ -260,12 +279,22 @@ def _run_single_inspection() -> bool:
     score_max  = active.get("score_max", 1.0)
 
     # 1. test_pool에서 이미지 샘플링 (FR-INSP-T1-06)
-    try:
-        image_path, _gt_label, was_reshuffled = sample_from_pool()
-    except RuntimeError as e:
-        st.error(str(e))
-        st.session_state["insp_auto_active"] = False
-        return False
+    if defect_only:
+        pool: list[tuple[str, str]] = st.session_state.get("insp_test_pool", [])
+        defect_pool = [item for item in pool if item[1] == "불량"]
+        if not defect_pool:
+            st.warning("테스트 풀에 불량 이미지가 없습니다. 데이터셋에 결함 클래스 폴더가 있는지 확인하세요.")
+            return False
+        chosen = _random.choice(defect_pool)
+        image_path, _gt_label = chosen[0], chosen[1]
+        was_reshuffled = False
+    else:
+        try:
+            image_path, _gt_label, was_reshuffled = sample_from_pool()
+        except RuntimeError as e:
+            st.error(str(e))
+            st.session_state["insp_auto_active"] = False
+            return False
 
     # pool 소진 후 재셔플 알림 (FR-INSP-T1-06 — insp_pool_reshuffled 이벤트)
     if was_reshuffled:

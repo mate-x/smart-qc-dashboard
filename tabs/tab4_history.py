@@ -68,6 +68,10 @@ def render() -> None:
         st.divider()
         _render_comparison_section(completed)
 
+    # 배치 실험 비교 테이블
+    st.divider()
+    _render_batch_comparison_section(experiments)
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 실험 목록 테이블 (FR-T4-01, FR-T4-09)
@@ -113,9 +117,11 @@ def _build_table_df(sorted_exps: list[dict]) -> pd.DataFrame:
         def _m(key: str) -> str:
             return f"{metrics.get(key, 0):.4f}" if is_completed and key in metrics else "—"
 
+        product = r.get("product_name", "") or "(입력 없음)"
         rows.append(
             {
                 "실험명": r.get("name", ""),
+                "검사 제품": product,
                 "모델": r.get("model_type", ""),
                 "파라미터 요약": _param_summary(r),
                 "Accuracy": _m("accuracy"),
@@ -473,3 +479,112 @@ def _render_radar_comparison(exps: list[dict], selected_metrics: list[str]) -> N
         title="실험 비교 (레이더 차트)",
     )
     st.plotly_chart(fig, use_container_width=True)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 배치 실험 비교 테이블
+# ──────────────────────────────────────────────────────────────────────────────
+
+_BATCH_SORT_METRICS = ["AUC", "F1", "F2", "Recall", "Precision", "Accuracy"]
+_BATCH_METRIC_KEYS = {
+    "AUC":       "auc",
+    "F1":        "f1_score",
+    "F2":        "f2_score",
+    "Recall":    "recall",
+    "Precision": "precision",
+    "Accuracy":  "accuracy",
+}
+
+
+def _render_batch_comparison_section(experiments: list[dict]) -> None:
+    """set_id 가 있는 배치 실험들을 테이블로 비교."""
+    batch_exps = [e for e in experiments if e.get("set_id")]
+    if not batch_exps:
+        return
+
+    st.subheader("📊 배치 실험 비교")
+
+    # set_id별 메타 정보 수집
+    set_meta: dict[str, dict] = {}
+    for e in batch_exps:
+        sid = e["set_id"]
+        if sid not in set_meta:
+            set_meta[sid] = {"count": 0, "date": e.get("created_at", "")[:16]}
+        set_meta[sid]["count"] += 1
+
+    # 필터 드롭다운
+    set_ids = list(set_meta.keys())
+    set_labels = [
+        f"{sid}  ({set_meta[sid]['count']}개, {set_meta[sid]['date']})"
+        for sid in set_ids
+    ]
+    filter_options = ["(전체 배치 실험)"] + set_labels
+
+    col_filter, col_sort = st.columns([3, 1])
+    with col_filter:
+        selected_label = st.selectbox(
+            "실험 세트 선택",
+            options=filter_options,
+            key="t4_batch_set_select",
+        )
+    with col_sort:
+        sort_by = st.selectbox(
+            "정렬 기준",
+            _BATCH_SORT_METRICS,
+            key="t4_batch_sort",
+        )
+
+    # 필터링
+    if selected_label == "(전체 배치 실험)":
+        filtered = batch_exps
+    else:
+        idx = filter_options.index(selected_label) - 1
+        selected_set_id = set_ids[idx]
+        filtered = [e for e in batch_exps if e.get("set_id") == selected_set_id]
+
+    completed = [e for e in filtered if e.get("status") == "completed"]
+
+    if not completed:
+        pending_cnt = sum(1 for e in filtered if e.get("status") not in ("completed",))
+        st.info(
+            f"완료된 배치 실험이 없습니다. "
+            f"(미완료/실패: {pending_cnt}개)"
+        )
+        return
+
+    df = _build_batch_comparison_df(completed, sort_by)
+    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.caption(f"총 {len(completed)}개 완료된 배치 실험 표시 중 — 열 헤더를 클릭하면 정렬됩니다.")
+
+
+def _build_batch_comparison_df(experiments: list[dict], sort_by: str) -> "pd.DataFrame":
+    rows = []
+    for e in experiments:
+        metrics = e.get("metrics") or {}
+
+        def _m(k: str) -> float:
+            return round(float(metrics.get(k, 0.0)), 4)
+
+        rows.append({
+            "실험명":     e.get("name", ""),
+            "세트ID":     e.get("set_id", ""),
+            "모델":       e.get("model_type", ""),
+            "전처리":     e.get("preprocessing_method", ""),
+            "이미지크기": e.get("image_size", ""),
+            "파라미터요약": _param_summary(e),
+            "Th방식":     e.get("threshold_method", ""),
+            "Th값":       e.get("threshold_value", ""),
+            "Accuracy":  _m("accuracy"),
+            "Precision": _m("precision"),
+            "Recall":    _m("recall"),
+            "F1":        _m("f1_score"),
+            "F2":        _m("f2_score"),
+            "AUC":       _m("auc"),
+            "실행시각":   e.get("created_at", "")[:19].replace("T", " "),
+        })
+
+    df = pd.DataFrame(rows)
+    sort_col = sort_by
+    if sort_col in df.columns:
+        df = df.sort_values(sort_col, ascending=False).reset_index(drop=True)
+    return df

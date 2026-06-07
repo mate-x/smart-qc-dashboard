@@ -20,19 +20,31 @@ from utils.logger import log_info
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"}
 
 
-def build_test_pool(dataset_path: str) -> list[tuple[str, str]]:
+def build_test_pool(
+    dataset_path: str,
+    background_method: str = "none",
+) -> list[tuple[str, str]]:
     """
     dataset_path/test/ 하위 이미지 스캔 → (절대경로, gt_label) 리스트.
     gt_label: "양품" (good/) | "불량" (기타 클래스) — A-17 레이블 규칙.
 
+    background_method == "sam2" 이면 dataset_path/background_clean/test/ 를 우선 사용.
+    해당 폴더가 없으면 dataset_path/test/ 로 fallback.
     반환 전 random.shuffle() 1회 적용.
 
     Raises:
-        FileNotFoundError: dataset_path/test/ 미존재 시.
+        FileNotFoundError: 사용할 test/ 디렉토리가 존재하지 않을 때.
     Returns:
         list[tuple[str, str]] — 이미지 없으면 빈 리스트.
     """
-    test_root = Path(dataset_path) / "test"
+    root = Path(dataset_path)
+
+    if background_method == "sam2":
+        candidate = root / "background_clean" / "test"
+        test_root = candidate if candidate.is_dir() else root / "test"
+    else:
+        test_root = root / "test"
+
     if not test_root.exists():
         raise FileNotFoundError(
             f"테스트 디렉토리가 없습니다: {test_root}"
@@ -44,7 +56,7 @@ def build_test_pool(dataset_path: str) -> list[tuple[str, str]]:
             continue
         label = "양품" if cls_dir.name == "good" else "불량"
         for img_path in sorted(cls_dir.iterdir()):
-            if img_path.suffix.lower() in IMAGE_EXTENSIONS:
+            if img_path.suffix.lower() in IMAGE_EXTENSIONS and img_path.exists():
                 pool.append((str(img_path.resolve()), label))
 
     random.shuffle(pool)

@@ -14,7 +14,7 @@ def render_sidebar() -> None:
         )
 
         if st.button(
-            "🔬 모델 탐색 플랫폼",
+            "🔬 모델 탐색 시스템",
             use_container_width=True,
             type=explorer_type,
             key="sidebar_btn_explorer",
@@ -24,7 +24,7 @@ def render_sidebar() -> None:
 
         # TODO: [삭제 예정] 비전검사 대시보드가 React 앱으로 이전됨 — 버튼 제거
         if st.button(
-            "🏭 비전검사 플랫폼",
+            "🏭 비전검사 시스템",
             use_container_width=True,
             type=inspection_type,
             key="sidebar_btn_inspection",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import uuid
 from pathlib import Path
 
@@ -148,10 +149,12 @@ def _build_preprocessing_config(
     norm_label: str,
     mean: list[float],
     std: list[float],
+    background_method: str = "none",
 ) -> dict:
     """preprocessing_config 스키마 (00_Global_Context §1.6) 구성."""
     return {
         "method": method,
+        "background_method": background_method,
         "resize_mode": "padding",
         "image_size": image_size,
         "normalization": "imagenet" if norm_label == "ImageNet" else "custom",
@@ -171,57 +174,70 @@ def render() -> None:
         return
     _detect_device_once()
 
-    # 최상단: 전처리 방식 radio + 모델 선택 radio 나란히
-    col_prep, col_model = st.columns(2)
-    with col_prep:
+    # 메인 2단: 전처리 영역(좌) + 모델 영역(우)
+    col_left, col_right = st.columns(2)
+
+    with col_left:
+        st.markdown("### 전처리 영역")
+        image_size = _render_image_size_section()
         method = _render_method_radio()
-    with col_model:
+        params = _render_method_params(method)
+        background_method = _render_background_radio()
+        _render_preview(method, params, image_size, background_method)
+
+    # 정규화는 ImageNet 고정
+    norm_label = "ImageNet"
+    mean: list[float] = list(_IMAGENET_MEAN)
+    std: list[float]  = list(_IMAGENET_STD)
+
+    with col_right:
+        st.markdown("### 모델 영역")
         model_type = _render_model_radio()
+        _render_device_info()
+        batch_size, random_seed = _render_common_settings()
+        st.divider()
+        if model_type == "efficientad":
+            model_params = _render_efficientad_params()
+        else:
+            model_params = _render_patchcore_params()
 
     st.divider()
 
-    # 전처리 영역
-    st.markdown("### 전처리 영역")
-    params = _render_method_params(method)
-    image_size, norm_label, mean, std = _render_resize_norm_section()
-    _render_preview(method, params, image_size)
+    # 하단 3단: Threshold + 설정 저장(좌) / 대기열 테이블(중) / 개별 파라미터(우)
+    col_thr, col_table, col_detail = st.columns(3)
+
+    with col_thr:
+        threshold_method, threshold_value = _render_threshold_section()
+        _render_threshold_ratio_preview(threshold_method, threshold_value)
+        st.divider()
+        _render_save_area(
+            method=method,
+            params=params,
+            image_size=image_size,
+            norm_label=norm_label,
+            mean=mean,
+            std=std,
+            background_method=background_method,
+            model_type=model_type,
+            batch_size=batch_size,
+            random_seed=random_seed,
+            threshold_method=threshold_method,
+            threshold_value=threshold_value,
+            model_params=model_params,
+        )
+
+    queue_items: list[dict] = st.session_state.get("experiment_queue", [])
+
+    with col_table:
+        st.subheader("실험 대기열 테이블")
+        selected_idx = _render_queue_table(queue_items)
+
+    with col_detail:
+        st.subheader("개별 실험 파라미터")
+        _render_queue_detail(queue_items, selected_idx)
 
     st.divider()
-
-    # 모델 영역
-    st.markdown("### 모델 영역")
-    _render_device_info()
-    batch_size, random_seed = _render_common_settings()
-    st.divider()
-
-    if model_type == "efficientad":
-        model_params = _render_efficientad_params()
-    else:
-        model_params = _render_patchcore_params()
-
-    st.divider()
-    threshold_method, threshold_value = _render_threshold_section()
-    _render_threshold_ratio_preview(threshold_method, threshold_value)
-
-    st.divider()
-
-    _render_save_area(
-        method=method,
-        params=params,
-        image_size=image_size,
-        norm_label=norm_label,
-        mean=mean,
-        std=std,
-        model_type=model_type,
-        batch_size=batch_size,
-        random_seed=random_seed,
-        threshold_method=threshold_method,
-        threshold_value=threshold_value,
-        model_params=model_params,
-    )
-
-    st.divider()
-    _render_queue_section()
+    _render_auto_experiment_section()
 
 
 # ---------------------------------------------------------------------------
@@ -271,14 +287,38 @@ def _render_device_info() -> None:
 # ---------------------------------------------------------------------------
 
 def _render_method_radio() -> str:
-    """전처리 방식 radio. 선택된 내부 method 코드 반환."""
+    """필터 방식 radio. 선택된 내부 method 코드 반환."""
     label: str = st.radio(
-        "전처리 방식 (Preprocessing Method)",
+        "필터 방식",
         options=_METHOD_LABELS,
         horizontal=True,
         key="tab2_method_label",
     )
     return _METHOD_MAP[label]
+
+
+def _render_background_radio() -> str:
+    """배경 분리 방식 radio. "none" 또는 "sam2" 반환."""
+    label: str = st.radio(
+        "배경 분리 방식",
+        options=["없음", "SAM2 Segmentation"],
+        horizontal=True,
+        key="tab2_background_label",
+    )
+    bg_method = "none" if label == "없음" else "sam2"
+
+    if bg_method == "sam2":
+        dataset_path = st.session_state.get("dataset_path")
+        if dataset_path:
+            bg_clean = Path(dataset_path) / "background_clean"
+            if bg_clean.is_dir():
+                st.success("background_clean/ 폴더 확인됨.")
+            else:
+                st.warning("background_clean/ 폴더가 없습니다. SAM2 처리된 이미지를 먼저 준비해 주세요.")
+        else:
+            st.warning("데이터셋 경로를 먼저 설정해 주세요.")
+
+    return bg_method
 
 
 def _render_method_params(method: str) -> dict | None:
@@ -307,12 +347,11 @@ def _render_method_params(method: str) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
-# FR-T2-03: 이미지 크기 및 정규화 (전처리 영역 단독 소유)
+# FR-T2-03: 이미지 크기 (정규화는 ImageNet 고정)
 # ---------------------------------------------------------------------------
 
-def _render_resize_norm_section() -> tuple[int, str, list[float], list[float]]:
-    st.subheader("이미지 크기 및 정규화")
-
+def _render_image_size_section() -> int:
+    """이미지 크기 입력 위젯. 정규화는 ImageNet으로 고정."""
     image_size = st.number_input(
         "이미지 크기 (image_size)",
         min_value=32,
@@ -323,74 +362,46 @@ def _render_resize_norm_section() -> tuple[int, str, list[float], list[float]]:
     )
     if int(image_size) % 32 != 0:
         st.error("32의 배수만 입력 가능합니다.")
+    return int(image_size)
 
-    norm_label: str = st.radio(
-        "정규화 방식 (Normalization)",
-        ["ImageNet", "커스텀"],
-        horizontal=True,
-        key="tab2_norm_label",
-    )
 
-    if norm_label == "커스텀":
-        mean_str = st.text_input(
-            "mean (쉼표 구분, 예: 0.5,0.5,0.5)",
-            value="0.5,0.5,0.5",
-            key="tab2_mean",
-        )
-        std_str = st.text_input(
-            "std (쉼표 구분, 예: 0.5,0.5,0.5)",
-            value="0.5,0.5,0.5",
-            key="tab2_std",
-        )
-
-        parsed_mean = _parse_float_list(mean_str)
-        if parsed_mean is None:
-            st.error("mean 값을 올바르게 입력해 주세요 (예: 0.5,0.5,0.5).")
-            mean: list[float] = [0.5, 0.5, 0.5]
-        elif len(parsed_mean) != 3:
-            st.error("mean 값은 쉼표로 구분된 3개 숫자여야 합니다.")
-            mean = [0.5, 0.5, 0.5]
-        else:
-            mean = parsed_mean
-
-        parsed_std = _parse_float_list(std_str)
-        if parsed_std is None:
-            st.error("std 값을 올바르게 입력해 주세요 (예: 0.5,0.5,0.5).")
-            std: list[float] = [0.5, 0.5, 0.5]
-        elif len(parsed_std) != 3:
-            st.error("std 값은 쉼표로 구분된 3개 숫자여야 합니다.")
-            std = [0.5, 0.5, 0.5]
-        else:
-            std = parsed_std
-    else:
-        mean = list(_IMAGENET_MEAN)
-        std = list(_IMAGENET_STD)
-
-    return int(image_size), norm_label, mean, std
+def _render_resize_norm_section() -> tuple[int, str, list[float], list[float]]:
+    """하위 호환 유지 (configs.yaml 불러오기 등에서 직접 호출되는 경우 대비)."""
+    image_size = _render_image_size_section()
+    return image_size, "ImageNet", list(_IMAGENET_MEAN), list(_IMAGENET_STD)
 
 
 # ---------------------------------------------------------------------------
 # FR-T2-04: 전처리 전후 미리보기
 # ---------------------------------------------------------------------------
 
-def _get_sample_image_path() -> Path | None:
-    """train/good/ 알파벳 순 첫 번째 이미지 경로 반환."""
+def _get_sample_image_path(background_method: str = "none") -> Path | None:
+    """train/good/ 알파벳 순 첫 번째 이미지 경로 반환. SAM2이면 background_clean/ 우선."""
     dataset_path = st.session_state.get("dataset_path")
     if not dataset_path:
         return None
-    train_good = Path(dataset_path) / "train" / "good"
+    root = Path(dataset_path)
+    if background_method == "sam2":
+        bg_train_good = root / "background_clean" / "train" / "good"
+        if bg_train_good.is_dir():
+            images = sorted(
+                f for f in bg_train_good.iterdir() if f.suffix.lower() in SUPPORTED_FORMATS
+            )
+            if images:
+                return images[0]
+    train_good = root / "train" / "good"
     if not train_good.is_dir():
         return None
     images = sorted(f for f in train_good.iterdir() if f.suffix.lower() in SUPPORTED_FORMATS)
     return images[0] if images else None
 
 
-def _render_preview(method: str, params: dict | None, image_size: int) -> None:
+def _render_preview(method: str, params: dict | None, image_size: int, background_method: str = "none") -> None:
     st.subheader("전처리 미리보기")
     if image_size % 32 != 0:
         st.warning("이미지 크기가 32의 배수가 아닙니다. 유효한 값을 입력하면 미리보기가 갱신됩니다.")
         return
-    sample_path = _get_sample_image_path()
+    sample_path = _get_sample_image_path(background_method)
     if sample_path is None:
         st.info("미리보기: 샘플 이미지를 찾을 수 없습니다.")
         return
@@ -710,21 +721,29 @@ _STATUS_COLORS: dict[str, str] = {
 _VALID_STATUSES = frozenset(_STATUS_COLORS)
 
 
-def _make_queue_item(preprocessing_config: dict, model_config: dict) -> dict:
+def _make_queue_item(
+    preprocessing_config: dict,
+    model_config: dict,
+    set_id: str | None = None,
+) -> dict:
     """
     대기열 항목 dict 생성 (FR-T2-16).
     name 형식: {MODEL_TYPE}_{uuid4().hex[:4]}
     status 초기값: "대기중"
     preprocessing_config / model_config 는 얕은 복사본 저장.
+    set_id: 자동 실험 세트 식별자 (배치 자동 생성 시에만 설정)
     """
     model_type = model_config.get("model_type", "model")
     name = f"{model_type.upper()}_{uuid.uuid4().hex[:4]}"
-    return {
+    item: dict = {
         "name":                name,
         "preprocessing_config": dict(preprocessing_config),
         "model_config":         dict(model_config),
         "status":              "대기중",
     }
+    if set_id:
+        item["set_id"] = set_id
+    return item
 
 
 def _build_queue_df(queue_items: list[dict]) -> pd.DataFrame:
@@ -768,6 +787,7 @@ def _render_save_area(
     norm_label: str,
     mean: list[float],
     std: list[float],
+    background_method: str,
     model_type: str,
     batch_size: int,
     random_seed: int,
@@ -781,11 +801,13 @@ def _render_save_area(
         st.error("이미지 크기가 32의 배수가 아닙니다. 수정 후 저장해 주세요.")
         return
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2 = st.columns(2)
 
     with col1:
-        if st.button("설정 저장", type="primary", key="tab2_btn_save"):
-            pre_cfg = _build_preprocessing_config(method, params, image_size, norm_label, mean, std)
+        if st.button("설정 저장", type="primary", key="tab2_btn_save", use_container_width=True):
+            pre_cfg = _build_preprocessing_config(
+                method, params, image_size, norm_label, mean, std, background_method
+            )
             mdl_cfg = build_model_config(
                 model_type, image_size, batch_size, random_seed,
                 threshold_method, threshold_value, model_params,
@@ -795,26 +817,10 @@ def _render_save_area(
             st.success("설정이 저장되었습니다.")
 
     with col2:
-        if st.button("configs.yaml 저장", key="tab2_btn_yaml_save"):
-            pre_cfg = _build_preprocessing_config(method, params, image_size, norm_label, mean, std)
-            mdl_cfg = build_model_config(
-                model_type, image_size, batch_size, random_seed,
-                threshold_method, threshold_value, model_params,
-            )
-            try:
-                save_config_section("preprocessing", pre_cfg)
-                save_config_section("model", mdl_cfg)
-                st.success("configs.yaml에 저장되었습니다.")
-            except RuntimeError as e:
-                st.error(str(e))
-
-    with col3:
-        if st.button("configs.yaml 불러오기", key="tab2_btn_yaml_load"):
-            st.session_state["_tab2_show_load"] = True
-
-    with col4:
         if st.button("📋 대기열에 추가", key="tab2_btn_enqueue", use_container_width=True):
-            pre_cfg = _build_preprocessing_config(method, params, image_size, norm_label, mean, std)
+            pre_cfg = _build_preprocessing_config(
+                method, params, image_size, norm_label, mean, std, background_method
+            )
             mdl_cfg = build_model_config(
                 model_type, image_size, batch_size, random_seed,
                 threshold_method, threshold_value, model_params,
@@ -824,9 +830,6 @@ def _render_save_area(
             q.append(item)
             st.session_state["experiment_queue"] = q
             st.success(f"'{item['name']}'이(가) 대기열에 추가되었습니다.")
-
-    if st.session_state.get("_tab2_show_load"):
-        _render_load_ui()
 
 
 def _render_load_ui() -> None:
@@ -881,6 +884,9 @@ def _apply_preprocessing_config_to_widgets(config: dict) -> None:
         st.session_state["tab2_clip_limit"] = max(0.1, min(40.0, float(params.get("clip_limit", 2.0))))
 
     st.session_state["tab2_image_size"] = _snap_image_size(int(config.get("image_size", 256)))
+
+    bg = config.get("background_method", "none")
+    st.session_state["tab2_background_label"] = "SAM2 Segmentation" if bg == "sam2" else "없음"
 
     norm = config.get("normalization", "imagenet")
     st.session_state["tab2_norm_label"] = "ImageNet" if norm == "imagenet" else "커스텀"
@@ -1084,3 +1090,493 @@ def _render_queue_detail(queue_items: list[dict], selected_idx: int | None) -> N
         "preprocessing": item.get("preprocessing_config", {}),
         "model":         item.get("model_config", {}),
     })
+
+
+# ---------------------------------------------------------------------------
+# 자동 실험 설계 — 태그 입력 헬퍼
+# ---------------------------------------------------------------------------
+
+def _ae_render_tags(state_key: str, key: str, fmt_fn) -> None:
+    """태그 목록을 버튼 형태로 표시. 버튼 클릭 시 해당 태그 제거."""
+    tags = st.session_state.get(state_key, [])
+    if not tags:
+        st.caption("값을 입력하고 추가 버튼을 누르세요.")
+        return
+    n_cols = min(len(tags), 8)
+    cols = st.columns(n_cols)
+    to_remove: int | None = None
+    for i, v in enumerate(tags):
+        with cols[i % n_cols]:
+            if st.button(
+                f"{fmt_fn(v)} ✕",
+                key=f"ae_tag_{key}_{i}",
+                use_container_width=True,
+                help="클릭하여 제거",
+            ):
+                to_remove = i
+    if to_remove is not None:
+        st.session_state[state_key].pop(to_remove)
+        st.rerun()
+
+
+def _ae_tag_int(
+    label: str,
+    key: str,
+    default: int,
+    min_val: int,
+    max_val: int,
+    step: int = 1,
+) -> list[int]:
+    """정수형 태그 입력 위젯. 현재 태그 목록(list[int]) 반환."""
+    state_key = f"ae_tags_{key}"
+    if state_key not in st.session_state:
+        st.session_state[state_key] = [default]
+    col_in, col_btn = st.columns([4, 1])
+    with col_in:
+        new_val = int(
+            st.number_input(
+                label,
+                min_value=min_val, max_value=max_val,
+                value=default, step=step,
+                key=f"ae_in_{key}",
+            )
+        )
+    with col_btn:
+        st.write("")
+        if st.button("추가", key=f"ae_add_{key}", use_container_width=True):
+            if new_val not in st.session_state[state_key]:
+                st.session_state[state_key].append(new_val)
+                st.session_state[state_key].sort()
+                st.rerun()
+    _ae_render_tags(state_key, key, str)
+    return list(st.session_state[state_key])
+
+
+def _ae_tag_float(
+    label: str,
+    key: str,
+    default: float,
+    min_val: float,
+    max_val: float,
+    step: float = 0.01,
+    fmt: str = "%.4f",
+) -> list[float]:
+    """실수형 태그 입력 위젯. 현재 태그 목록(list[float]) 반환."""
+    state_key = f"ae_tags_{key}"
+    if state_key not in st.session_state:
+        st.session_state[state_key] = [default]
+    col_in, col_btn = st.columns([4, 1])
+    with col_in:
+        new_val = float(
+            st.number_input(
+                label,
+                min_value=min_val, max_value=max_val,
+                value=default, step=step, format=fmt,
+                key=f"ae_in_{key}",
+            )
+        )
+    with col_btn:
+        st.write("")
+        if st.button("추가", key=f"ae_add_{key}", use_container_width=True):
+            if new_val not in st.session_state[state_key]:
+                st.session_state[state_key].append(new_val)
+                st.session_state[state_key].sort()
+                st.rerun()
+    _ae_render_tags(state_key, key, lambda v: fmt % v)
+    return list(st.session_state[state_key])
+
+
+# ---------------------------------------------------------------------------
+# 자동 실험 설계 — config 빌드 헬퍼
+# ---------------------------------------------------------------------------
+
+def _ae_get_filter_params(method: str) -> dict | None:
+    """전처리 방식별 파라미터를 탭2 위젯 현재값에서 읽어 반환."""
+    if method == "homomorphic":
+        return {
+            "sigma":     st.session_state.get("tab2_sigma",     10.0),
+            "gamma_H":   st.session_state.get("tab2_gamma_h",   1.5),
+            "gamma_L":   st.session_state.get("tab2_gamma_l",   0.5),
+            "normalize": st.session_state.get("tab2_normalize", True),
+        }
+    if method == "clahe":
+        return {"clip_limit": st.session_state.get("tab2_clip_limit", 2.0)}
+    if method == "he":
+        return {}
+    return None
+
+
+def _ae_norm_mean(norm_label: str) -> list[float]:
+    if norm_label == "ImageNet":
+        return list(_IMAGENET_MEAN)
+    parsed = _parse_float_list(st.session_state.get("tab2_mean", "0.5,0.5,0.5"))
+    return parsed if (parsed and len(parsed) == 3) else [0.5, 0.5, 0.5]
+
+
+def _ae_norm_std(norm_label: str) -> list[float]:
+    if norm_label == "ImageNet":
+        return list(_IMAGENET_STD)
+    parsed = _parse_float_list(st.session_state.get("tab2_std", "0.5,0.5,0.5"))
+    return parsed if (parsed and len(parsed) == 3) else [0.5, 0.5, 0.5]
+
+
+# ---------------------------------------------------------------------------
+# 자동 실험 설계 — 조합 생성
+# ---------------------------------------------------------------------------
+
+def _ae_generate_combinations(param_grid: dict) -> list[dict]:
+    """param_grid 의 카르테시안 곱으로 모든 조합 생성."""
+    if not param_grid or any(not v for v in param_grid.values()):
+        return []
+    keys = list(param_grid.keys())
+    return [dict(zip(keys, vals)) for vals in itertools.product(*param_grid.values())]
+
+
+def _ae_build_combo_df(combos: list[dict], model_type: str) -> pd.DataFrame:
+    """조합 목록을 미리보기 DataFrame 으로 변환."""
+    if not combos:
+        return pd.DataFrame()
+    rows = []
+    for c in combos:
+        row: dict = {
+            "전처리":   _REVERSE_METHOD_MAP.get(c.get("prep_method", "none"), "없음"),
+            "크기":     c.get("image_size", ""),
+            "정규화":   c.get("norm", ""),
+            "배치":     c.get("batch_size", ""),
+            "시드":     c.get("random_seed", ""),
+            "Th방식":   c.get("threshold_method", ""),
+            "Th값":     c.get("threshold_value", ""),
+        }
+        if model_type == "efficientad":
+            row.update({
+                "모델크기":   c.get("model_size", ""),
+                "단계수":     c.get("train_steps", ""),
+                "옵티마이저": c.get("optimizer", ""),
+                "LR":         c.get("learning_rate", ""),
+                "WD":         c.get("weight_decay", ""),
+                "채널":       c.get("out_channels", ""),
+                "패딩":       c.get("padding", ""),
+                "AE비중":     c.get("ae_loss_weight", ""),
+                "Penalty":    c.get("use_imagenet_penalty", ""),
+                "스케줄러":   c.get("scheduler", ""),
+            })
+        else:
+            row.update({
+                "백본":       c.get("backbone", ""),
+                "코어셋":     c.get("coreset_sampling_ratio", ""),
+                "커널":       c.get("neighbourhood_kernel_size", ""),
+                "max_train":  c.get("max_train", ""),
+                "knn":        c.get("knn", ""),
+                "top_k":      c.get("top_k_ratio", ""),
+            })
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def _ae_build_queue_item_from_combo(
+    combo: dict, model_type: str, set_id: str
+) -> dict:
+    """단일 파라미터 조합으로 queue item 생성."""
+    method = combo["prep_method"]
+    pre_cfg = _build_preprocessing_config(
+        method=method,
+        params=_ae_get_filter_params(method),
+        image_size=combo["image_size"],
+        norm_label=combo["norm"],
+        mean=_ae_norm_mean(combo["norm"]),
+        std=_ae_norm_std(combo["norm"]),
+    )
+    if model_type == "efficientad":
+        model_params = build_efficientad_params(
+            model_size=combo["model_size"],
+            train_steps=int(combo["train_steps"]),
+            optimizer=combo["optimizer"],
+            learning_rate=float(combo["learning_rate"]),
+            weight_decay=float(combo["weight_decay"]),
+            out_channels=int(combo["out_channels"]),
+            padding=bool(combo["padding"]),
+            ae_loss_weight=float(combo["ae_loss_weight"]),
+            autoencoder_lr=float(st.session_state.get("tab2_ead_ae_lr", 1e-4)),
+            autoencoder_weight_decay=float(st.session_state.get("tab2_ead_ae_wd", 1e-5)),
+            lr_decay_epochs=int(st.session_state.get("tab2_ead_decay_ep", 50000)),
+            lr_decay_factor=float(st.session_state.get("tab2_ead_decay_f", 0.1)),
+            scheduler=combo["scheduler"],
+            use_imagenet_penalty=bool(combo["use_imagenet_penalty"]),
+            penalty_batch_size=int(st.session_state.get("tab2_ead_pen_bs", 8)),
+        )
+    else:
+        model_params = build_patchcore_params(
+            backbone=combo["backbone"],
+            pretrained_source="torchvision",
+            pretrained_path=None,
+            coreset_sampling_ratio=float(combo["coreset_sampling_ratio"]),
+            neighbourhood_kernel_size=int(combo["neighbourhood_kernel_size"]),
+            max_train=int(combo["max_train"]),
+            knn=int(combo["knn"]),
+            top_k_ratio=float(combo["top_k_ratio"]),
+        )
+    mdl_cfg = build_model_config(
+        model_type=model_type,
+        image_size=int(combo["image_size"]),
+        batch_size=int(combo["batch_size"]),
+        random_seed=int(combo["random_seed"]),
+        threshold_method=combo["threshold_method"],
+        threshold_value=float(combo["threshold_value"]),
+        params=model_params,
+    )
+    return _make_queue_item(pre_cfg, mdl_cfg, set_id=set_id)
+
+
+# ---------------------------------------------------------------------------
+# 자동 실험 설계 — 모델별 파라미터 UI
+# ---------------------------------------------------------------------------
+
+def _ae_render_efficientad_params() -> dict:
+    """EfficientAD 파라미터 멀티셀렉트/태그 위젯. param_grid용 dict 반환."""
+    col1, col2 = st.columns(2)
+    with col1:
+        model_sizes = st.multiselect(
+            "모델 크기", ["small", "medium"],
+            default=["medium"], key="ae_ead_model_size",
+        )
+        optimizers = st.multiselect(
+            "옵티마이저", ["adam", "adamw", "sgd"],
+            default=["adam"], key="ae_ead_optimizer",
+        )
+    with col2:
+        schedulers = st.multiselect(
+            "스케줄러", ["StepLR", "CosineAnnealingLR"],
+            default=["StepLR"], key="ae_ead_scheduler",
+        )
+        out_channels_opts = st.multiselect(
+            "출력 채널 수", [128, 256, 384, 512],
+            default=[384], key="ae_ead_out_channels",
+        )
+
+    train_steps_list = _ae_tag_int(
+        "학습 단계 수 (train_steps)", "train_steps", 70000, 1000, 200_000, 1000,
+    )
+    lr_list = _ae_tag_float(
+        "학습률 (learning_rate)", "learning_rate", 1e-4, 1e-6, 1e-1, 1e-5, "%.6f",
+    )
+
+    with st.expander("추가 EfficientAD 설정"):
+        col1, col2 = st.columns(2)
+        with col1:
+            padding_opts = st.multiselect(
+                "패딩 사용", [True, False], default=[False],
+                key="ae_ead_padding",
+                format_func=lambda x: "사용" if x else "미사용",
+            )
+            penalty_opts = st.multiselect(
+                "ImageNet Penalty", [True, False], default=[False],
+                key="ae_ead_use_penalty",
+                format_func=lambda x: "사용" if x else "미사용",
+            )
+        with col2:
+            pass
+        wd_list = _ae_tag_float(
+            "가중치 감쇠 (weight_decay)", "weight_decay", 1e-4, 0.0, 0.1, 1e-5, "%.6f",
+        )
+        ae_wt_list = _ae_tag_float(
+            "AE Loss 비중 (ae_loss_weight)", "ae_loss_weight", 0.5, 0.0, 1.0, 0.05, "%.2f",
+        )
+
+    return {
+        "model_size":          model_sizes or ["medium"],
+        "train_steps":         train_steps_list or [70000],
+        "optimizer":           optimizers or ["adam"],
+        "learning_rate":       lr_list or [1e-4],
+        "weight_decay":        wd_list or [1e-4],
+        "out_channels":        out_channels_opts or [384],
+        "padding":             padding_opts or [False],
+        "ae_loss_weight":      ae_wt_list or [0.5],
+        "use_imagenet_penalty": penalty_opts or [False],
+        "scheduler":           schedulers or ["StepLR"],
+    }
+
+
+def _ae_render_patchcore_params() -> dict:
+    """PatchCore 파라미터 멀티셀렉트/태그 위젯. param_grid용 dict 반환."""
+    col1, col2 = st.columns(2)
+    with col1:
+        backbones = st.multiselect(
+            "백본 (backbone)",
+            ["wide_resnet50_2", "resnet18", "resnet50"],
+            default=["wide_resnet50_2"], key="ae_pc_backbone",
+        )
+    with col2:
+        kernel_sizes = st.multiselect(
+            "이웃 커널 크기", [1, 3, 5, 7, 9],
+            default=[3], key="ae_pc_kernel",
+        )
+
+    coreset_list = _ae_tag_float(
+        "코어셋 비율 (coreset_sampling_ratio)", "coreset_ratio",
+        0.1, 0.01, 1.0, 0.01, "%.2f",
+    )
+
+    with st.expander("추가 PatchCore 설정"):
+        max_train_list = _ae_tag_int(
+            "최대 학습 샘플 (max_train)", "max_train", 1000, 100, 10_000, 100,
+        )
+        knn_list = _ae_tag_int("k-NN 이웃 수 (knn)", "knn", 9, 1, 50)
+        top_k_list = _ae_tag_float(
+            "Top-k 비율 (top_k_ratio)", "top_k_ratio", 0.1, 0.0, 1.0, 0.01, "%.2f",
+        )
+
+    return {
+        "backbone":                  backbones or ["wide_resnet50_2"],
+        "coreset_sampling_ratio":    coreset_list or [0.1],
+        "neighbourhood_kernel_size": kernel_sizes or [3],
+        "max_train":                 max_train_list or [1000],
+        "knn":                       knn_list or [9],
+        "top_k_ratio":               top_k_list or [0.1],
+    }
+
+
+# ---------------------------------------------------------------------------
+# 자동 실험 설계 — 메인 렌더러
+# ---------------------------------------------------------------------------
+
+def _render_auto_experiment_section() -> None:
+    """탭2 하단: 파라미터 다중 선택(좌) → 조합 미리보기(우) → 대기열 일괄 추가."""
+    st.subheader("🔬 자동 실험 설계")
+    st.caption(
+        "파라미터 선택지를 여러 개 지정하면 모든 조합으로 실험을 자동 생성합니다. "
+        "생성된 조합은 기존 대기열에 일괄 추가됩니다."
+    )
+
+    # ── 모델 선택 (단일) — 전폭 ──────────────────────────────────────────────
+    ae_model_label: str = st.radio(
+        "모델 선택 (단일)",
+        ["EfficientAD", "PatchCore"],
+        horizontal=True,
+        key="ae_model_type",
+    )
+    model_type = "efficientad" if ae_model_label == "EfficientAD" else "patchcore"
+
+    # ── 3단: 공통 파라미터(좌) + 모델 파라미터(중) + 조합 미리보기(우) ─────
+    col_common, col_model_params, col_preview = st.columns(3)
+
+    with col_common:
+        st.markdown("#### 공통 파라미터")
+
+        prep_labels: list[str] = st.multiselect(
+            "전처리 방식",
+            options=["없음", "Homomorphic", "HE", "CLAHE"],
+            default=["없음"],
+            key="ae_prep_methods",
+        )
+        if "Homomorphic" in prep_labels or "CLAHE" in prep_labels:
+            st.caption(
+                "ℹ️ Homomorphic / CLAHE 파라미터는 위 '전처리 영역'의 현재 설정값을 사용합니다."
+            )
+        prep_methods = [_METHOD_MAP[lbl] for lbl in prep_labels]
+
+        image_sizes = _ae_tag_int("이미지 크기 (image_size)", "image_size", 256, 32, 1024, 32)
+        invalid_sizes = [s for s in image_sizes if s % 32 != 0]
+        if invalid_sizes:
+            st.warning(f"32의 배수가 아닌 크기가 포함되어 있습니다: {invalid_sizes}")
+
+        norm_options: list[str] = st.multiselect(
+            "정규화 방식",
+            ["ImageNet", "커스텀"],
+            default=["ImageNet"],
+            key="ae_norm_options",
+        )
+        if "커스텀" in norm_options:
+            st.caption("ℹ️ 커스텀 정규화는 위 '전처리 영역'의 mean / std 값을 사용합니다.")
+
+        with st.expander("추가 공통 설정 (배치 크기 / 시드 / Threshold)"):
+            batch_sizes   = _ae_tag_int("배치 크기 (batch_size)", "batch_size", 16, 1, 128)
+            random_seeds  = _ae_tag_int("랜덤 시드 (random_seed)", "random_seed", 42, 0, 2_147_483_647)
+            threshold_methods: list[str] = st.multiselect(
+                "Threshold 방식",
+                ["percentile", "absolute"],
+                default=["percentile"],
+                key="ae_threshold_methods",
+            )
+            threshold_values = _ae_tag_float(
+                "Threshold 값", "threshold_value", 95.0, 0.0, 100.0, 0.5, "%.1f",
+            )
+
+    with col_model_params:
+        st.markdown(f"#### {ae_model_label} 파라미터")
+        if model_type == "efficientad":
+            model_grid = _ae_render_efficientad_params()
+        else:
+            model_grid = _ae_render_patchcore_params()
+
+    with col_preview:
+        st.markdown("#### 조합 미리보기")
+
+        # expander가 닫혀 있어도 session_state에 값이 보존됨
+        _batch_sizes  = st.session_state.get("ae_tags_batch_size",       [16])
+        _rand_seeds   = st.session_state.get("ae_tags_random_seed",      [42])
+        _thresh_meths = st.session_state.get("ae_threshold_methods",     ["percentile"])
+        _thresh_vals  = st.session_state.get("ae_tags_threshold_value",  [95.0])
+
+        param_grid: dict = {
+            "prep_method":      prep_methods   or ["none"],
+            "image_size":       image_sizes    or [256],
+            "norm":             norm_options   or ["ImageNet"],
+            "batch_size":       _batch_sizes   or [16],
+            "random_seed":      _rand_seeds    or [42],
+            "threshold_method": _thresh_meths  or ["percentile"],
+            "threshold_value":  _thresh_vals   or [95.0],
+        }
+        param_grid.update(model_grid)
+
+        combos = _ae_generate_combinations(param_grid)
+        n_combos = len(combos)
+
+        if n_combos == 0:
+            st.warning("유효한 조합이 없습니다. 각 파라미터에 1개 이상의 값을 지정해 주세요.")
+            return
+
+        if n_combos > 100:
+            st.warning(
+                f"총 {n_combos}개 조합이 생성됩니다. "
+                "선택지를 줄여 조합 수를 낮추는 것을 권장합니다."
+            )
+        else:
+            st.info(f"총 **{n_combos}**개 조합이 생성됩니다.")
+
+        combo_df = _ae_build_combo_df(combos, model_type)
+        combo_df.insert(0, "포함", True)
+
+        edited_df = st.data_editor(
+            combo_df,
+            hide_index=True,
+            use_container_width=True,
+            key="ae_combo_editor",
+            column_config={
+                "포함": st.column_config.CheckboxColumn("포함", default=True, width="small"),
+            },
+        )
+
+        selected_combos = [
+            combos[i]
+            for i, include in enumerate(edited_df["포함"])
+            if include
+        ]
+        n_selected = len(selected_combos)
+        st.caption(f"{n_selected} / {n_combos}개 조합 선택됨")
+
+        if st.button(
+            f"📋 선택된 {n_selected}개 조합 대기열에 추가",
+            disabled=(n_selected == 0),
+            type="primary",
+            key="ae_add_to_queue",
+            use_container_width=True,
+        ):
+            set_id = f"SET_{uuid.uuid4().hex[:8].upper()}"
+            q = list(st.session_state.get("experiment_queue", []))
+            for combo in selected_combos:
+                q.append(_ae_build_queue_item_from_combo(combo, model_type, set_id))
+            st.session_state["experiment_queue"] = q
+            st.success(
+                f"세트 [{set_id}]: {n_selected}개 실험이 대기열에 추가되었습니다. "
+                "탭3에서 일괄 학습을 시작하세요."
+            )

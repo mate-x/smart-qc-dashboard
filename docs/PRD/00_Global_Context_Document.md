@@ -120,7 +120,7 @@ clip_limit   FLOAT    NOT NULL   0.1 ~ 40.0 / 기본값: 2.0
 필드명                    타입      Nullable   범위/기본값
 ──────────────────────────────────────────────────────────────────
 model_size               ENUM      NOT NULL   "small" | "medium" / 기본값: "medium"
-train_steps              INTEGER   NOT NULL   1000 ~ 200000 / 기본값: 70000
+train_steps              INTEGER   NOT NULL   1 ~ 200000 / 기본값: 70000
 optimizer                ENUM      NOT NULL   "adam" | "adamw" | "sgd" / 기본값: "adam"
 learning_rate            FLOAT     NOT NULL   1e-6 ~ 1e-1 / 기본값: 0.0001
 weight_decay             FLOAT     NOT NULL   0.0 ~ 0.1 / 기본값: 0.0001

@@ -360,7 +360,7 @@
 | 파라미터 | Streamlit 컴포넌트 | 범위 | 기본값 |
 |----------|-------------------|------|--------|
 | model_size | `st.radio("모델 크기 (model_size)", ["small", "medium"], horizontal=True)` | enum | "medium" |
-| train_steps | `st.number_input("학습 단계 수 (train_steps)", 1000, 200000, 70000, 1000)` | 1000~200000 | 70000 |
+| train_steps | `st.number_input("학습 단계 수 (train_steps)", 1, 200000, 70000, 1)` | 1~200000 | 70000 |
 | optimizer | `st.selectbox("옵티마이저 (optimizer)", ["adam", "adamw", "sgd"])` | enum | "adam" |
 | learning_rate | `st.number_input("학습률 (learning_rate)", 1e-6, 1e-1, 1e-4, format="%.6f")` | 1e-6~1e-1 | 0.0001 |
 | weight_decay | `st.number_input("가중치 감쇠 (weight_decay)", 0.0, 0.1, 1e-4, format="%.6f")` | 0.0~0.1 | 0.0001 |

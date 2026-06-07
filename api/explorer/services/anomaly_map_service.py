@@ -346,6 +346,14 @@ def _build_zip_sync(exp_id: str, threshold: float, defect_class: str) -> bytes:
     return buf.getvalue()
 
 
+def get_build_status(exp_id: str) -> dict:
+    _get_experiment(exp_id)  # raises LookupError if not found
+    cache = _get_cache(exp_id)
+    if cache is None:
+        return {"built": False, "image_count": 0}
+    return {"built": True, "image_count": len(cache["image_paths"])}
+
+
 def get_zip_result(job_id: str) -> bytes:
     job = get_job(job_id)
     if job is None:

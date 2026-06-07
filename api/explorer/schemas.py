@@ -159,6 +159,11 @@ class ZipJobResponse(BaseModel):
     job_id: str
 
 
+class AnomalyMapStatusResponse(BaseModel):
+    built: bool
+    image_count: int
+
+
 # ---------------------------------------------------------------------------
 # 탭3 · Training
 # ---------------------------------------------------------------------------

@@ -558,8 +558,9 @@ async def _handle_completed(msg: dict) -> None:
     else:
         threshold = float(model_config.get("threshold_value", 0.5))
 
+    early_stopped = bool(msg.get("early_stopped", False))
     metrics = compute_metrics(y_true, anomaly_scores, threshold)
-    record  = _build_experiment_record(exp_id, "completed", metrics, msg.get("duration_seconds"))
+    record  = _build_experiment_record(exp_id, "completed", metrics, msg.get("duration_seconds"), early_stopped)
 
     batch_item_status = "완료"
     try:
@@ -590,6 +591,7 @@ async def _handle_completed(msg: dict) -> None:
             "auc":              round(auc, 4),
             "duration_seconds": secs,
             "message":          f"학습 완료. AUC: {auc:.4f} | {mins}분 {sec}초",
+            "early_stopped":    early_stopped,
         })
 
     except RuntimeError as e:
@@ -775,6 +777,7 @@ def _build_experiment_record(
     status: str,
     metrics: dict | None,
     duration_seconds: int | None,
+    early_stopped: bool = False,
 ) -> dict:
     state                = get_state()
     model_config: dict   = state["model_config"] or {}
@@ -804,6 +807,7 @@ def _build_experiment_record(
         "model_path":           None,
         "configs_path":         None,
         "set_id":               _run.get("set_id"),
+        "early_stopped":        early_stopped,
     }
 
     if status == "중단":

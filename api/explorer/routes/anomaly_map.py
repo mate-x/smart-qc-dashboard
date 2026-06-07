@@ -20,6 +20,7 @@ from fastapi.responses import Response, StreamingResponse
 
 from api.explorer.schemas import (
     AnomalyImagesResponse,
+    AnomalyMapStatusResponse,
     BuildAnomalyMapResponse,
     ImageRowResponse,
     JobStatusResponse,
@@ -27,6 +28,7 @@ from api.explorer.schemas import (
     ZipRequest,
 )
 from api.explorer.services.anomaly_map_service import (
+    get_build_status,
     get_csv,
     get_images,
     get_job_status,
@@ -68,6 +70,15 @@ def get_zip_route(job_id: str) -> StreamingResponse:
 
 
 # ── /{exp_id}/... 동적 경로 ──────────────────────────────────────────────────
+
+@router.get("/{exp_id}/status", summary="Anomaly Map 빌드 상태 조회")
+def get_status_route(exp_id: str) -> AnomalyMapStatusResponse:
+    try:
+        result = get_build_status(exp_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return AnomalyMapStatusResponse(**result)
+
 
 @router.post("/{exp_id}/build", summary="Anomaly Map 생성 job 시작")
 async def build_route(exp_id: str) -> BuildAnomalyMapResponse:

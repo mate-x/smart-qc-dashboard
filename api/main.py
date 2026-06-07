@@ -21,6 +21,7 @@ from api.explorer.routes.dataset import router as dataset_router
 from api.explorer.routes.config import router as config_router
 from api.explorer.routes.queue import router as queue_router
 from api.explorer.routes.anomaly_map import router as anomaly_map_router
+from api.explorer.routes.training import router as training_router
 
 app = FastAPI(
     title="스마트 QC 검사 API",
@@ -48,3 +49,4 @@ app.include_router(dataset_router)
 app.include_router(config_router)
 app.include_router(queue_router)
 app.include_router(anomaly_map_router)
+app.include_router(training_router)

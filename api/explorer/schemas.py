@@ -31,6 +31,7 @@ class ValidateDatasetResponse(BaseModel):
     has_invalid_files: bool
     invalid_file_count: int
     folder_tree: str
+    has_background_clean: bool        # {dataset_path}/background_clean/ 폴더 존재 여부
     # OK/NG 전용
     oking_ok_dir: str | None = None
     oking_ng_dir: str | None = None

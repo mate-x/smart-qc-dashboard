@@ -34,7 +34,7 @@ from api.explorer.services.anomaly_map_service import _set_cache
 from api.explorer.state import get_state
 from utils.checkpoint_manager import delete_checkpoint, list_checkpoints, load_checkpoint
 from utils.metrics import compute_metrics, compute_threshold
-from utils.storage import append_experiment, check_disk_before_save, save_completed_experiment
+from utils.storage import append_experiment, check_disk_space, save_completed_experiment
 from utils.training_worker import TrainingWorker
 
 KST = timezone(timedelta(hours=9))
@@ -186,7 +186,12 @@ def start_training(experiment_name: str) -> str:
     if not dataset_path:
         raise ValueError("dataset_path가 설정되지 않았습니다. 탭1에서 데이터셋을 검증하세요.")
 
-    check_disk_before_save(model_config["model_type"])
+    ok, free_mb = check_disk_space(required_mb=100.0)
+    if not ok:
+        raise RuntimeError(
+            f"ERR_DISK_SPACE: 디스크 여유 공간이 부족합니다 ({free_mb:.0f} MB). "
+            "모델 저장에 최소 100 MB가 필요합니다."
+        )
 
     if model_config.get("model_type") == "efficientad":
         use_imagenet = model_config.get("params", {}).get("use_imagenet_penalty", False)
@@ -555,7 +560,12 @@ async def _handle_completed(msg: dict) -> None:
 
     batch_item_status = "완료"
     try:
-        check_disk_before_save(model_config["model_type"])
+        ok, free_mb = check_disk_space(required_mb=100.0)
+        if not ok:
+            raise RuntimeError(
+                f"ERR_DISK_SPACE: 디스크 여유 공간이 부족합니다 ({free_mb:.0f} MB). "
+                "모델 저장에 최소 100 MB가 필요합니다."
+            )
         save_completed_experiment(
             exp_id, msg["model"], record,
             preprocessing_config=preprocessing_config,

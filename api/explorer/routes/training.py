@@ -36,14 +36,14 @@ from api.explorer.schemas import (
 )
 from api.explorer.services import training_service as svc
 
-router = APIRouter(prefix="/api/training", tags=["training"])
+router = APIRouter(prefix="/api/training", tags=["탭3 · 학습"])
 
 
 # ---------------------------------------------------------------------------
 # 단일 학습
 # ---------------------------------------------------------------------------
 
-@router.post("/start", response_model=StartTrainingResponse, status_code=201)
+@router.post("/start", response_model=StartTrainingResponse, status_code=201, summary="학습 시작")
 async def start_training(body: StartTrainingRequest):
     try:
         exp_id = svc.start_training(body.experiment_name)
@@ -54,7 +54,7 @@ async def start_training(body: StartTrainingRequest):
     return StartTrainingResponse(exp_id=exp_id)
 
 
-@router.post("/resume", response_model=StartTrainingResponse, status_code=201)
+@router.post("/resume", response_model=StartTrainingResponse, status_code=201, summary="체크포인트 재시작")
 async def resume_training(body: ResumeTrainingRequest):
     try:
         exp_id = svc.resume_training(body.checkpoint_name)
@@ -65,7 +65,7 @@ async def resume_training(body: ResumeTrainingRequest):
     return StartTrainingResponse(exp_id=exp_id)
 
 
-@router.post("/pause", response_model=TrainingControlResponse)
+@router.post("/pause", response_model=TrainingControlResponse, summary="일시정지")
 async def pause_training():
     try:
         svc.pause_training()
@@ -74,7 +74,7 @@ async def pause_training():
     return TrainingControlResponse(success=True, message="일시정지 신호를 전송했습니다.")
 
 
-@router.post("/unpause", response_model=TrainingControlResponse)
+@router.post("/unpause", response_model=TrainingControlResponse, summary="일시정지 해제")
 async def unpause_training():
     try:
         svc.unpause_training()
@@ -83,7 +83,7 @@ async def unpause_training():
     return TrainingControlResponse(success=True, message="학습을 재개합니다.")
 
 
-@router.post("/stop", response_model=TrainingControlResponse)
+@router.post("/stop", response_model=TrainingControlResponse, summary="학습 중단")
 async def stop_training():
     try:
         svc.stop_training()
@@ -92,7 +92,7 @@ async def stop_training():
     return TrainingControlResponse(success=True, message="중지 신호를 전송했습니다.")
 
 
-@router.get("/status", response_model=TrainingStatusResponse)
+@router.get("/status", response_model=TrainingStatusResponse, summary="현재 상태 조회")
 async def get_status():
     return TrainingStatusResponse(**svc.get_status())
 
@@ -101,13 +101,13 @@ async def get_status():
 # 체크포인트
 # ---------------------------------------------------------------------------
 
-@router.get("/checkpoints", response_model=CheckpointsResponse)
+@router.get("/checkpoints", response_model=CheckpointsResponse, summary="체크포인트 목록")
 async def list_checkpoints():
     items = svc.get_checkpoints()
     return CheckpointsResponse(checkpoints=items)
 
 
-@router.delete("/checkpoints/{name}", response_model=DeleteCheckpointResponse)
+@router.delete("/checkpoints/{name}", response_model=DeleteCheckpointResponse, summary="체크포인트 삭제")
 async def delete_checkpoint(name: str):
     try:
         ok = svc.remove_checkpoint(name)
@@ -120,7 +120,7 @@ async def delete_checkpoint(name: str):
 # 배치 학습
 # ---------------------------------------------------------------------------
 
-@router.post("/batch/start", response_model=BatchStartResponse, status_code=201)
+@router.post("/batch/start", response_model=BatchStartResponse, status_code=201, summary="배치 시작")
 async def batch_start():
     try:
         exp_id, batch_total = svc.start_batch()
@@ -131,7 +131,7 @@ async def batch_start():
     return BatchStartResponse(exp_id=exp_id, batch_total=batch_total)
 
 
-@router.post("/batch/skip", response_model=TrainingControlResponse)
+@router.post("/batch/skip", response_model=TrainingControlResponse, summary="현재 항목 건너뜀")
 async def batch_skip():
     try:
         svc.skip_batch_item()
@@ -140,7 +140,7 @@ async def batch_skip():
     return TrainingControlResponse(success=True, message="건너뜀 신호를 전송했습니다.")
 
 
-@router.post("/batch/stop", response_model=TrainingControlResponse)
+@router.post("/batch/stop", response_model=TrainingControlResponse, summary="전체 배치 중단")
 async def batch_stop():
     try:
         svc.stop_batch_all()

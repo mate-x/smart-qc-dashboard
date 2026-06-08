@@ -464,7 +464,7 @@ def _render_efficientad_params() -> dict:
         )
         train_steps = int(
             st.number_input(
-                "학습 단계 수 (train_steps)", 1000, 200_000, 70_000, 1000,
+                "학습 단계 수 (train_steps)", 1, 200_000, 70_000, 1,
                 key="tab2_ead_train_steps",
             )
         )

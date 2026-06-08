@@ -2,13 +2,16 @@
 api/explorer/routes/anomaly_map.py  — HTTP 레이어 전담
 
 탭5 · Anomaly Map:
-    POST /api/anomaly-map/{exp_id}/build                  Map 생성 job 시작
-    GET  /api/anomaly-map/job/{job_id}                    build/zip job 상태 조회
-    GET  /api/anomaly-map/{exp_id}/images                 이미지 목록 + 통계
-    GET  /api/anomaly-map/{exp_id}/image/{path:path}/triplet  triplet PNG
-    GET  /api/anomaly-map/{exp_id}/export/csv             CSV 다운로드
-    POST /api/anomaly-map/{exp_id}/export/zip             ZIP 생성 job 시작
-    GET  /api/anomaly-map/zip/{job_id}                    ZIP 다운로드
+    POST /api/anomaly-map/{exp_id}/build                   Map 생성 job 시작
+    GET  /api/anomaly-map/job/{job_id}                     build/zip job 상태 조회
+    GET  /api/anomaly-map/{exp_id}/images                  이미지 목록 + 통계
+    GET  /api/anomaly-map/{exp_id}/image/{path:path}/triplet   합성 triplet PNG
+    GET  /api/anomaly-map/{exp_id}/image/{path:path}/original  원본 이미지 PNG
+    GET  /api/anomaly-map/{exp_id}/image/{path:path}/gt_mask   GT 마스크 PNG (없으면 404)
+    GET  /api/anomaly-map/{exp_id}/image/{path:path}/heatmap   히트맵 PNG
+    GET  /api/anomaly-map/{exp_id}/export/csv              CSV 다운로드
+    POST /api/anomaly-map/{exp_id}/export/zip              ZIP 생성 job 시작
+    GET  /api/anomaly-map/zip/{job_id}                     ZIP 다운로드
 
 주의: 정적 prefix(/job/, /zip/)를 동적 /{exp_id}/ 보다 먼저 선언해야
 FastAPI가 정적 경로를 우선 매칭한다.
@@ -30,8 +33,11 @@ from api.explorer.schemas import (
 from api.explorer.services.anomaly_map_service import (
     get_build_status,
     get_csv,
+    get_heatmap_image,
+    get_gt_mask_image,
     get_images,
     get_job_status,
+    get_original_image,
     get_triplet_image,
     get_zip_result,
     start_build,
@@ -128,6 +134,54 @@ def get_triplet_route(exp_id: str, image_path: str) -> Response:
         raise HTTPException(status_code=404, detail=str(e))
 
     buf = pil_to_png_stream(triplet)
+    return Response(content=buf.read(), media_type="image/png")
+
+
+@router.get("/{exp_id}/image/{image_path:path}/original", summary="원본 이미지 PNG 반환")
+def get_original_route(exp_id: str, image_path: str) -> Response:
+    parts = image_path.rsplit("/", 1)
+    if len(parts) != 2:
+        raise HTTPException(status_code=400, detail="image_path 형식 오류 ('{class}/{filename}' 필요)")
+    class_name, image_name = parts
+    try:
+        img = get_original_image(exp_id, class_name, image_name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    buf = pil_to_png_stream(img)
+    return Response(content=buf.read(), media_type="image/png")
+
+
+@router.get("/{exp_id}/image/{image_path:path}/gt_mask", summary="GT 마스크 PNG 반환 (없으면 404)")
+def get_gt_mask_route(exp_id: str, image_path: str) -> Response:
+    parts = image_path.rsplit("/", 1)
+    if len(parts) != 2:
+        raise HTTPException(status_code=400, detail="image_path 형식 오류 ('{class}/{filename}' 필요)")
+    class_name, image_name = parts
+    try:
+        img = get_gt_mask_image(exp_id, class_name, image_name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    buf = pil_to_png_stream(img)
+    return Response(content=buf.read(), media_type="image/png")
+
+
+@router.get("/{exp_id}/image/{image_path:path}/heatmap", summary="히트맵 PNG 반환")
+def get_heatmap_route(exp_id: str, image_path: str) -> Response:
+    parts = image_path.rsplit("/", 1)
+    if len(parts) != 2:
+        raise HTTPException(status_code=400, detail="image_path 형식 오류 ('{class}/{filename}' 필요)")
+    class_name, image_name = parts
+    try:
+        img = get_heatmap_image(exp_id, class_name, image_name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    buf = pil_to_png_stream(img)
     return Response(content=buf.read(), media_type="image/png")
 
 

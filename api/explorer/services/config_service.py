@@ -38,6 +38,74 @@ def preview_threshold(threshold_method: str, threshold_value: float) -> dict:
     return {"normal_ratio": None, "defect_ratio": None}
 
 
+def preview_preprocessing_image(
+    dataset_path: str,
+    background_method: str,
+    method: str,
+    params: dict | None,
+    image_size: int,
+) -> dict:
+    """전처리 전/후 이미지를 base64 PNG로 반환."""
+    import base64
+    import io
+
+    import numpy as np
+    from PIL import Image
+
+    from utils.dataset_converter import detect_ok_ng_dirs
+    from utils.image_utils import SUPPORTED_FORMATS, apply_filter, resize_with_padding
+
+    root = __import__("pathlib").Path(dataset_path)
+    warning: str | None = None
+    sample_path = None
+
+    # SAM2 경로 우선 탐색
+    if background_method == "sam2":
+        bg_dir = root / "background_clean" / "train" / "good"
+        if bg_dir.is_dir():
+            imgs = sorted(f for f in bg_dir.iterdir() if f.suffix.lower() in SUPPORTED_FORMATS)
+            if imgs:
+                sample_path = imgs[0]
+        if sample_path is None:
+            warning = "SAM2 전처리 이미지를 찾을 수 없어 원본으로 표시합니다."
+
+    # MVTec: train/good/
+    if sample_path is None:
+        train_good = root / "train" / "good"
+        if train_good.is_dir():
+            imgs = sorted(f for f in train_good.iterdir() if f.suffix.lower() in SUPPORTED_FORMATS)
+            if imgs:
+                sample_path = imgs[0]
+
+    # OK/NG: OK 계열 폴더 자동 탐색
+    if sample_path is None:
+        ok_dir, _ = detect_ok_ng_dirs(root)
+        if ok_dir is not None:
+            imgs = sorted(f for f in ok_dir.iterdir() if f.suffix.lower() in SUPPORTED_FORMATS)
+            if imgs:
+                sample_path = imgs[0]
+
+    if sample_path is None:
+        raise ValueError("샘플 이미지를 찾을 수 없습니다.")
+
+    original = Image.open(sample_path).convert("RGB")
+    processed = apply_filter(original, method, params)
+
+    original_arr = resize_with_padding(original, image_size)
+    processed_arr = resize_with_padding(processed, image_size)
+
+    def _to_b64(arr: np.ndarray) -> str:
+        buf = io.BytesIO()
+        Image.fromarray(arr.astype(np.uint8)).save(buf, format="PNG")
+        return base64.b64encode(buf.getvalue()).decode()
+
+    return {
+        "original_b64":  _to_b64(original_arr),
+        "processed_b64": _to_b64(processed_arr),
+        "warning":       warning,
+    }
+
+
 def save_config_yaml() -> None:
     state = get_state()
     if not state["preprocessing_config"] and not state["model_config"]:

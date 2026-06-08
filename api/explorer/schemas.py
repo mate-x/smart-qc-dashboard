@@ -44,6 +44,20 @@ class ValidateDatasetResponse(BaseModel):
 # 탭2 · 설정
 # ---------------------------------------------------------------------------
 
+class PreviewImageRequest(BaseModel):
+    dataset_path: str
+    background_method: str = "none"
+    method: str
+    params: dict | None = None
+    image_size: int
+
+
+class PreviewImageResponse(BaseModel):
+    original_b64: str
+    processed_b64: str
+    warning: str | None = None
+
+
 class SaveConfigRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     preprocessing_config: dict

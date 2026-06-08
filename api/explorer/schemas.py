@@ -103,6 +103,15 @@ class DeleteQueueResponse(BaseModel):
     success: bool
 
 
+class ReorderQueueRequest(BaseModel):
+    item_id: str
+    direction: str  # "up" | "down"
+
+
+class ReorderQueueResponse(BaseModel):
+    success: bool
+
+
 # ---------------------------------------------------------------------------
 # 탭4 · 실험 히스토리
 # ---------------------------------------------------------------------------

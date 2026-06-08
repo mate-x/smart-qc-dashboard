@@ -46,3 +46,35 @@ def remove_from_queue(item_id: str) -> None:
             queue.pop(i)
             return
     raise LookupError(f"항목을 찾을 수 없습니다: {item_id}")
+
+
+def move_queue_item(item_id: str, direction: str) -> None:
+    """
+    대기중 항목을 위(up) 또는 아래(down)로 이동한다.
+    대기중 항목끼리의 상대 순서만 변경하며, 다른 상태 항목은 건너뛴다.
+
+    Raises:
+        LookupError: 항목 없음 또는 대기중 아님
+        ValueError:  direction 값이 잘못됨 또는 이미 경계
+    """
+    if direction not in ("up", "down"):
+        raise ValueError(f"direction은 'up' 또는 'down'이어야 합니다: {direction!r}")
+
+    queue = get_state()["experiment_queue"]
+    pending_indices = [i for i, item in enumerate(queue) if item["status"] == "대기중"]
+
+    for pos, idx in enumerate(pending_indices):
+        if queue[idx]["id"] == item_id:
+            if direction == "up":
+                if pos == 0:
+                    raise ValueError("이미 첫 번째 항목입니다.")
+                prev_idx = pending_indices[pos - 1]
+                queue[idx], queue[prev_idx] = queue[prev_idx], queue[idx]
+            else:
+                if pos == len(pending_indices) - 1:
+                    raise ValueError("이미 마지막 항목입니다.")
+                next_idx = pending_indices[pos + 1]
+                queue[idx], queue[next_idx] = queue[next_idx], queue[idx]
+            return
+
+    raise LookupError(f"대기중 항목을 찾을 수 없습니다: {item_id}")

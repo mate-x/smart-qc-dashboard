@@ -2,9 +2,10 @@
 api/explorer/routes/queue.py  — HTTP 레이어 전담
 
 탭2 · 큐:
-    GET    /api/queue         대기열 전체 조회
-    POST   /api/queue         항목 추가
-    DELETE /api/queue/{id}    항목 삭제 ("대기중" 상태만 가능)
+    GET    /api/queue           대기열 전체 조회
+    POST   /api/queue           항목 추가
+    DELETE /api/queue/{id}      항목 삭제 ("대기중" 상태만 가능)
+    PATCH  /api/queue/reorder   항목 순서 변경 ("대기중" 항목만)
 """
 from __future__ import annotations
 
@@ -15,10 +16,13 @@ from api.explorer.schemas import (
     AddQueueResponse,
     DeleteQueueResponse,
     QueueItemResponse,
+    ReorderQueueRequest,
+    ReorderQueueResponse,
 )
 from api.explorer.services.queue_service import (
     add_to_queue,
     get_queue,
+    move_queue_item,
     remove_from_queue,
 )
 
@@ -45,3 +49,14 @@ def delete_queue_route(item_id: str) -> DeleteQueueResponse:
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return DeleteQueueResponse(success=True)
+
+
+@router.patch("/reorder", summary="대기열 순서 변경")
+def reorder_queue_route(body: ReorderQueueRequest) -> ReorderQueueResponse:
+    try:
+        move_queue_item(body.item_id, body.direction)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return ReorderQueueResponse(success=True)

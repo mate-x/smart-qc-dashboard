@@ -24,45 +24,75 @@ _DEFAULT_TRAIN_RATIO = 0.8
 
 def render() -> None:
     st.header("탭1. 데이터 폴더 구조")
-    _render_path_input()
 
     dataset_meta = st.session_state.get("dataset_meta")
+
+    # 상단: 경로 입력(좌) + 폴더 구조(우)
+    col_left, col_right = st.columns(2)
+
+    with col_left:
+        _render_path_input()
+
+        st.text_input(
+            "검사 제품 입력 (ex. screw)",
+            placeholder="예: screw, bolt, pill ...",
+            key="product_name",
+        )
+
+        # background_clean 준비 상태 표시
+        if dataset_meta is not None:
+            bg_clean = Path(st.session_state["dataset_path"]) / "background_clean"
+            if bg_clean.is_dir():
+                st.success("배경 분리 이미지 준비됨 (background_clean/ ✅)")
+            else:
+                st.info("배경 분리 이미지 없음 (background_clean/ ❌)")
+
+        if dataset_meta is not None:
+            # FR-T1-06: Grayscale 감지 안내
+            if dataset_meta["channels"] == 1:
+                st.info(MSG["GRAYSCALE_DETECT"])
+
+            # FR-T1-07: 지원 포맷 외 파일 경고
+            if dataset_meta["has_invalid_files"]:
+                n = dataset_meta.get("_invalid_file_count", 0)
+                st.warning(f"지원하지 않는 파일 {n}개가 발견되었습니다. 학습에서 제외됩니다.")
+
+            # OK/NG 형식 안내 배너
+            if dataset_meta.get("dataset_format") == "oking":
+                train_n   = dataset_meta["train_good_count"]
+                ok_total  = dataset_meta.get("_oking_ok_count", 0)
+                ng_total  = dataset_meta.get("_oking_ng_count", 0)
+                ratio_pct = int(_DEFAULT_TRAIN_RATIO * 100)
+                st.info(
+                    f"**OK/NG 형식으로 로드됩니다.**  \n"
+                    f"OK {ok_total:,}장 중 {ratio_pct}% ({train_n:,}장)을 학습에, "
+                    f"나머지 {ok_total - train_n:,}장을 테스트(정상)에 사용합니다.  \n"
+                    f"NG {ng_total}장은 테스트(불량)로 사용합니다."
+                )
+
+    with col_right:
+        if dataset_meta is not None:
+            # FR-T1-03: 폴더 구조 트리
+            st.subheader("폴더 구조")
+            tree = _build_tree_text(Path(st.session_state["dataset_path"]), dataset_meta)
+            st.code(tree, language=None)
+
     if dataset_meta is None:
         return
 
-    # FR-T1-06: Grayscale 감지 안내
-    if dataset_meta["channels"] == 1:
-        st.info(MSG["GRAYSCALE_DETECT"])
+    st.divider()
 
-    # FR-T1-07: 지원 포맷 외 파일 경고 (S)
-    if dataset_meta["has_invalid_files"]:
-        n = dataset_meta.get("_invalid_file_count", 0)
-        st.warning(f"지원하지 않는 파일 {n}개가 발견되었습니다. 학습에서 제외됩니다.")
+    # 하단: 대표 썸네일(좌) + 클래스별 이미지 수 테이블(우)
+    col_thumb, col_table = st.columns(2)
 
-    # OK/NG 형식 안내 배너
-    if dataset_meta.get("dataset_format") == "oking":
-        train_n    = dataset_meta["train_good_count"]
-        ok_total   = dataset_meta.get("_oking_ok_count", 0)
-        ng_total   = dataset_meta.get("_oking_ng_count", 0)
-        ratio_pct  = int(_DEFAULT_TRAIN_RATIO * 100)
-        st.info(
-            f"**OK/NG 형식으로 로드됩니다.**  \n"
-            f"OK {ok_total:,}장 중 {ratio_pct}% ({train_n:,}장)을 학습에, "
-            f"나머지 {ok_total - train_n:,}장을 테스트(정상)에 사용합니다.  \n"
-            f"NG {ng_total}장은 테스트(불량)로 사용합니다."
-        )
+    with col_thumb:
+        # FR-T1-05: 대표 썸네일
+        _render_thumbnails(Path(st.session_state["dataset_path"]), dataset_meta)
 
-    # FR-T1-03: 폴더 구조 트리
-    st.subheader("폴더 구조")
-    tree = _build_tree_text(Path(st.session_state["dataset_path"]), dataset_meta)
-    st.code(tree, language=None)
-
-    # FR-T1-04: 클래스별 이미지 수 테이블
-    st.subheader("클래스별 이미지 수")
-    st.dataframe(_build_count_table(dataset_meta), use_container_width=True)
-
-    # FR-T1-05: 대표 썸네일
-    _render_thumbnails(Path(st.session_state["dataset_path"]), dataset_meta)
+    with col_table:
+        # FR-T1-04: 클래스별 이미지 수 테이블
+        st.subheader("클래스별 이미지수")
+        st.dataframe(_build_count_table(dataset_meta), use_container_width=True)
 
 
 # ---------------------------------------------------------------------------
@@ -401,8 +431,8 @@ def _render_thumbnails(root: Path, meta: dict) -> None:
     if not classes:
         return
     test_dir = root / "test"
-    for row_start in range(0, len(classes), 4):
-        row_classes = classes[row_start : row_start + 4]
+    for row_start in range(0, len(classes), 3):
+        row_classes = classes[row_start : row_start + 3]
         cols = st.columns(len(row_classes))
         for col, cls_name in zip(cols, row_classes):
             cls_dir = test_dir / cls_name

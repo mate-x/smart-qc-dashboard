@@ -7,6 +7,7 @@ SESSION_STATE_SCHEMA: dict = {
     # 탭1 Write
     "dataset_path": None,           # str | None
     "dataset_meta": None,           # dict | None  (00_Global_Context 1.5절)
+    "product_name": "",             # str — 검사 제품명 (탭1 입력, 실험 레코드에 저장)
 
     # 탭2 Write
     "preprocessing_config": None,   # dict | None  (00_Global_Context 1.6절)

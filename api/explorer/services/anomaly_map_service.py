@@ -232,16 +232,19 @@ def _build_table_rows(
 
 
 # ---------------------------------------------------------------------------
-# Triplet image
+# Triplet / individual images
 # ---------------------------------------------------------------------------
 
-def get_triplet_image(exp_id: str, class_name: str, image_name: str) -> Image.Image:
+def _resolve_image_components(
+    exp_id: str, class_name: str, image_name: str,
+) -> tuple[Image.Image, Image.Image | None, Image.Image]:
+    """원본 · GT마스크(없으면 None) · 히트맵(윤곽선 포함) 반환."""
     cache = _get_cache(exp_id)
     if cache is None:
         raise ValueError("Anomaly Map 캐시가 없습니다. 먼저 build를 실행하세요.")
 
-    exp = _get_experiment(exp_id)
-    image_paths: list[str]  = cache["image_paths"]
+    exp              = _get_experiment(exp_id)
+    image_paths: list[str]   = cache["image_paths"]
     anomaly_maps: np.ndarray = cache["anomaly_maps"]
     dataset_path: str        = exp.get("dataset_path", "")
 
@@ -261,7 +264,29 @@ def get_triplet_image(exp_id: str, class_name: str, image_name: str) -> Image.Im
     if gt_mask_pil is not None:
         heatmap = _overlay_contour(heatmap, gt_mask_pil)
 
+    return original, gt_mask_pil, heatmap
+
+
+def get_triplet_image(exp_id: str, class_name: str, image_name: str) -> Image.Image:
+    original, gt_mask_pil, heatmap = _resolve_image_components(exp_id, class_name, image_name)
     return create_triplet_image(original, gt_mask_pil, heatmap)
+
+
+def get_original_image(exp_id: str, class_name: str, image_name: str) -> Image.Image:
+    original, _, _ = _resolve_image_components(exp_id, class_name, image_name)
+    return original
+
+
+def get_gt_mask_image(exp_id: str, class_name: str, image_name: str) -> Image.Image:
+    _, gt_mask_pil, _ = _resolve_image_components(exp_id, class_name, image_name)
+    if gt_mask_pil is None:
+        raise LookupError("GT 마스크 파일이 없습니다.")
+    return gt_mask_pil
+
+
+def get_heatmap_image(exp_id: str, class_name: str, image_name: str) -> Image.Image:
+    _, _, heatmap = _resolve_image_components(exp_id, class_name, image_name)
+    return heatmap
 
 
 # ---------------------------------------------------------------------------

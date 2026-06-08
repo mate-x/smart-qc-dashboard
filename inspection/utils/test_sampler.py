@@ -26,10 +26,10 @@ def build_test_pool(
 ) -> list[tuple[str, str]]:
     """
     dataset_path/test/ 하위 이미지 스캔 → (절대경로, gt_label) 리스트.
+    background_method == "sam2" 이면 background_clean/test/ 를 우선 사용.
+    해당 폴더가 없으면 dataset_path/test/ 로 fallback.
     gt_label: "양품" (good/) | "불량" (기타 클래스) — A-17 레이블 규칙.
 
-    background_method == "sam2" 이면 dataset_path/background_clean/test/ 를 우선 사용.
-    해당 폴더가 없으면 dataset_path/test/ 로 fallback.
     반환 전 random.shuffle() 1회 적용.
 
     Raises:

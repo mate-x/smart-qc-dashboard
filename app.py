@@ -23,6 +23,7 @@ st.set_page_config(
 init_session_state()
 render_sidebar()
 
+# TODO: [삭제 예정] 비전검사 대시보드가 React 앱으로 이전됨 — inspection 라우팅 전체 제거
 if st.session_state.active_dashboard == "inspection":
     from inspection.inspection_app import render as render_inspection
     render_inspection()

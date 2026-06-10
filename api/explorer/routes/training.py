@@ -46,12 +46,12 @@ router = APIRouter(prefix="/api/training", tags=["탭3 · 학습"])
 @router.post("/start", response_model=StartTrainingResponse, status_code=201, summary="학습 시작")
 async def start_training(body: StartTrainingRequest):
     try:
-        exp_id = svc.start_training(body.experiment_name)
+        exp_id, model_type = svc.start_training(body.experiment_name)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
-    return StartTrainingResponse(exp_id=exp_id)
+    return StartTrainingResponse(exp_id=exp_id, model_type=model_type)
 
 
 @router.post("/resume", response_model=StartTrainingResponse, status_code=201, summary="체크포인트 재시작")
@@ -123,12 +123,12 @@ async def delete_checkpoint(name: str):
 @router.post("/batch/start", response_model=BatchStartResponse, status_code=201, summary="배치 시작")
 async def batch_start():
     try:
-        exp_id, batch_total = svc.start_batch()
+        exp_id, batch_total, model_type = svc.start_batch()
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
-    return BatchStartResponse(exp_id=exp_id, batch_total=batch_total)
+    return BatchStartResponse(exp_id=exp_id, batch_total=batch_total, model_type=model_type)
 
 
 @router.post("/batch/skip", response_model=TrainingControlResponse, summary="현재 항목 건너뜀")

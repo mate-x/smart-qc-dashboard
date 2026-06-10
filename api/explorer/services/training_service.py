@@ -60,6 +60,7 @@ _run: dict = {
     "log_lines":          [],       # 최근 100줄
     "loss_history":       [],
     "last_ckpt_path":     None,
+    "model_type":         None,
     # 배치 상태 (배치 흐름이 직접 관리 — _reset_run_state에서 초기화 안 함)
     "batch_mode":         False,
     "batch_total":        0,
@@ -128,6 +129,7 @@ def get_status() -> dict:
         "log_lines":          list(_run["log_lines"]),
         "loss_history":       list(_run["loss_history"]),
         "last_ckpt_path":     _run["last_ckpt_path"],
+        "model_type":         _run.get("model_type"),
     }
 
 
@@ -217,7 +219,7 @@ def start_training(experiment_name: str) -> str:
         dataset_path=dataset_path,
         device=device,
     )
-    return exp_id
+    return exp_id, _run["model_type"]
 
 
 def resume_training(checkpoint_name: str) -> str:
@@ -323,7 +325,7 @@ def stop_training() -> None:
 # Public — 배치 학습
 # ---------------------------------------------------------------------------
 
-def start_batch() -> tuple[str, int]:
+def start_batch() -> tuple[str, int, str]:
     """배치 학습 시작. (first_exp_id, batch_total) 반환."""
     if _run["status"] != "idle":
         raise RuntimeError("이미 학습이 진행 중입니다.")
@@ -362,7 +364,7 @@ def start_batch() -> tuple[str, int]:
         dataset_path=state["dataset_path"],
         device=device,
     )
-    return exp_id, _run["batch_total"]
+    return exp_id, _run["batch_total"], _run["model_type"]
 
 
 def skip_batch_item() -> None:
@@ -427,6 +429,7 @@ def _start_worker(
     worker.start()
 
     _run["status"]             = "running"
+    _run["model_type"]         = model_config.get("model_type", "")
     _run["exp_id"]             = exp_id
     _run["experiment_name"]    = experiment_name
     _run["created_at"]         = created_at
@@ -719,9 +722,10 @@ async def _advance_batch_queue() -> None:
         device=device,
     )
     await _broadcast({
-        "type":      "batch_item_started",
-        "exp_id":    exp_id,
-        "queue_idx": next_idx,
+        "type":       "batch_item_started",
+        "exp_id":     exp_id,
+        "queue_idx":  next_idx,
+        "model_type": model_config.get("model_type", ""),
     })
 
 
@@ -766,6 +770,7 @@ def _reset_run_state() -> None:
     _run["current_stage_idx"]  = None
     _run["current_stage_name"] = None
     _run["batch_skip_current"] = False
+    _run["model_type"]         = None
 
 
 # ---------------------------------------------------------------------------

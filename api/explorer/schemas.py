@@ -205,6 +205,7 @@ class ResumeTrainingRequest(BaseModel):
 
 class StartTrainingResponse(BaseModel):
     exp_id: str
+    model_type: str | None = None
 
 
 class TrainingControlResponse(BaseModel):
@@ -244,8 +245,10 @@ class TrainingStatusResponse(BaseModel):
     log_lines: list[str] = []
     loss_history: list[dict] = []
     last_ckpt_path: str | None = None
+    model_type: str | None = None
 
 
 class BatchStartResponse(BaseModel):
     exp_id: str
     batch_total: int
+    model_type: str | None = None

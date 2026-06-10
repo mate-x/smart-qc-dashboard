@@ -332,7 +332,7 @@ def start_batch() -> tuple[str, int, str]:
 
     state       = get_state()
     queue_items = state["experiment_queue"]
-    pending     = [(i, item) for i, item in enumerate(queue_items) if item.get("status") == "대기중"]
+    pending     = [(i, item) for i, item in enumerate(queue_items) if item.get("status") == "pending"]
 
     if not pending:
         raise ValueError("대기중인 항목이 없습니다.")
@@ -346,7 +346,7 @@ def start_batch() -> tuple[str, int, str]:
     _run["batch_skip_current"]    = False
 
     first_idx, first_item = pending[0]
-    queue_items[first_idx] = {**queue_items[first_idx], "status": "진행중"}
+    queue_items[first_idx] = {**queue_items[first_idx], "status": "running"}
 
     model_config         = first_item.get("model_cfg", {})
     preprocessing_config = first_item.get("preprocessing_config", {})
@@ -565,7 +565,7 @@ async def _handle_completed(msg: dict) -> None:
     metrics = compute_metrics(y_true, anomaly_scores, threshold)
     record  = _build_experiment_record(exp_id, "completed", metrics, msg.get("duration_seconds"), early_stopped)
 
-    batch_item_status = "완료"
+    batch_item_status = "completed"
     try:
         ok, free_mb = check_disk_space(required_mb=100.0)
         if not ok:
@@ -598,7 +598,7 @@ async def _handle_completed(msg: dict) -> None:
         })
 
     except RuntimeError as e:
-        batch_item_status = "실패"
+        batch_item_status = "failed"
         await _broadcast({"type": "error", "message": str(e), "traceback": ""})
 
     finally:
@@ -621,7 +621,7 @@ async def _handle_error(msg: dict) -> None:
     batch_mode = _run["batch_mode"]
 
     if batch_mode:
-        _mark_batch_item("실패")
+        _mark_batch_item("failed")
         _save_batch_item_to_history("실패")
         await _broadcast({"type": "batch_item_error", "traceback": tb[:300]})
         _reset_run_state()
@@ -653,7 +653,7 @@ async def _handle_stopped(msg: dict) -> None:
             pass
 
     if batch_skip:
-        _mark_batch_item("건너뜀")
+        _mark_batch_item("skipped")
         _run["batch_skip_current"]    = False
         _run["batch_advance_pending"] = False
         await _broadcast({"type": "batch_item_skipped"})
@@ -662,7 +662,7 @@ async def _handle_stopped(msg: dict) -> None:
 
     elif _run["batch_stopping"]:
         # stop_batch_all()로 인한 전체 중단
-        _mark_batch_item("중단")
+        _mark_batch_item("stopped")
         _run["batch_mode"]     = False
         _run["batch_stopping"] = False
         await _broadcast({"type": "batch_stopped", "step": step})
@@ -670,7 +670,7 @@ async def _handle_stopped(msg: dict) -> None:
 
     elif _run["batch_mode"]:
         # 배치 중 단일 stop 명령
-        _mark_batch_item("중단")
+        _mark_batch_item("stopped")
         _run["batch_mode"] = False
         await _broadcast({"type": "stopped", "step": step})
         _reset_run_state()
@@ -687,12 +687,12 @@ async def _handle_stopped(msg: dict) -> None:
 async def _advance_batch_queue() -> None:
     state       = get_state()
     queue_items = state["experiment_queue"]
-    pending     = [(i, item) for i, item in enumerate(queue_items) if item.get("status") == "대기중"]
+    pending     = [(i, item) for i, item in enumerate(queue_items) if item.get("status") == "pending"]
 
     if not pending:
-        completed = sum(1 for item in queue_items if item.get("status") == "완료")
-        failed    = sum(1 for item in queue_items if item.get("status") == "실패")
-        skipped   = sum(1 for item in queue_items if item.get("status") == "건너뜀")
+        completed = sum(1 for item in queue_items if item.get("status") == "completed")
+        failed    = sum(1 for item in queue_items if item.get("status") == "failed")
+        skipped   = sum(1 for item in queue_items if item.get("status") == "skipped")
         _run["batch_mode"] = False
         await _broadcast({
             "type":      "batch_completed",
@@ -703,7 +703,7 @@ async def _advance_batch_queue() -> None:
         return
 
     next_idx, next_item = pending[0]
-    queue_items[next_idx] = {**queue_items[next_idx], "status": "진행중"}
+    queue_items[next_idx] = {**queue_items[next_idx], "status": "running"}
 
     model_config         = next_item.get("model_cfg", {})
     preprocessing_config = next_item.get("preprocessing_config", {})
@@ -736,7 +736,7 @@ async def _advance_batch_queue() -> None:
 def _mark_batch_item(status: str) -> None:
     queue_items = get_state()["experiment_queue"]
     for i, item in enumerate(queue_items):
-        if item.get("status") == "진행중":
+        if item.get("status") == "running":
             queue_items[i] = {**item, "status": status}
             break
 

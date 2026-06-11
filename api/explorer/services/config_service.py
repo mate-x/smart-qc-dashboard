@@ -150,10 +150,10 @@ def load_config_yaml() -> dict:
 # Internal
 # ---------------------------------------------------------------------------
 
-def _detect_device_once() -> dict:
-    """GPU/CPU 정보를 최초 1회만 감지하고 state에 캐싱."""
+def _detect_device_once(force: bool = False) -> dict:
+    """GPU/CPU 정보 감지 후 state에 캐싱. force=True 시 캐시 무시하고 재감지."""
     state = get_state()
-    if state["device_info"] is not None:
+    if not force and state["device_info"] is not None:
         return state["device_info"]
 
     try:
@@ -171,5 +171,22 @@ def _detect_device_once() -> dict:
     except Exception:
         device_info = {"device": "cpu", "gpu_name": None, "vram_gb": None}
 
+    try:
+        import openvino  # noqa: F401
+        device_info["openvino_available"] = True
+    except ImportError:
+        device_info["openvino_available"] = False
+
+    try:
+        import tensorrt  # noqa: F401
+        device_info["trt_available"] = True
+    except ImportError:
+        device_info["trt_available"] = False
+
     state["device_info"] = device_info
     return device_info
+
+
+def refresh_device_info() -> dict:
+    """device_info 캐시를 초기화하고 재감지."""
+    return _detect_device_once(force=True)

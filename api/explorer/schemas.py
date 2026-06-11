@@ -130,18 +130,22 @@ class ReorderQueueResponse(BaseModel):
 # 탭4 · 실험 히스토리
 # ---------------------------------------------------------------------------
 
-class SaveModelRequest(BaseModel):
-    save_path: str
-
-
-class SaveModelResponse(BaseModel):
-    success: bool
-    saved_path: str
-    size_mb: float
-    warning: str | None = None
-
 class DeleteExperimentResponse(BaseModel):
     success: bool
+
+
+class ExportRequest(BaseModel):
+    format: str  # "onnx" | "openvino" | "trt"
+
+
+class ExportResponse(BaseModel):
+    job_id: str
+
+
+class ExportJobStatusResponse(BaseModel):
+    status: str               # "pending" | "running" | "completed" | "failed"
+    error: str | None = None
+    result: dict | None = None  # 완료 시: {"saved_path": str, "format": str}
 
 
 # ---------------------------------------------------------------------------

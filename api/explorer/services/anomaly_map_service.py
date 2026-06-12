@@ -36,6 +36,8 @@ from utils.image_utils import (
     build_gt_mask_path,
     create_triplet_image,
     load_image,
+    make_anomaly_overlay,
+    make_predicted_mask,
 )
 from utils.storage import load_history
 
@@ -160,9 +162,10 @@ def get_images(exp_id: str, threshold: float, defect_class: str) -> dict:
 
     exp = _get_experiment(exp_id)
     metrics = exp.get("metrics") or {}
-    anomaly_scores_raw: list[float] = metrics.get("anomaly_scores", [])
-    image_labels: list[int]         = metrics.get("image_labels", [])
-    image_paths: list[str]          = cache["image_paths"]
+    dataset_path: str                = exp.get("dataset_path", "")
+    anomaly_scores_raw: list[float]  = metrics.get("anomaly_scores", [])
+    image_labels: list[int]          = metrics.get("image_labels", [])
+    image_paths: list[str]           = cache["image_paths"]
 
     # Min-Max 정규화 (0~1)
     arr = np.array(anomaly_scores_raw, dtype=np.float64)
@@ -175,7 +178,7 @@ def get_images(exp_id: str, threshold: float, defect_class: str) -> dict:
     else:
         anomaly_scores_norm = [0.0] * len(anomaly_scores_raw)
 
-    rows = _build_table_rows(image_paths, anomaly_scores_norm, image_labels, threshold)
+    rows = _build_table_rows(image_paths, anomaly_scores_norm, image_labels, threshold, dataset_path)
 
     if defect_class != "전체":
         rows = [r for r in rows if r["defect_class"] == defect_class]
@@ -201,6 +204,7 @@ def _build_table_rows(
     anomaly_scores: list[float],
     image_labels: list[int],
     threshold: float,
+    dataset_path: str,
 ) -> list[dict]:
     n = min(len(image_paths), len(anomaly_scores), len(image_labels))
     rows = []
@@ -219,6 +223,7 @@ def _build_table_rows(
             cls = "TP"
 
         p = Path(image_paths[i])
+        gt_path = build_gt_mask_path(image_paths[i], dataset_path)
         rows.append({
             "image_name":     p.name,
             "defect_class":   p.parent.name,
@@ -227,6 +232,7 @@ def _build_table_rows(
             "gt_match":       cls in ("TN", "TP"),
             "classification": cls,
             "image_path":     f"{p.parent.name}/{p.name}",
+            "has_gt_mask":    gt_path.exists(),
         })
     return rows
 
@@ -267,9 +273,97 @@ def _resolve_image_components(
     return original, gt_mask_pil, heatmap
 
 
-def get_triplet_image(exp_id: str, class_name: str, image_name: str) -> Image.Image:
-    original, gt_mask_pil, heatmap = _resolve_image_components(exp_id, class_name, image_name)
-    return create_triplet_image(original, gt_mask_pil, heatmap)
+def _get_score_range(exp_id: str) -> tuple[float, float]:
+    """experiment metrics의 anomaly_scores에서 s_min, s_max 반환."""
+    exp = _get_experiment(exp_id)
+    scores = (exp.get("metrics") or {}).get("anomaly_scores", [])
+    if not scores:
+        return 0.0, 1.0
+    arr = np.array(scores, dtype=np.float64)
+    return float(arr.min()), float(arr.max())
+
+
+def get_triplet_image(
+    exp_id: str, class_name: str, image_name: str, threshold: float
+) -> Image.Image:
+    """원본 / Overlay / Predicted Mask 3개를 가로로 이어 붙인 단일 PIL Image."""
+    cache = _get_cache(exp_id)
+    if cache is None:
+        raise ValueError("Anomaly Map 캐시가 없습니다. 먼저 build를 실행하세요.")
+
+    image_paths: list[str]   = cache["image_paths"]
+    anomaly_maps: np.ndarray = cache["anomaly_maps"]
+
+    target = (class_name, image_name)
+    idx = next(
+        (i for i, p in enumerate(image_paths)
+         if (Path(p).parent.name, Path(p).name) == target),
+        None,
+    )
+    if idx is None:
+        raise LookupError(f"이미지를 찾을 수 없습니다: {class_name}/{image_name}")
+
+    s_min, s_max = _get_score_range(exp_id)
+    original  = load_image(image_paths[idx])
+    overlay   = make_anomaly_overlay(image_paths[idx], anomaly_maps[idx], threshold, s_min, s_max)
+    w, h      = original.size
+    predicted = make_predicted_mask(anomaly_maps[idx], threshold, s_min, s_max, target_size=(w, h))
+
+    triplet = Image.new("RGB", (w * 3, h))
+    triplet.paste(original,  (0,     0))
+    triplet.paste(overlay,   (w,     0))
+    triplet.paste(predicted, (w * 2, 0))
+    return triplet
+
+
+def get_overlay_image(
+    exp_id: str, class_name: str, image_name: str, threshold: float
+) -> Image.Image:
+    """threshold 초과 픽셀에 빨간 반투명 오버레이를 합성한 PIL Image."""
+    cache = _get_cache(exp_id)
+    if cache is None:
+        raise ValueError("Anomaly Map 캐시가 없습니다. 먼저 build를 실행하세요.")
+
+    image_paths: list[str]   = cache["image_paths"]
+    anomaly_maps: np.ndarray = cache["anomaly_maps"]
+
+    target = (class_name, image_name)
+    idx = next(
+        (i for i, p in enumerate(image_paths)
+         if (Path(p).parent.name, Path(p).name) == target),
+        None,
+    )
+    if idx is None:
+        raise LookupError(f"이미지를 찾을 수 없습니다: {class_name}/{image_name}")
+
+    s_min, s_max = _get_score_range(exp_id)
+    return make_anomaly_overlay(image_paths[idx], anomaly_maps[idx], threshold, s_min, s_max)
+
+
+def get_predicted_mask_image(
+    exp_id: str, class_name: str, image_name: str, threshold: float
+) -> Image.Image:
+    """threshold 초과 픽셀 흰색, 이하 검정 이진 마스크 PIL Image."""
+    cache = _get_cache(exp_id)
+    if cache is None:
+        raise ValueError("Anomaly Map 캐시가 없습니다. 먼저 build를 실행하세요.")
+
+    image_paths: list[str]   = cache["image_paths"]
+    anomaly_maps: np.ndarray = cache["anomaly_maps"]
+
+    target = (class_name, image_name)
+    idx = next(
+        (i for i, p in enumerate(image_paths)
+         if (Path(p).parent.name, Path(p).name) == target),
+        None,
+    )
+    if idx is None:
+        raise LookupError(f"이미지를 찾을 수 없습니다: {class_name}/{image_name}")
+
+    original = load_image(image_paths[idx])
+    w, h = original.size
+    s_min, s_max = _get_score_range(exp_id)
+    return make_predicted_mask(anomaly_maps[idx], threshold, s_min, s_max, target_size=(w, h))
 
 
 def get_original_image(exp_id: str, class_name: str, image_name: str) -> Image.Image:
@@ -305,36 +399,48 @@ def get_csv(exp_id: str, threshold: float, defect_class: str) -> bytes:
 # ZIP (async)
 # ---------------------------------------------------------------------------
 
-async def start_zip(exp_id: str, threshold: float, defect_class: str) -> str:
+async def start_zip(
+    exp_id: str, threshold: float, defect_class: str, verdict_filter: str = "전체"
+) -> str:
     if _get_cache(exp_id) is None:
         raise ValueError("Anomaly Map 캐시가 없습니다. 먼저 build를 실행하세요.")
 
     job_id = create_job("zip")
-    asyncio.create_task(_run_zip(job_id, exp_id, threshold, defect_class))
+    asyncio.create_task(_run_zip(job_id, exp_id, threshold, defect_class, verdict_filter))
     return job_id
 
 
-async def _run_zip(job_id: str, exp_id: str, threshold: float, defect_class: str) -> None:
+async def _run_zip(
+    job_id: str, exp_id: str, threshold: float, defect_class: str, verdict_filter: str
+) -> None:
     set_running(job_id)
     try:
-        zip_bytes = await asyncio.to_thread(_build_zip_sync, exp_id, threshold, defect_class)
+        zip_bytes = await asyncio.to_thread(
+            _build_zip_sync, exp_id, threshold, defect_class, verdict_filter
+        )
         set_completed(job_id, result=zip_bytes)
     except Exception as e:
         set_failed(job_id, str(e))
 
 
-def _build_zip_sync(exp_id: str, threshold: float, defect_class: str) -> bytes:
+def _build_zip_sync(
+    exp_id: str, threshold: float, defect_class: str, verdict_filter: str
+) -> bytes:
     cache = _get_cache(exp_id)
     if cache is None:
         raise ValueError("Anomaly Map 캐시가 없습니다.")
 
-    exp                      = _get_experiment(exp_id)
-    dataset_path: str        = exp.get("dataset_path", "")
-    image_paths: list[str]   = cache["image_paths"]
-    anomaly_maps: np.ndarray = cache["anomaly_maps"]
+    exp           = _get_experiment(exp_id)
+    dataset_path  = exp.get("dataset_path", "")
+    image_paths   = cache["image_paths"]
+    anomaly_maps  = cache["anomaly_maps"]
+    s_min, s_max  = _get_score_range(exp_id)
 
     result = get_images(exp_id, threshold, defect_class)
     rows   = result["images"]
+
+    if verdict_filter != "전체":
+        rows = [r for r in rows if r["verdict"] == verdict_filter]
 
     path_to_idx = {
         f"{Path(p).parent.name}/{Path(p).name}": i
@@ -349,23 +455,35 @@ def _build_zip_sync(exp_id: str, threshold: float, defect_class: str) -> bytes:
                 continue
 
             actual_path = image_paths[cache_idx]
-            stem = Path(actual_path).stem
+            defect_cls  = row["defect_class"]
+            stem        = Path(actual_path).stem
 
             try:
                 original = load_image(actual_path)
             except Exception:
                 continue
 
+            w, h        = original.size
+            overlay     = make_anomaly_overlay(actual_path, anomaly_maps[cache_idx], threshold, s_min, s_max)
+            predicted   = make_predicted_mask(anomaly_maps[cache_idx], threshold, s_min, s_max, target_size=(w, h))
             gt_mask_pil = _load_gt_mask(actual_path, dataset_path)
-            heatmap     = anomaly_map_to_heatmap(anomaly_maps[cache_idx])
 
             if gt_mask_pil is not None:
-                heatmap = _overlay_contour(heatmap, gt_mask_pil)
+                gt_rgb = gt_mask_pil.convert("RGB").resize((w, h), Image.NEAREST)
+                composite = Image.new("RGB", (w * 4, h))
+                composite.paste(original,  (0,      0))
+                composite.paste(gt_rgb,    (w,      0))
+                composite.paste(overlay,   (w * 2,  0))
+                composite.paste(predicted, (w * 3,  0))
+            else:
+                composite = Image.new("RGB", (w * 3, h))
+                composite.paste(original,  (0,     0))
+                composite.paste(overlay,   (w,     0))
+                composite.paste(predicted, (w * 2, 0))
 
-            triplet = create_triplet_image(original, gt_mask_pil, heatmap)
             img_buf = io.BytesIO()
-            triplet.save(img_buf, format="PNG")
-            zf.writestr(f"{exp_id}_{stem}_anomaly.png", img_buf.getvalue())
+            composite.save(img_buf, format="PNG")
+            zf.writestr(f"{defect_cls}/{stem}_composite.png", img_buf.getvalue())
 
     buf.seek(0)
     return buf.getvalue()

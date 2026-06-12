@@ -170,6 +170,7 @@ class ImageRowResponse(BaseModel):
     gt_match: bool
     classification: str       # "TP" | "FP" | "TN" | "FN"
     image_path: str           # "{class}/{filename}" — triplet 엔드포인트 키
+    has_gt_mask: bool
 
 
 class AnomalyImagesResponse(BaseModel):
@@ -185,6 +186,7 @@ class AnomalyImagesResponse(BaseModel):
 class ZipRequest(BaseModel):
     threshold: float
     defect_class: str = "전체"
+    verdict_filter: str = "전체"    # "OK" | "NG" | "전체"
 
 
 class ZipJobResponse(BaseModel):

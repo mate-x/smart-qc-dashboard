@@ -38,6 +38,8 @@ from api.explorer.services.anomaly_map_service import (
     get_images,
     get_job_status,
     get_original_image,
+    get_overlay_image,
+    get_predicted_mask_image,
     get_triplet_image,
     get_zip_result,
     start_build,
@@ -119,15 +121,18 @@ def get_images_route(
 
 
 @router.get("/{exp_id}/image/{image_path:path}/triplet", summary="Triplet PNG 반환")
-def get_triplet_route(exp_id: str, image_path: str) -> Response:
-    # image_path: "{class_name}/{image_name}"
+def get_triplet_route(
+    exp_id: str,
+    image_path: str,
+    threshold: float = Query(..., description="정규화된 threshold (0~1.2)"),
+) -> Response:
     parts = image_path.rsplit("/", 1)
     if len(parts) != 2:
         raise HTTPException(status_code=400, detail="image_path 형식 오류 ('{class}/{filename}' 필요)")
     class_name, image_name = parts
 
     try:
-        triplet = get_triplet_image(exp_id, class_name, image_name)
+        triplet = get_triplet_image(exp_id, class_name, image_name, threshold)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except LookupError as e:
@@ -161,6 +166,46 @@ def get_gt_mask_route(exp_id: str, image_path: str) -> Response:
     class_name, image_name = parts
     try:
         img = get_gt_mask_image(exp_id, class_name, image_name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    buf = pil_to_png_stream(img)
+    return Response(content=buf.read(), media_type="image/png")
+
+
+@router.get("/{exp_id}/image/{image_path:path}/overlay", summary="Overlay PNG 반환 (threshold 의존)")
+def get_overlay_route(
+    exp_id: str,
+    image_path: str,
+    threshold: float = Query(..., description="정규화된 threshold (0~1.2)"),
+) -> Response:
+    parts = image_path.rsplit("/", 1)
+    if len(parts) != 2:
+        raise HTTPException(status_code=400, detail="image_path 형식 오류 ('{class}/{filename}' 필요)")
+    class_name, image_name = parts
+    try:
+        img = get_overlay_image(exp_id, class_name, image_name, threshold)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    buf = pil_to_png_stream(img)
+    return Response(content=buf.read(), media_type="image/png")
+
+
+@router.get("/{exp_id}/image/{image_path:path}/predicted_mask", summary="Predicted Mask PNG 반환")
+def get_predicted_mask_route(
+    exp_id: str,
+    image_path: str,
+    threshold: float = Query(..., description="정규화된 threshold (0~1.2)"),
+) -> Response:
+    parts = image_path.rsplit("/", 1)
+    if len(parts) != 2:
+        raise HTTPException(status_code=400, detail="image_path 형식 오류 ('{class}/{filename}' 필요)")
+    class_name, image_name = parts
+    try:
+        img = get_predicted_mask_image(exp_id, class_name, image_name, threshold)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except LookupError as e:
@@ -207,7 +252,7 @@ def get_csv_route(
 @router.post("/{exp_id}/export/zip", summary="ZIP 생성 job 시작")
 async def start_zip_route(exp_id: str, body: ZipRequest) -> ZipJobResponse:
     try:
-        job_id = await start_zip(exp_id, body.threshold, body.defect_class)
+        job_id = await start_zip(exp_id, body.threshold, body.defect_class, body.verdict_filter)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except LookupError as e:

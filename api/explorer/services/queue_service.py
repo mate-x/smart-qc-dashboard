@@ -17,12 +17,12 @@ def get_queue() -> list[dict]:
     return get_state()["experiment_queue"]
 
 
-def add_to_queue(preprocessing_config: dict, model_config: dict, set_id: str | None = None) -> dict:
+def add_to_queue(preprocessing_config: dict, model_config: dict, set_id: str | None = None, name: str | None = None) -> dict:
     model_type = model_config.get("model_type", "model")
-    name = f"{model_type.upper()}_{uuid.uuid4().hex[:4]}"
+    auto_name = f"{model_type.upper()}_{uuid.uuid4().hex[:4]}"
     item = {
         "id":                   str(uuid.uuid4()),
-        "name":                 name,
+        "name":                 name or auto_name,
         "preprocessing_config": dict(preprocessing_config),
         "model_cfg":            dict(model_config),
         "status":               "pending",

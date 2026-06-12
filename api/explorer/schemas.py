@@ -96,6 +96,7 @@ class AddQueueRequest(BaseModel):
     preprocessing_config: dict
     model_cfg: dict = Field(alias="model_config")
     set_id: str | None = None
+    name: str | None = None
 
 
 class QueueItemResponse(BaseModel):

@@ -26,7 +26,7 @@ def build_test_pool(
 ) -> list[tuple[str, str]]:
     """
     dataset_path/test/ 하위 이미지 스캔 → (절대경로, gt_label) 리스트.
-    background_method == "sam2" 이면 background_clean/test/ 를 우선 사용.
+    background_method in ("sam2", "sam3") 이면 {dataset_name}_{method}/test/ 를 우선 사용.
     해당 폴더가 없으면 dataset_path/test/ 로 fallback.
     gt_label: "양품" (good/) | "불량" (기타 클래스) — A-17 레이블 규칙.
 
@@ -39,8 +39,11 @@ def build_test_pool(
     """
     root = Path(dataset_path)
 
-    if background_method == "sam2":
-        candidate = root / "background_clean" / "test"
+    if background_method in ("sam2", "sam3"):
+        _lower = root.parent / f"{root.name}_{background_method}"
+        _upper = root.parent / f"{root.name}_{background_method.upper()}"
+        bg_root = _lower if _lower.is_dir() else _upper
+        candidate = bg_root / "test"
         test_root = candidate if candidate.is_dir() else root / "test"
     else:
         test_root = root / "test"

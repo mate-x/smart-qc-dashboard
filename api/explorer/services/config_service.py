@@ -59,15 +59,18 @@ def preview_preprocessing_image(
     warning: str | None = None
     sample_path = None
 
-    # SAM2 경로 우선 탐색
-    if background_method == "sam2":
-        bg_dir = root / "background_clean" / "train" / "good"
+    # 배경분리 형제 폴더 우선 탐색 (sam2 / sam3)
+    if background_method in ("sam2", "sam3"):
+        _lower = root.parent / f"{root.name}_{background_method}"
+        _upper = root.parent / f"{root.name}_{background_method.upper()}"
+        bg_root = _lower if _lower.is_dir() else _upper
+        bg_dir = bg_root / "train" / "good"
         if bg_dir.is_dir():
             imgs = sorted(f for f in bg_dir.iterdir() if f.suffix.lower() in SUPPORTED_FORMATS)
             if imgs:
                 sample_path = imgs[0]
         if sample_path is None:
-            warning = "SAM2 전처리 이미지를 찾을 수 없어 원본으로 표시합니다."
+            warning = f"{background_method.upper()} 전처리 이미지를 찾을 수 없어 원본으로 표시합니다."
 
     # MVTec: train/good/
     if sample_path is None:

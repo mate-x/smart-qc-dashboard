@@ -30,7 +30,6 @@ from pathlib import Path
 
 import numpy as np
 
-from api.explorer.services.anomaly_map_service import _set_cache
 from api.explorer.state import get_state
 from utils.checkpoint_manager import delete_checkpoint, list_checkpoints, load_checkpoint
 from utils.metrics import compute_metrics, compute_threshold
@@ -61,6 +60,8 @@ _run: dict = {
     "loss_history":       [],
     "last_ckpt_path":     None,
     "model_type":         None,
+    "model_config":       None,
+    "preprocessing_config": None,
     # 배치 상태 (배치 흐름이 직접 관리 — _reset_run_state에서 초기화 안 함)
     "batch_mode":         False,
     "batch_total":        0,
@@ -430,6 +431,8 @@ def _start_worker(
 
     _run["status"]             = "running"
     _run["model_type"]         = model_config.get("model_type", "")
+    _run["model_config"]         = model_config
+    _run["preprocessing_config"] = preprocessing_config
     _run["exp_id"]             = exp_id
     _run["experiment_name"]    = experiment_name
     _run["created_at"]         = created_at
@@ -543,9 +546,8 @@ async def _handle_paused(msg: dict) -> None:
 
 async def _handle_completed(msg: dict) -> None:
     exp_id               = _run["exp_id"]
-    state                = get_state()
-    model_config         = state["model_config"] or {}
-    preprocessing_config = state["preprocessing_config"] or {}
+    model_config         = _run.get("model_config") or {}
+    preprocessing_config = _run.get("preprocessing_config") or {}
     batch_mode           = _run["batch_mode"]  # reset 전에 캡처
 
     y_true         = msg["y_true"]
@@ -579,21 +581,17 @@ async def _handle_completed(msg: dict) -> None:
             model_config=model_config,
         )
 
-        anomaly_maps_dict: dict  = msg.get("anomaly_maps", {})
-        image_paths: list[str]   = msg.get("image_paths", [])
-        if image_paths and anomaly_maps_dict:
-            maps_array = np.stack([anomaly_maps_dict[p] for p in image_paths], axis=0)
-            _set_cache(exp_id, {"anomaly_maps": maps_array, "image_paths": image_paths})
-
-        secs       = msg.get("duration_seconds", 0)
-        mins, sec  = divmod(secs, 60)
-        auc        = metrics.get("auc", 0.0)
+        secs             = msg.get("duration_seconds", 0)
+        hours, rem       = divmod(secs, 3600)
+        mins, sec        = divmod(rem, 60)
+        auc              = metrics.get("auc", 0.0)
+        dur_str = f"{hours}시간 {mins}분 {sec}초" if hours > 0 else (f"{mins}분 {sec}초" if mins > 0 else f"{sec}초")
         await _broadcast({
             "type":             "completed",
             "exp_id":           exp_id,
             "auc":              round(auc, 4),
             "duration_seconds": secs,
-            "message":          f"학습 완료. AUC: {auc:.4f} | {mins}분 {sec}초",
+            "message":          f"학습 완료. AUC: {auc:.4f} | {dur_str}",
             "early_stopped":    early_stopped,
         })
 
@@ -769,8 +767,10 @@ def _reset_run_state() -> None:
     _run["last_ckpt_path"]     = None
     _run["current_stage_idx"]  = None
     _run["current_stage_name"] = None
-    _run["batch_skip_current"] = False
-    _run["model_type"]         = None
+    _run["batch_skip_current"]   = False
+    _run["model_type"]           = None
+    _run["model_config"]         = None
+    _run["preprocessing_config"] = None
 
 
 # ---------------------------------------------------------------------------
@@ -784,10 +784,10 @@ def _build_experiment_record(
     duration_seconds: int | None,
     early_stopped: bool = False,
 ) -> dict:
-    state                = get_state()
-    model_config: dict   = state["model_config"] or {}
-    preprocessing_config: dict = state["preprocessing_config"] or {}
-    dataset_path: str    = state.get("dataset_path") or ""
+    state                      = get_state()
+    model_config: dict         = _run.get("model_config") or {}
+    preprocessing_config: dict = _run.get("preprocessing_config") or {}
+    dataset_path: str          = state.get("dataset_path") or ""
     product_name: str    = state.get("product_name") or ""
     experiment_name: str = _run.get("experiment_name") or exp_id
     created_at: str      = _run.get("created_at") or _generate_created_at()
@@ -806,7 +806,7 @@ def _build_experiment_record(
         "threshold_value":      model_config.get("threshold_value", 95.0),
         "dataset_path":         dataset_path,
         "product_name":         product_name,
-        "image_size":           model_config.get("image_size", 256),
+        "image_size":           preprocessing_config.get("image_size", 256),
         "duration_seconds":     duration_seconds,
         "metrics":              metrics,
         "model_path":           None,

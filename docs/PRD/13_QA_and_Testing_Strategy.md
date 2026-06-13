@@ -2,10 +2,20 @@
 
 > **참조 기준**: [00_Global_Context_Document.md](./00_Global_Context_Document.md)
 > **선행 문서**: [11_Non_Functional_Requirements.md](./11_Non_Functional_Requirements.md), [08_AI_ML_Integration.md](./08_AI_ML_Integration.md)
-> **버전**: v1.1
+> **버전**: v2.0
 > **작성일**: 2026-05-09
-> **수정일**: 2026-05-26
+> **수정일**: 2026-06-11
 > **중요**: 이 문서는 테스트 전략의 Single Source of Truth다. 테스트 유형·범위·합격 기준·도구를 확정한다. 모든 테스트는 08절 Z.절 및 05~07절 확정 사항을 기준으로 작성한다.
+
+---
+
+## 버전 히스토리
+
+| 버전 | 날짜 | 변경 요약 |
+|------|------|-----------|
+| v1.0 | 2026-05-09 | 최초 작성 |
+| v1.1 | 2026-05-26 | 비전검사 대시보드 테스트 전략 추가 (I절) |
+| v2.0 | 2026-06-11 | B.5 캐시 테스트: Streamlit session_state mock 제거 → 서버 측 LRU 캐시 직접 테스트; C.5 가드 테스트: session_state mock → FastAPI TestClient 기반으로 교체; D.1 E2E 주석: 탭 → Explorer 화면/endpoint; H 커버리지: `tabs/*.py` → `api/routers/*.py`; I.2 통합 테스트: Streamlit session_state → FastAPI TestClient; I.3 TC-INSP 시나리오: Streamlit 상태 → WS/API/React 기준; I.5 커버리지: `inspection/tabs/` → `api/routers/inspection.py` + WS 핸들러 |
 
 ---
 
@@ -19,6 +29,7 @@
 - [F. NFR Validation Tests](#f-nfr-validation-tests)
 - [G. Test Infrastructure](#g-test-infrastructure)
 - [H. Test Coverage Targets](#h-test-coverage-targets)
+- [I. Vision 검사 테스트 전략](#i-vision-검사-테스트-전략-v20)
 
 ---
 
@@ -36,12 +47,15 @@
         └──────────┘
 ```
 
+> **v2.0 추가**: React(Explorer/Vision) 프론트엔드 컴포넌트 테스트는 TypeScript(vitest/jest) 기반으로 별도 수행한다. 이 문서의 pytest 테스트는 Python 백엔드(`utils/`, `api/`) 계층에 한정된다.
+
 ### A.2 테스트 도구
 
 | 도구 | 용도 |
 |------|------|
 | `pytest` | 전체 테스트 실행기 |
 | `pytest-cov` | 커버리지 측정 |
+| `httpx` / `fastapi.testclient.TestClient` | FastAPI 엔드포인트 통합 테스트 |
 | `unittest.mock` | 외부 의존성 모킹 (Anomalib 학습 루프 제외) |
 | `tmp_path` (pytest fixture) | 임시 파일시스템 |
 
@@ -51,8 +65,8 @@
 # 전체 테스트
 pytest tests/ -v
 
-# 커버리지 포함
-pytest tests/ --cov=utils --cov=tabs --cov-report=term-missing
+# 커버리지 포함 (Python 백엔드 계층)
+pytest tests/ --cov=utils --cov=api --cov-report=term-missing
 
 # 특정 모듈
 pytest tests/unit/test_image_utils.py -v
@@ -286,7 +300,10 @@ class TestConfigManager:
 
 ---
 
-### B.5 `utils/cache_manager.py`
+### B.5 `utils/cache_manager.py` (v2.0 — 서버 측 LRU 캐시)
+
+> **v2.0 변경**: v1.x에서 `st.session_state`를 백엔드로 사용하던 캐시가 서버 측 인메모리 LRU 캐시로 교체됐다.  
+> Streamlit 의존성 및 `mock_session_state` 픽스처가 제거됐다.
 
 ```python
 # tests/unit/test_cache_manager.py
@@ -294,17 +311,23 @@ class TestConfigManager:
 import time
 import pytest
 import numpy as np
-import streamlit as st
-from unittest.mock import patch, MagicMock
+from utils.cache_manager import (
+    set_anomaly_map_cache,
+    get_anomaly_map_cache,
+    MAX_ANOMALY_MAP_CACHE,
+)
 
-# session_state 모킹을 위한 픽스처
+# [확인 필요: utils/cache_manager.py에 테스트용 _clear_cache() 헬퍼 함수 추가 필요]
+# 캐시 격리를 위해 각 테스트 전 캐시를 초기화한다.
+
 @pytest.fixture(autouse=True)
-def mock_session_state():
-    state = {}
-    with patch.object(st, "session_state", state):
-        yield state
+def clear_cache():
+    """각 테스트 전후로 서버 측 캐시 초기화"""
+    from utils.cache_manager import _clear_cache  # [확인 필요: 헬퍼 함수 존재 여부]
+    _clear_cache()
+    yield
+    _clear_cache()
 
-from utils.cache_manager import set_anomaly_map_cache, get_anomaly_map_cache, MAX_ANOMALY_MAP_CACHE
 
 class TestAnomalyMapCache:
     def test_set_and_get(self):
@@ -314,14 +337,18 @@ class TestAnomalyMapCache:
         assert result is not None
         assert "anomaly_maps" in result
 
+    def test_cache_miss_returns_none(self):
+        result = get_anomaly_map_cache("exp_not_set")
+        assert result is None
+
     def test_lru_eviction_on_overflow(self):
         for i in range(MAX_ANOMALY_MAP_CACHE + 1):
-            data = {"anomaly_maps": {}, "image_paths": []}
-            set_anomaly_map_cache(f"exp_{i:03d}", data)
+            set_anomaly_map_cache(f"exp_{i:03d}", {"anomaly_maps": {}, "image_paths": []})
             time.sleep(0.01)  # cached_at 차이 보장
         # MAX_ANOMALY_MAP_CACHE 개만 남아야 함
-        count = sum(1 for k in st.session_state if k.startswith("_anomaly_maps_"))
-        assert count == MAX_ANOMALY_MAP_CACHE
+        # [확인 필요: _get_cache_size() 또는 동등한 검사 방법 확인]
+        from utils.cache_manager import _get_cache_size
+        assert _get_cache_size() == MAX_ANOMALY_MAP_CACHE
 
     def test_oldest_evicted(self):
         set_anomaly_map_cache("exp_old", {"anomaly_maps": {}, "image_paths": []})
@@ -336,11 +363,11 @@ class TestAnomalyMapCache:
 
 ## C. Integration Tests
 
-### C.1 데이터셋 스캔 → session_state 흐름
+### C.1 데이터셋 스캔 → 메타 정보 반환 흐름
 
 ```python
 # tests/integration/test_tab1_flow.py
-# 실제 MVTec 형식 임시 데이터셋 생성 후 탭1 검증 함수 호출
+# 실제 MVTec 형식 임시 데이터셋 생성 후 데이터셋 검증 함수 호출
 
 import pytest
 from pathlib import Path
@@ -407,7 +434,7 @@ def test_model_config_roundtrip(tmp_path):
         }
     }
     path = str(tmp_path / "configs.yaml")
-    # "설정 저장" 버튼 1회 → preprocessing + model 섹션 동시 저장 시나리오 (탭2)
+    # Config 화면 (/config) — POST /api/config 에서 preprocessing + model 섹션 동시 저장 시나리오
     save_config_section("preprocessing", preprocessing_config, path=path)
     save_config_section("model", model_config, path=path)
     loaded = load_config(path)
@@ -423,7 +450,7 @@ def test_model_config_roundtrip(tmp_path):
 
 ```python
 # tests/integration/test_training_worker.py
-# 실제 Anomalib 학습 없이 WorkerWorker 내부 queue 프로토콜만 검증
+# 실제 Anomalib 학습 없이 TrainingWorker 내부 queue 프로토콜만 검증
 
 import threading
 import queue
@@ -462,7 +489,6 @@ def test_worker_sends_completed_message():
         mock_engine = MagicMock()
         MockEngine.return_value = mock_engine
         mock_engine.model = MagicMock()
-        # train() 호출 후 test() 결과 반환 mock
         mock_engine.test.return_value = MagicMock()
 
         worker = TrainingWorker(
@@ -554,37 +580,61 @@ def test_stage1_failure_cleanup(tmp_path, monkeypatch):
 
 ---
 
-### C.5 Guard 체인 → 탭3 진입 검증
+### C.5 화면 가드 → Config 화면 접근 검증 (v2.0)
+
+> **v2.0 변경**: v1.x에서 `st.session_state` mock 기반으로 가드 조건을 검증하던 테스트가  
+> FastAPI TestClient 기반으로 교체됐다.  
+> React 컴포넌트 수준 가드 (Zustand store 기반)는 TypeScript(vitest) 테스트에서 별도 검증한다.
 
 ```python
-# tests/integration/test_guard_chain.py
-# 탭2 설정 저장 후 탭3 Guard 조건 충족/미충족 시나리오 검증
+# tests/integration/test_screen_guard.py
+# v2.0: Python 측에서는 FastAPI API validation 검증
+# React 컴포넌트 가드 (Zustand store 기반)는 Explorer vitest에서 별도 검증
 
 import pytest
-from unittest.mock import patch
-import streamlit as st
+from fastapi.testclient import TestClient
 
-def test_tab3_guard_passes_when_all_conditions_met():
-    """탭2 저장 후 세 조건(dataset_path · preprocessing_config · model_config) 동시 충족 시 탭3 진입 가능"""
-    state = {
-        "dataset_path": "/data/screw",
-        "preprocessing_config": {"method": "none", "image_size": 256},
-        "model_config": {"model_type": "patchcore"},
-    }
-    with patch.object(st, "session_state", state):
-        assert state.get("dataset_path") is not None
-        assert state.get("preprocessing_config") is not None
-        assert state.get("model_config") is not None
+# [확인 필요: api/main.py의 FastAPI app import 경로 확인]
+# from api.main import app
 
-def test_tab3_guard_blocks_when_model_config_none():
-    """model_config is None 시 탭3 Guard 발동 (탭2 설정 미완료 시나리오)"""
-    state = {
-        "dataset_path": "/data/screw",
-        "preprocessing_config": {"method": "none", "image_size": 256},
-        "model_config": None,
-    }
-    with patch.object(st, "session_state", state):
-        assert state.get("model_config") is None
+def test_training_start_blocked_without_imagenet_penalty():
+    """POST /api/training/start — EfficientAD 설정 시 ImageNet penalty 없으면 400 반환"""
+    # [확인 필요: TestClient 사용 시 실제 파일시스템 격리 방법 확인]
+    # client = TestClient(app)
+    # response = client.post("/api/training/start", json={
+    #     "model_config": {"model_type": "efficientad", ...},
+    #     "dataset_path": "/nonexistent"
+    # })
+    # assert response.status_code == 400
+    # assert "ImageNet" in response.json()["detail"]
+    pass  # FastAPI TestClient 통합 완료 후 구현
+
+
+def test_config_save_requires_valid_image_size():
+    """POST /api/config — image_size가 유효하지 않으면 422 반환 (FastAPI validation)"""
+    # client = TestClient(app)
+    # response = client.post("/api/config", json={"preprocessing": {"image_size": -1}})
+    # assert response.status_code == 422
+    pass  # FastAPI TestClient 통합 완료 후 구현
+
+
+# --- Explorer React 컴포넌트 가드 테스트 (TypeScript / vitest) ---
+# 아래 시나리오는 Explorer/src/pages/ 컴포넌트 테스트에서 검증:
+#
+# TC-GUARD-01:
+#   Given: datasetStore.datasetPath === null
+#   When:  사용자가 /config 경로로 navigate()
+#   Then:  ConfigPage 가드 UI 렌더링, 폼 콘텐츠 미렌더링
+#
+# TC-GUARD-02:
+#   Given: configStore.modelConfig === null
+#   When:  사용자가 /training 경로로 navigate()
+#   Then:  TrainingPage 가드 UI 렌더링
+#
+# TC-GUARD-03:
+#   Given: experimentsStore.selectedExperimentId === null
+#   When:  사용자가 /anomaly-map 경로로 navigate()
+#   Then:  AnomalyMapPage 가드 UI 렌더링
 ```
 
 ---
@@ -602,31 +652,32 @@ def test_tab3_guard_blocks_when_model_config_none():
 @pytest.mark.slow
 def test_efficientad_training_golden_path(tmp_path, mvtec_dataset):
     """EfficientAD 학습 완료 후 history.json에 completed 레코드 기록 확인"""
-    # 탭 플로우 (5단계):
-    # 탭1: 데이터셋 경로 선택 → dataset_meta 저장
-    # 탭2: 전처리 및 모델 설정 (전처리 영역 + 모델 영역 통합) → preprocessing_config, model_config, device_info 저장
-    # 탭3: [학습 시작] 버튼 클릭 → TrainingWorker 실행 (train_steps=100, 빠른 완료)
-    # 탭4: 완료 레코드 선택 → 결과 상세 확인
-    # 탭5: 추론 실행 → Anomaly Map 시각화
+    # Explorer 화면 플로우 (5단계):
+    # 1. Dataset 화면 (/): POST /api/dataset/validate → datasetPath 확정
+    # 2. Config 화면 (/config): POST /api/config → preprocessing_config, model_config 저장
+    # 3. Training 화면 (/training): POST /api/training/start → TrainingWorker 실행 (train_steps=100)
+    #    WS /ws/training 구독 → completed 메시지 수신
+    # 4. Experiments 화면 (/experiments): GET /api/experiments → completed 레코드 확인
+    # 5. AnomalyMap 화면 (/anomaly-map): POST /api/anomaly-map/{id}/build → 시각화
     # --- 테스트 실행 단계 ---
     # 1. TrainingWorker 실행 (train_steps=100, 빠른 완료)
     # 2. completed 메시지 수신 확인
     # 3. save_completed_experiment() 호출 확인
     # 4. history.json loaded → status=="completed" 확인
-    pass  # 실제 구현은 전체 파이프라인 연동 후 작성
+    pass  # 실제 구현은 FastAPI TestClient 연동 후 작성
 ```
 
 ---
 
 ### D.2 학습 중단 플로우
 
-**시나리오**: 탭3 학습 진행 중 [학습 중단] 버튼 클릭 → stopped 레코드 기록.
+**시나리오**: Training 화면 학습 진행 중 [학습 중단] 버튼 클릭 → POST /api/training/stop → stopped 레코드 기록.
 
 ```python
 @pytest.mark.slow
 def test_training_stop_golden_path(tmp_path, mvtec_dataset):
-    """탭3 학습 중 stop_event 설정 → stopped 레코드 기록 확인"""
-    pass  # 실제 구현은 전체 파이프라인 연동 후 작성
+    """학습 중 POST /api/training/stop 호출 → stopped 레코드 기록 확인"""
+    pass  # 실제 구현은 FastAPI TestClient 연동 후 작성
 ```
 
 ---
@@ -730,7 +781,9 @@ class TestPatchCoreMemoryBank:
         try:
             torch.save(model.state_dict(), pth_path)
             new_model = _create_patchcore_model(model_config)
-            new_model.load_state_dict(torch.load(pth_path, map_location="cpu"), strict=False)
+            new_model.load_state_dict(
+                torch.load(pth_path, map_location="cpu", weights_only=True), strict=False
+            )
             new_torch = getattr(new_model, "model", None)
             assert new_torch.memory_bank.shape[0] == 100, \
                 "재로드 후 memory_bank 크기가 복원되어야 합니다."
@@ -753,7 +806,6 @@ class TestPatchCoreMemoryBank:
 
     def test_spatial_size_validation(self):
         """patch_scores 크기가 완전제곱수가 아닐 때 명확한 ValueError가 발생하는지 검증."""
-        import cv2
         import numpy as np
         from utils.model_factory import _get_anomaly_map
 
@@ -845,7 +897,8 @@ tests/
 │   ├── test_config_roundtrip.py
 │   ├── test_training_worker.py
 │   ├── test_save_experiment.py
-│   └── test_guard_chain.py
+│   ├── test_screen_guard.py       # v2.0: FastAPI TestClient 기반 가드 검증
+│   └── test_insp_flow.py
 └── e2e/
     ├── test_golden_path.py
     └── test_reproducibility.py
@@ -921,15 +974,15 @@ testpaths = tests
 | `utils/metrics.py` | ≥ 90% | compute_all_metrics, normalize, compute_threshold |
 | `utils/storage.py` | ≥ 85% | load/save history, 3단계 저장 프로토콜 |
 | `utils/config_manager.py` | ≥ 85% | load_config, save_config_section |
-| `utils/cache_manager.py` | ≥ 80% | set/get/eviction |
+| `utils/cache_manager.py` | ≥ 80% | set/get/eviction (서버 측 LRU) |
 | `utils/training_worker.py` | ≥ 70% | queue 프로토콜, stop_event 처리 |
-| `tabs/*.py` | ≥ 60% | 탭 가드 조건, 주요 핸들러 |
+| `api/routers/*.py` | ≥ 60% | 엔드포인트 validation, 주요 핸들러 |
 
-**전체 목표**: 라인 커버리지 ≥ 80% (`utils/` 패키지 기준).
+**전체 목표**: 라인 커버리지 ≥ 80% (`utils/`, `api/` 패키지 기준).
 
 ```bash
 # 커버리지 보고서 생성
-pytest tests/ --cov=utils --cov=tabs \
+pytest tests/ --cov=utils --cov=api \
     --cov-report=html:coverage_report \
     --cov-fail-under=80
 ```
@@ -938,9 +991,13 @@ pytest tests/ --cov=utils --cov=tabs \
 
 ---
 
-## I. 비전검사 대시보드 테스트 전략 (v1.1)
+## I. Vision 검사 테스트 전략 (v2.0)
 
-### I.1 단위 테스트 — `inspection/utils/test_sampler.py`
+> **v2.0 변경**: v1.1의 Streamlit session_state 기반 검사 테스트가 FastAPI TestClient 기반으로 교체됐다.  
+> Vision React 컴포넌트(`useAutoInspection`, `useManualInspection` 등)의 단위 테스트는  
+> TypeScript(vitest) 기반으로 `smart-qc-vision` 레포에서 별도 수행한다.
+
+### I.1 단위 테스트 — `utils/test_sampler.py`
 
 ```python
 # tests/unit/test_sampler.py
@@ -1005,66 +1062,58 @@ class TestSampleFromPool:
         assert len(set(selected_items)) == len(pool)
 ```
 
-### I.2 통합 테스트 — 모델 적용 → 검사 → 이력 누적 흐름
+### I.2 통합 테스트 — 모델 적용 → 검사 → 이력 누적 흐름 (v2.0)
+
+> **v2.0 변경**: Streamlit `mock_session_state` 픽스처 및 `st.session_state["insp_*"]`  
+> 키 직접 조작이 FastAPI TestClient 기반 API 호출로 교체됐다.
 
 ```python
 # tests/integration/test_insp_flow.py
+# [확인 필요: api/main.py FastAPI app import 경로 및 TestClient 설정 확인]
 
 import pytest
-from unittest.mock import patch, MagicMock
-import streamlit as st
+from fastapi.testclient import TestClient
+# from api.main import app  # [확인 필요: 실제 import 경로]
 
-@pytest.fixture(autouse=True)
-def mock_session_state():
-    state = {}
-    with patch.object(st, "session_state", state):
-        yield state
+def test_model_apply_initializes_inspection_state():
+    """POST /api/inspection/model — 모델 적용 후 검사 이력이 초기화되는지 확인 (TC-INSP-03)"""
+    # [확인 필요: TestClient + 모델 mock 설정 방법]
+    # client = TestClient(app)
+    #
+    # # 사전에 검사 이력 생성
+    # client.post("/api/inspection/run", json={...})
+    #
+    # # 새 모델 적용
+    # response = client.post("/api/inspection/model", json={"experiment_id": "new_exp"})
+    # assert response.status_code == 200
+    #
+    # # 이력 초기화 확인
+    # records = client.get("/api/inspection/records").json()
+    # assert records == [] or records.get("records") == []
+    pass  # FastAPI TestClient 통합 완료 후 구현
 
-def test_model_apply_initializes_insp_keys(mock_session_state):
-    """모델 적용 시 insp_ 세션 키가 초기화된다"""
-    from inspection.utils.insp_session_init import init_insp_session_state
 
-    init_insp_session_state()
-    assert "insp_records" in st.session_state
-    assert "insp_seq" in st.session_state
-    assert st.session_state["insp_seq"] == 0
-    assert st.session_state["insp_records"] == []
+def test_manual_inspection_appends_record():
+    """POST /api/inspection/run — 수동 검사 후 이력이 1건 증가하는지 확인 (TC-INSP-01)"""
+    # [확인 필요: 추론 mock 없이 TestClient로 테스트 가능한지 확인]
+    # client = TestClient(app)
+    #
+    # before = len(client.get("/api/inspection/records").json().get("records", []))
+    # client.post("/api/inspection/run", json={...})
+    # after = len(client.get("/api/inspection/records").json().get("records", []))
+    #
+    # assert after == before + 1
+    pass  # FastAPI TestClient 통합 완료 후 구현
 
-def test_inspection_increments_seq(mock_session_state):
-    """검사 실행 시 insp_seq가 1 증가한다 (TC-INSP-01)"""
-    from inspection.utils.insp_session_init import init_insp_session_state
 
-    init_insp_session_state()
-    initial_seq = st.session_state["insp_seq"]
-
-    # 검사 레코드 직접 추가 (추론 mock)
-    st.session_state["insp_seq"] += 1
-    record = {
-        "seq": st.session_state["insp_seq"],
-        "inspected_at": "2026-05-26T12:00:00+09:00",
-        "image_name": "001.png",
-        "image_path": "/dataset/test/good/001.png",
-        "verdict": "OK",
-        "anomaly_score": 0.12,
-    }
-    st.session_state["insp_records"].append(record)
-
-    assert st.session_state["insp_seq"] == initial_seq + 1
-    assert len(st.session_state["insp_records"]) == 1
-
-def test_model_replacement_resets_insp_keys(mock_session_state):
-    """모델 교체 시 모든 insp_ 키가 초기화된다 (TC-INSP-03)"""
-    from inspection.utils.insp_session_init import init_insp_session_state
-
-    # 사전 상태 설정
-    st.session_state["insp_seq"] = 5
-    st.session_state["insp_records"] = [{"seq": 1}, {"seq": 2}]
-
-    # 모델 교체 시 재초기화
-    init_insp_session_state(reset=True)
-
-    assert st.session_state["insp_seq"] == 0
-    assert st.session_state["insp_records"] == []
+def test_defect_detection_sends_ng_verdict():
+    """추론 결과 anomaly_score > threshold → verdict == 'NG' 반환 확인 (TC-INSP-02)"""
+    # [확인 필요: 추론 로직 mock으로 고점수 강제 반환 방법]
+    # from unittest.mock import patch
+    # with patch("api.routers.inspection.run_inference", return_value={"anomaly_score": 0.99}):
+    #     response = client.post("/api/inspection/run", json={...})
+    #     assert response.json()["verdict"] == "NG"
+    pass  # 추론 mock 설정 후 구현
 ```
 
 ### I.3 주요 테스트 시나리오 (Given-When-Then)
@@ -1073,33 +1122,33 @@ def test_model_replacement_resets_insp_keys(mock_session_state):
 
 | 단계 | 내용 |
 |------|------|
-| **Given** | 모델이 적용되어 있고 `insp_seq = 3`, `insp_records`에 3개 레코드 존재 |
-| **When** | 수동 검사 버튼 클릭 |
-| **Then** | `insp_seq == 4`, `insp_records`에 4번째 레코드 추가, `record.seq == 4` |
+| **Given** | 모델이 적용되어 있고 `GET /api/inspection/records` 응답에 3개 레코드 존재 |
+| **When** | Vision에서 수동 검사 버튼 클릭 → `POST /api/inspection/run` 호출 |
+| **Then** | `GET /api/inspection/records` 응답에 4번째 레코드 추가, `record.seq == 4` |
 
 #### TC-INSP-02: 자동 검사 중 불량 감지 시 중지 및 팝업
 
 | 단계 | 내용 |
 |------|------|
-| **Given** | 자동 검사 모드 실행 중 (`insp_auto_running = True`) |
-| **When** | 추론 결과 `verdict == "NG"` (불량 감지) |
-| **Then** | `insp_auto_running = False`로 설정, `st.error(INSP_MSG["DEFECT_DETECTED"])` 표시, 자동 검사 중지 |
+| **Given** | Vision에서 자동 검사 모드 실행 중 (`WS /ws/inspection/auto` 연결됨) |
+| **When** | 추론 결과 `verdict == "NG"` (불량 감지) → 서버가 WS 메시지 전송 |
+| **Then** | Vision `useAutoInspection.ts`에서 `inspectionStore.showDefectPopup = true` 설정; Vision 불량 감지 모달 표시; `ws.close()` 호출로 자동 검사 중지 (서버 측 `WebSocketDisconnect` 트리거) |
 
 #### TC-INSP-03: 모델 교체 시 이력 초기화
 
 | 단계 | 내용 |
 |------|------|
-| **Given** | `insp_records`에 N개 기록 존재, `insp_seq = N` |
-| **When** | 탭3에서 새 모델 [적용] 버튼 클릭 |
-| **Then** | 모든 `insp_` 키 초기화: `insp_seq = 0`, `insp_records = []`, `insp_model = 새 모델` |
+| **Given** | `GET /api/inspection/records`에 N개 기록 존재 |
+| **When** | Vision 탭3(모델 교체)에서 새 모델 [적용] 버튼 클릭 → `POST /api/inspection/model` 호출 |
+| **Then** | `GET /api/inspection/records` 응답이 빈 배열 반환; `GET /api/inspection/model` 응답에 새 모델 정보 포함; Vision `inspectionStore` 이력 초기화 |
 
 #### TC-INSP-04: 테스트 풀 소진 시 재섞기
 
 | 단계 | 내용 |
 |------|------|
-| **Given** | `insp_test_pool`의 모든 이미지가 `insp_used_images`에 포함 |
+| **Given** | `test_sampler`의 모든 이미지가 `used` 셋에 포함 |
 | **When** | `sample_from_pool()` 호출 |
-| **Then** | `insp_used_images` 초기화, `insp_pool_reshuffled` 로그 기록, 새 이미지 반환 |
+| **Then** | `used` 초기화, `insp_pool_reshuffled` 로그 기록 (`utils/logger.py`), 새 이미지 반환 |
 
 ### I.4 테스트 마커 및 파일 구조
 
@@ -1119,18 +1168,18 @@ tests/
 ├── unit/
 │   └── test_sampler.py              # I.1 단위 테스트
 └── integration/
-    └── test_insp_flow.py            # I.2 통합 테스트
+    └── test_insp_flow.py            # I.2 통합 테스트 (FastAPI TestClient)
 ```
 
-### I.5 커버리지 대상 추가
+### I.5 커버리지 대상 (v2.0)
 
 | 모듈 | 목표 커버리지 | 우선 테스트 대상 |
 |------|-------------|----------------|
 | `inspection/utils/test_sampler.py` | ≥ 90% | `build_test_pool()`, `sample_from_pool()` 재섞기 |
-| `inspection/utils/insp_session_init.py` | ≥ 85% | 초기화, 리셋 분기 |
-| `inspection/tabs/insp_tab1_realtime.py` | ≥ 60% | 수동/자동 검사 핸들러, 불량 팝업 |
-| `inspection/tabs/insp_tab2_history.py` | ≥ 60% | 테이블 렌더링, KPI 계산 |
-| `inspection/tabs/insp_tab3_model.py` | ≥ 60% | 모델 적용, 이력 초기화 |
+| `api/routers/inspection.py` | ≥ 70% | `POST /api/inspection/run`, `POST /api/inspection/model`, `GET /api/inspection/records` |
+| `api/ws/inspection_ws.py` | ≥ 60% | WS 자동 검사 루프, 불량 감지 메시지 전송, `WebSocketDisconnect` 처리 |
+
+> **v2.0 제거**: v1.1의 `inspection/tabs/insp_tab*.py` 커버리지 대상은 Streamlit 모듈로 더 이상 공식 UI 경로가 아니다. FastAPI route handler 및 WS 핸들러로 대체됐다.
 
 ---
 

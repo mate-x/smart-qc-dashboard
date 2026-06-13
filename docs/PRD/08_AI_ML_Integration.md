@@ -2,12 +2,13 @@
 
 > **참조 기준**: [00_Global_Context_Document.md](./00_Global_Context_Document.md)
 > **선행 문서**: [04_System_Architecture.md](./04_System_Architecture.md)
-> **버전**: v1.1
+> **버전**: v1.2
 > **작성일**: 2026-05-08
+> **수정일**: 2026-06-11 — v1.2: Z절 정오표 본문 통합, Anomalib 2.4.1 API 기준 확정
 > **수정일**: 2026-05-26 — v1.1: 비전검사 추론 전용 모드 및 test_pool 레이블 규칙 추가 (B.10절)
 > **중요**: 이 문서는 ML 구현의 Single Source of Truth다. Anomalib API 클래스명·파라미터 매핑·알고리즘 수식은 이 문서에서 확정되며, `model_factory.py`, `training_worker.py`, `image_utils.py` 구현 시 이 문서와 100% 일치해야 한다.
 >
-> ⚠️ **[2026-05-09 정오표 적용]**: 05/06/07 문서 작성 후 아래 항목이 수정됐다. 구현 시 본문보다 **Z절 정오표**를 우선 적용한다.
+> ✅ **[2026-05-09 정오표 → v1.2 본문 반영 완료]**: 아래 항목이 v1.2에서 본문에 통합됐다. Z절은 이력 참조용으로만 유지한다.
 > - `B.2.2` ImageNet penalty 경로 및 fallback 정책 수정
 > - `B.6` TrainingWorker 생성자 파라미터 (`device_info` → `device`)
 > - `B.6` `stopped` 메시지에 `step` 필드 추가
@@ -255,27 +256,20 @@ def build_imagenet_penalty_loader(
 ) -> DataLoader:
     """
     ImageNet penalty 배치용 DataLoader.
-    실제 ImageNet 대신 torchvision.datasets.FakeData 사용 (추론 목적만).
-    실제 환경에서는 /app/dataset/imagenet_penalty/ 폴더의 소규모 서브셋 사용 권장.
-    가정: /app/dataset/imagenet_penalty/ 없으면 FakeData fallback.
+    경로: utils/storage.py IMAGENET_PENALTY_DIR = Path("./dataset/imagenet_penalty")
+    경로 검증은 TrainingWorker._run_impl() 진입 직후 precondition 체크에서 수행.
+    이 함수 호출 시점에는 이미 경로가 유효함이 보장됨.
+    FakeData fallback 없음 — 재현성 훼손 방지 (Z.1 확정).
     """
-    imagenet_path = Path("/app/dataset/imagenet_penalty")
-    if imagenet_path.exists():
-        from torchvision import datasets, transforms
-        transform = transforms.Compose([
-            transforms.Resize((image_size, image_size)),
-            transforms.ToTensor(),
-            transforms.Normalize([0.485,0.456,0.406],[0.229,0.224,0.225]),
-        ])
-        ds = datasets.ImageFolder(str(imagenet_path), transform=transform)
-    else:
-        from torchvision.datasets import FakeData
-        from torchvision import transforms
-        ds = FakeData(
-            size=1000,
-            image_size=(3, image_size, image_size),
-            transform=transforms.ToTensor(),
-        )
+    from utils.storage import IMAGENET_PENALTY_DIR
+    from torchvision import datasets, transforms
+
+    transform = transforms.Compose([
+        transforms.Resize((image_size, image_size)),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+    ])
+    ds = datasets.ImageFolder(str(IMAGENET_PENALTY_DIR), transform=transform)
     return DataLoader(ds, batch_size=batch_size, shuffle=True,
                       num_workers=2, drop_last=True)
 ```
@@ -519,6 +513,7 @@ def _train_efficientad(
 
     while step < total_steps:
         if stop_event.is_set():
+            result_queue.put({"type": "stopped", "step": step})  # Z.3
             return False, last_loss
 
         batch         = next(train_iter)
@@ -766,6 +761,7 @@ def _train_patchcore(
     with torch.no_grad():
         for batch_idx, batch in enumerate(train_loader):
             if stop_event.is_set():
+                result_queue.put({"type": "stopped", "step": batch_idx})  # Z.3
                 return False, 0.0
 
             if batch_idx >= total_batches:
@@ -879,23 +875,23 @@ class TrainingWorker(threading.Thread):
 
     def __init__(
         self,
+        experiment_id: str,
         model_config: dict,
         preprocessing_config: dict,
         dataset_path: str,
-        device_info: dict,
-        exp_id: str,
+        device: str,                # device_info dict 아님, 문자열 직접 전달
         stop_event: threading.Event,
         result_queue: queue.Queue,
     ):
         super().__init__(daemon=True)
+        self.experiment_id       = experiment_id
         self.model_config        = model_config
         self.preprocessing_config = preprocessing_config
         self.dataset_path        = dataset_path
-        self.device_str          = device_info["device"]   # "cuda" | "cpu"
-        self.exp_id              = exp_id
+        self.device              = device
         self.stop_event          = stop_event
         self.result_queue        = result_queue
-        self.log_file            = Path(f"./logs/{exp_id}.log")
+        self._log_writer         = None    # get_log_writer()로 lazy init
 
     def run(self) -> None:
         try:
@@ -914,11 +910,19 @@ class TrainingWorker(threading.Thread):
         random.seed(seed)
         np.random.seed(seed)
         torch.manual_seed(seed)
-        if self.device_str == "cuda":
+        if self.device == "cuda":
             torch.cuda.manual_seed_all(seed)
 
-        device = torch.device(self.device_str)
-        self.log_file.parent.mkdir(parents=True, exist_ok=True)
+        device = torch.device(self.device)
+        log_file = Path(f"./logs/{self.experiment_id}.log")
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+
+        # EfficientAD precondition 체크 (Z.1)
+        if self.model_config["model_type"] == "efficientad":
+            from utils.storage import validate_imagenet_penalty_dir
+            ok, _ = validate_imagenet_penalty_dir()
+            if not ok:
+                raise ValueError("ImageNet penalty 디렉터리에 이미지가 없습니다.")
 
         # 2. DataLoader 구성
         train_loader, test_loader = build_dataloaders(
@@ -931,14 +935,15 @@ class TrainingWorker(threading.Thread):
         # 3. 시작 로그
         start_msg = (
             f"{_now_kst()}\t"
-            f"[시작] 실험: {self.exp_id} | "
+            f"[시작] 실험: {self.experiment_id} | "
             f"모델: {self.model_config['model_type']} | "
-            f"디바이스: {self.device_str}"
+            f"디바이스: {self.device}"
         )
         self.result_queue.put({"type": "log", "message": start_msg})
-        _append_log(self.log_file, start_msg)
+        _append_log(log_file, start_msg)
 
         model_type = self.model_config["model_type"]
+        start_time = time.time()
 
         # 4. 모델 생성 + 학습
         if model_type == "efficientad":
@@ -946,12 +951,12 @@ class TrainingWorker(threading.Thread):
             penalty_loader = build_imagenet_penalty_loader(
                 batch_size=self.model_config["params"].get("penalty_batch_size", 8),
                 image_size=self.model_config["image_size"],
-                device=self.device_str,
+                device=self.device,
             )
             completed, _ = _train_efficientad(
                 model, train_loader, penalty_loader,
                 self.model_config, device,
-                self.stop_event, self.result_queue, self.log_file,
+                self.stop_event, self.result_queue, log_file,
             )
 
         elif model_type == "patchcore":
@@ -959,14 +964,14 @@ class TrainingWorker(threading.Thread):
             completed, _ = _train_patchcore(
                 model, train_loader,
                 self.model_config, device,
-                self.stop_event, self.result_queue, self.log_file,
+                self.stop_event, self.result_queue, log_file,
             )
 
         else:
             raise ValueError(f"지원하지 않는 모델 타입: {model_type}")
 
         if not completed:
-            self.result_queue.put({"type": "stopped"})
+            # stopped 메시지는 _train_efficientad / _train_patchcore 내부에서 전송 (Z.3)
             return
 
         # 5. 전체 테스트셋 추론 → Anomaly Score + Map 수집
@@ -977,16 +982,19 @@ class TrainingWorker(threading.Thread):
         )
 
         if self.stop_event.is_set():
-            self.result_queue.put({"type": "stopped"})
+            self.result_queue.put({"type": "stopped", "step": -1})
             return
 
-        # 6. 완료 메시지 전송
+        # 6. 완료 메시지 전송 (Z.4)
+        image_paths = list(anomaly_maps.keys())
         self.result_queue.put({
-            "type":          "completed",
-            "model":         model.cpu(),     # CPU로 이동 (저장용)
-            "y_true":        y_true,
-            "anomaly_scores": anomaly_scores,
-            "anomaly_maps":  anomaly_maps,    # dict[image_path: str → np.ndarray (H,W)]
+            "type":            "completed",
+            "model":           model.cpu(),      # CPU로 이동 (저장용)
+            "y_true":          y_true,
+            "anomaly_scores":  anomaly_scores,
+            "anomaly_maps":    anomaly_maps,     # dict[image_path: str → np.ndarray (H,W)]
+            "image_paths":     image_paths,      # list[str] — anomaly_maps key 순서 보장
+            "duration_seconds": int(time.time() - start_time),
         })
 ```
 
@@ -1097,6 +1105,7 @@ def _get_anomaly_map(model, image: torch.Tensor) -> np.ndarray:
 # utils/model_factory.py
 
 def load_model_for_inference(
+    experiment_id: str,      # 로그 컨텍스트 및 경로 검증용 (Z.7)
     model_path: str,         # experiment.model_path = "./models/{exp_id}/"
     model_config: dict,
     device: str,
@@ -1104,6 +1113,8 @@ def load_model_for_inference(
     """
     저장된 state_dict 로드 후 추론용 모델 반환.
     model_config.model_type에 따라 EfficientAd 또는 Patchcore 초기화.
+    experiment_id는 로드 실패 시 로그에 context를 포함하기 위해 사용한다.
+    실제 모델 로드 경로는 model_path가 결정한다.
     """
     pth_path = Path(model_path) / "model_state_dict.pth"
     state_dict = torch.load(str(pth_path), map_location=device)
@@ -1406,35 +1417,56 @@ def sample_from_pool() -> tuple[str, str]:
 | 이벤트 | 파일 경로 | 형식 | 수행 위치 |
 |--------|-----------|------|-----------|
 | 학습 완료 — 모델 저장 | `./models/{exp_id}/model_state_dict.pth` | `torch.save(model.state_dict(), ...)` | `tab3_training.py` (메인 스레드) |
-| 학습 완료 — 설정 저장 | `./models/{exp_id}/configs.yaml` | `shutil.copy("./configs.yaml", ...)` | `tab3_training.py` (메인 스레드) |
+| 학습 완료 — 설정 저장 | `./models/{exp_id}/configs.yaml` | `save_config_section(section, data, path=cfg_path)` × 3회 (Z.5) | `tab3_training.py` (메인 스레드) |
 | 학습 로그 | `./logs/{exp_id}.log` | 텍스트, 탭 구분자 | `training_worker.py` (백그라운드) |
 | 추론용 모델 로드 | `./models/{exp_id}/model_state_dict.pth` | `torch.load(...)` | `model_factory.load_model_for_inference()` |
 
 > 모델 파일 저장은 백그라운드 스레드가 아닌 **메인 스레드**에서 수행한다 (R-THREAD-01). `result_queue`로 `completed` 메시지를 수신한 후 메인 스레드에서 `torch.save()`를 호출한다.
+>
+> configs.yaml은 `shutil.copy("./configs.yaml", ...)` 대신 `save_config_section()`을 사용한다. `shutil.copy`는 실행 시점 전역 설정을 참조하여 실험별 추적이 불가능하다 (Z.5 확정). 저장 섹션: `"model"`, `"preprocessing"`, `"experiment"`.
 
 ### C.2 anomaly_maps 메모리 관리
 
-`result_queue`를 통해 전달된 `anomaly_maps` (dict[str → np.ndarray])는 크기가 클 수 있다. 탭5 세션 내 캐시 방식:
+`result_queue`를 통해 전달된 `anomaly_maps` (dict[str → np.ndarray])는 크기가 클 수 있다. 탭5 세션 내 캐시 방식은 `cache_manager.set_anomaly_map_cache()`를 사용한다 (Z.6 확정). LRU 3-entry 상한 및 `cached_at` 타임스탬프는 `cache_manager` 내부에서 관리한다.
 
 ```python
 # tabs/tab3_training.py — 완료 처리 시
+from utils.cache_manager import set_anomaly_map_cache
+
 msg = result_queue.get_nowait()   # type == "completed"
 
-# session_state에 저장 (탭5에서 재사용)
-# 각 anomaly_map: float32 (256×256) ≈ 256KB
-# 테스트 이미지 100장 기준 ≈ 25MB — session_state 허용 범위
-st.session_state[f"_anomaly_maps_{exp_id}"] = msg["anomaly_maps"]
+set_anomaly_map_cache(
+    experiment_id=st.session_state["current_experiment_id"],
+    data={
+        "anomaly_maps": msg["anomaly_maps"],   # dict[str, np.ndarray]
+        "image_paths":  msg["image_paths"],    # list[str]
+    },
+)
+```
+
+`set_anomaly_map_cache()` 내부 구현 (utils/cache_manager.py — 05절 §4.2):
+```python
+MAX_ANOMALY_MAP_CACHE = 3
+
+def set_anomaly_map_cache(experiment_id: str, data: dict) -> None:
+    cached_keys = [k for k in st.session_state if k.startswith("_anomaly_maps_")]
+    if len(cached_keys) >= MAX_ANOMALY_MAP_CACHE:
+        oldest = min(cached_keys, key=lambda k: st.session_state[k]["cached_at"])
+        del st.session_state[oldest]
+    st.session_state[f"_anomaly_maps_{experiment_id}"] = {**data, "cached_at": time.time()}
 ```
 
 탭5에서 사용:
 ```python
+from utils.cache_manager import get_anomaly_map_cache
+
 exp_id = st.session_state.selected_experiment_id
-cached_maps = st.session_state.get(f"_anomaly_maps_{exp_id}")
-if cached_maps and image_path in cached_maps:
-    anomaly_map = cached_maps[image_path]
+cached = get_anomaly_map_cache(exp_id)
+if cached and image_path in cached["anomaly_maps"]:
+    anomaly_map = cached["anomaly_maps"][image_path]
 else:
     # 캐시 미스: 모델 재로드 후 추론 (가정 A-05)
-    model = load_model_for_inference(model_path, model_config, device)
+    model = load_model_for_inference(exp_id, model_path, model_config, device)
     _, tensor = apply_preprocessing(image_path, preprocessing_config)
     tensor = tensor.unsqueeze(0)
     anomaly_map = run_inference(model, tensor)
@@ -1596,10 +1628,10 @@ Then:   반환값 ≈ np.percentile(normal_scores, 95)
 
 ---
 
-## Z. 정오표 (Errata)
+## Z. 정오표 (Errata) — ✅ v1.2 본문 반영 완료
 
-> **적용 기준**: 2026-05-09. 05/06/07 문서 확정 이후 본문과 충돌하는 항목을 아래에서 확정한다.  
-> 구현 시 **본문 코드보다 이 절의 수정 코드를 우선 적용**한다.
+> **작성 기준**: 2026-05-09. 05/06/07 문서 확정 이후 발견된 오류 목록.  
+> **v1.2 상태**: 아래 모든 항목이 본문에 통합됐다. **이 절은 이력 참조 전용**이며, 구현 시 본문 코드를 따른다.
 
 ---
 

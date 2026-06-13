@@ -1,10 +1,21 @@
 # 01. Product Overview
 
 > **참조 기준**: [00_Global_Context_Document.md](./00_Global_Context_Document.md)
-> **버전**: v1.2
+> **버전**: v2.0
 > **작성일**: 2026-05-08
-> **최종수정**: 2026-05-29
+> **최종수정**: 2026-06-11
 > **후속 문서**: [02_User_Personas_and_Use_Cases.md](./02_User_Personas_and_Use_Cases.md)
+
+---
+
+## 버전 이력
+
+| 버전 | 날짜 | 변경 요약 |
+|------|------|-----------|
+| v1.0 | 2026-05-08 | 초기 작성 — Streamlit 단독 앱, 모델 탐색 대시보드(탭1~5) |
+| v1.1 | 2026-05-26 | 이중 대시보드 구조 — 비전검사 대시보드(탭1~3) 추가, 사이드바 전환 버튼 |
+| v1.2 | 2026-05-29 | 탭2 대기열 UI, 탭3 학습 단계 인디케이터, 탭2 실시간 차트 추가 |
+| v2.0 | 2026-06-11 | 3개 레포(Explorer/Vision/Dashboard) 구조로 전면 재작성. Golden Path·MVP 범위·성공 지표·인수 기준 React UI 기준으로 교체. Streamlit 내용은 v1.x 참고 섹션으로 이동 (삭제 금지). |
 
 ---
 
@@ -26,87 +37,119 @@
 
 ### A.1 제품 정의
 
-이 제품은 **제조산업 품질검사를 위한 딥러닝 기반 비전검사 시스템**이다.
+**Smart QC Platform**은 제조산업 품질검사를 위한 딥러닝 기반 비전검사 시스템이다.
 
-하나의 Streamlit 앱 안에 **두 개의 대시보드**를 포함한다.
+3개 레포지토리가 역할 분리된 하나의 플랫폼을 구성한다.
 
-| 플랫폼 | 대상 사용자 | 핵심 기능 |
-|----------|------------|---------|
-| **모델 탐색 플랫폼** | AI/ML 엔지니어, 데이터 분석가 | 코드 작성 없이 EfficientAD/PatchCore 학습·평가·비교·자산화 |
-| **비전검사 플랫폼** | 현장 작업자, 품질 관리자 | 검증된 모델로 부품 추론·판정·이력 관리 |
+| 레포 (v2.0 명칭) | 대상 사용자 | 핵심 역할 |
+|------------------|------------|-----------|
+| **smart-qc-explorer** (Explorer) | AI/ML 엔지니어, 데이터 분석가 | 코드 작성 없이 EfficientAD/PatchCore 학습·평가·비교·자산화 |
+| **smart-qc-vision** (Vision) | 현장 작업자, 품질 관리자 | 검증된 모델로 부품 추론·판정·이력 관리 |
+| **smart-qc-dashboard** (Dashboard) | 시스템 공통 | FastAPI REST API + WebSocket + Anomalib ML 레이어. Streamlit은 개발자 보조 도구 |
 
-사이드바의 전환 버튼으로 두 플랫폼을 전환한다. 두 플랫폼은 `session_state` 네임스페이스(`insp_` 접두사)로 격리된다.
+**포트 구성:**
+
+| 컴포넌트 | 포트 | 실행 명령 |
+|----------|------|-----------|
+| Explorer (React) | 5173 | `npm run dev` (smart-qc-explorer) |
+| Vision (React) | 5173 | `npm run dev` (smart-qc-vision) |
+| Dashboard (FastAPI) | 8000 | `uvicorn api.main:app --port 8000` (smart-qc-dashboard) |
+| Dashboard (Streamlit, 보조) | 8501 | `streamlit run app.py` |
+
+> Explorer와 Vision은 동일 포트(5173)를 사용하며, 동시에 실행되지 않는 별개의 React 앱이다.
+
+---
 
 ### A.2 해결하는 문제
+
+> **v2.0 안내**: 아래 P-01~P-05는 v1.x에서 정의된 문제이며 v2.0에서도 내용이 유효하다.
 
 | # | 문제 | 현재 상태 | 이 제품이 해결하는 방식 |
 |---|------|-----------|------------------------|
 | P-01 | 육안 검사의 주관성 | 검사자별 판정 기준 상이, 피로도에 따라 정확도 변동 | 딥러닝 모델로 객관적·일관된 판정 기준 확보 |
-| P-02 | 실험 반복 비용 | 모델·전처리 조합 변경 시마다 코드 수정·재실행 필요 | GUI 기반 파라미터 설정으로 코드 작성 없이 실험 반복 |
+| P-02 | 실험 반복 비용 | 모델·전처리 조합 변경 시마다 코드 수정·재실행 필요 | Explorer GUI 기반 파라미터 설정으로 코드 작성 없이 실험 반복 |
 | P-03 | 실험 재현성 부족 | 실험 조건이 파일·메모·기억에 산재 | `random_seed` + `configs.yaml` 단일 파일로 조건 완전 재현 |
-| P-04 | 모델 비교의 수작업 | 실험별 지표를 수동으로 스프레드시트에 집계 | 실험 히스토리 DB(history.json) + 비교 차트로 한 화면 비교 |
-| P-05 | 모델 자산화 부재 | 학습된 모델을 추론 애플리케이션에 연계할 표준 형식 없음 | `state_dict + configs.yaml` 고정 포맷 저장으로 추론 앱 연계 준비 |
+| P-04 | 모델 비교의 수작업 | 실험별 지표를 수동으로 스프레드시트에 집계 | Explorer Experiments 화면 + 비교 차트로 한 화면 비교 |
+| P-05 | 모델 자산화 부재 | 학습된 모델을 추론 애플리케이션에 연계할 표준 형식 없음 | `state_dict + configs.yaml` 고정 포맷 저장 → Vision 앱 직접 연계 |
+
+---
 
 ### A.3 제품 비전
 
-> "데이터 분석가가 하루 안에 EfficientAD와 PatchCore를 모두 실험하고, 더 나은 모델을 골라 추론 파이프라인에 바로 연결할 수 있는 워크벤치"
+> "AI/ML 엔지니어가 하루 안에 EfficientAD와 PatchCore를 모두 실험하고, 더 나은 모델을 골라 현장 Vision 앱에 바로 연결할 수 있는 엔드-투-엔드 품질검사 워크벤치"
 
-### A.4 MVP 범위 (v1.0)
+- **Explorer**: 학습·분석·모델 자산화
+- **Vision**: 자산화된 모델을 즉시 현장 검사에 투입
+- **Dashboard**: 두 UI를 단일 FastAPI 백엔드로 연결
 
-#### IN SCOPE
+---
+
+### A.4 MVP 범위 (v2.0 — 3개 레포 구현 기준)
+
+#### Explorer IN SCOPE
 
 | 기능 영역 | 포함 항목 |
 |-----------|-----------|
-| 데이터 검증 | MVTec AD 폴더 구조 검증, OK/NG 폴더 형식 자동 감지 및 80/20 자동 분할, 이미지 수 카운트, 썸네일 렌더링, Grayscale 자동 감지 |
-| 전처리 | None / Homomorphic Filter / HE / CLAHE 선택, Resize+Padding 고정, 정규화 선택 |
-| 모델 설정 | EfficientAD (small/medium), PatchCore (WideResNet50/ResNet18/ResNet50) 파라미터 GUI |
-| 학습 실행 | 학습 루프, Progress Bar, 실시간 Loss 곡선, 모델별 학습 단계 스텝 인디케이터, ETA 표시, 학습 중지, 일시정지/재시작, 체크포인트 저장/재시작, 실험 히스토리 저장, 실험 대기열 구성, 일괄 학습 순차 실행 (건너뛰기·실패 처리 포함) |
-| 결과 비교 | Confusion Matrix, ROC Curve, Anomaly Score 분포, 다중 실험 비교 차트 |
-| 시각화 | 3분할 Anomaly Map (원본/GT/Heatmap), Threshold 슬라이더, PNG 저장 |
-| 모델 저장 | state_dict + configs.yaml 고정 포맷 |
-| 배포 | Docker + NVIDIA Container Toolkit, AWS EC2 g4dn.xlarge |
+| **데이터셋 검증** | MVTec AD 및 OK/NG 이진 폴더 구조 자동 감지, 폴더 트리·클래스별 이미지 수 표시, 썸네일 그리드, Grayscale 자동 감지, `background_clean/` 존재 여부 감지 |
+| **전처리 설정** | None / Homomorphic / HE / CLAHE 선택 및 파라미터 설정, 배경 제거 (none / SAM2) 선택, 이미지 크기 설정, 정규화 설정 |
+| **모델 설정** | EfficientAD (small/medium, 학습 스텝·옵티마이저·LR 등), PatchCore (WideResNet50/ResNet18/ResNet50, coreset ratio 등), Threshold 방법(percentile/absolute), 배치 크기, random seed |
+| **배치 학습 큐** | 여러 설정 조합을 큐에 추가 → 순차 실행, 개별 건너뜀 지원 |
+| **학습 실행** | WebSocket 실시간 모니터링, Progress Bar + Loss 차트, 학습 단계 인디케이터, 소요 시간 표시, 일시정지/재개/중단, 체크포인트 저장·재시작 |
+| **실험 결과** | 메트릭 카드 (Accuracy/Precision/Recall/F1/F2/AUC), Confusion Matrix, ROC Curve, Anomaly Score 분포 히스토그램 |
+| **다중 실험 비교** | 체크박스 선택 후 막대/레이더 차트 비교, set_id 기준 배치 비교 테이블 |
+| **모델 저장** | `state_dict + configs.yaml` 고정 포맷, 저장 경로 지정 |
+| **실험 삭제** | 확인 단계 포함 삭제 |
+| **Anomaly Map** | 비동기 job 생성 (캐시 있으면 즉시 완료), Threshold 슬라이더 (0~1.2, 300ms debounce), 결함 유형 필터, TP/FP/TN/FN 그리드, CSV + ZIP 내보내기 |
 
-#### OUT OF SCOPE (v1.0 제외, 향후 확장)
+#### Vision IN SCOPE
+
+| 기능 영역 | 포함 항목 |
+|-----------|-----------|
+| **실시간 검사** | 수동 검사(1회, POST + polling), 자동 검사(WebSocket, 불량 감지 시 자동 중지), 불량만 검사 (1회, defect_only 옵션) |
+| **이미지 표시** | 원본 / Anomaly Map / 이상 영역 오버레이 3패널, `?t={stamp}` cache-bust, 동일 종횡비 동기화 |
+| **판정 표시** | 헤더 행 인라인 verdict pill (양품 초록 / 불량 빨강 + score) |
+| **불량 감지 알림** | DefectPopup 모달 (확인 및 재개 / 검사 종료), GpuWarningBanner (모델 적용 시), 재셔플 toast (3초), 불량없음 경고 toast (3초) |
+| **검사 이력** | 이력 테이블 (5컬럼, PAGE_SIZE=10, 판정 필터링), KPI 카드 4종, 통계 차트 3분할 (단위 20/40/100), CSV 내보내기, 이력 초기화 (확인 모달) |
+| **모델 설정** | 완료 실험 목록 (30초 폴링), 모델 적용 + 이력 자동 초기화, 이미지 소스 경로 설정 |
+| **진입 제한** | NoModelGuard 오버레이 모달 (activeModel=null 시) |
+
+#### Dashboard IN SCOPE
+
+| 기능 영역 | 포함 항목 |
+|-----------|-----------|
+| **Explorer API** | POST /api/dataset/validate, GET /api/config, POST /api/config, /api/queue, /api/training/*, WS /ws/training, /api/experiments/*, /api/anomaly-map/* |
+| **Vision API** | GET/POST /api/inspection/model, POST /api/inspection/run, GET /api/inspection/job/{id}, GET/DELETE /api/inspection/records, GET /api/inspection/records/csv, GET /api/inspection/image+anomaly-map+overlay/last, PATCH /api/inspection/source-path, WS /ws/inspection/auto, GET /api/models |
+| **ML 레이어** | EfficientAD Engine, PatchCore Engine, run_inference(), Evaluator (Anomalib ≥ 1.0) |
+| **영속 저장** | history.json (실험 이력), model_state_dict.pth + configs.yaml (모델 파일), 검사 이력 (서버 메모리) |
+| **Streamlit (보조)** | 개발자 디버그용 — app.py (streamlit run) |
+
+#### OUT OF SCOPE (v2.0 제외, 향후 확장)
 
 | 제외 항목 | 제외 사유 |
 |-----------|-----------|
 | 앙상블 (EfficientAD + PatchCore 가중 평균) | 스케일 정합성·Threshold 정책 추가 설계 필요 |
 | GAN 기반 이미지 증강 | 데이터셋 의존적 효과·학습 안정성 검증 필요 |
-| 전처리 필터 ↔ GAN 증강 적용 순서 설정 | GAN 증강 MVP 제외에 따른 자동 제외 |
 | 다중 사용자 / 권한 관리 | 단일 사용자 워크스테이션 환경 (가정 A-01) |
-| 실시간 카메라 연동 | MVP 범위 초과 |
+| 실시간 카메라 연동 | MVP 범위 초과. test 데이터셋 샘플링으로 대체 |
 | 클라우드 모델 레지스트리 | MLflow/SageMaker 연동은 추론 앱 단계 |
+| 검사 이력 영속 저장 (DB) | 서버 메모리 기반 단순화. 모델 교체 시 초기화 |
+| Explorer-Vision 통합 접근 권한 분리 | 단일 로컬 사용자 환경 |
 
-**비전검사 대시보드 — IN SCOPE**
+---
 
-| 기능 영역 | 포함 항목 |
-|-----------|-----------|
-| 실시간 검사 | 수동 검사(1개 검사) / 자동 검사(3초마다 1개) 버튼, 판정결과·원본·Anomaly Map 3열 표시 |
-| 불량 알림 | 불량 감지 시 팝업, 자동 검사 자동 중지, 확인 버튼으로 팝업 해제 |
-| 검사 이력 | 세션 기반 이력 테이블(5컬럼), CSV 내보내기, KPI 카드(총 검사·양품·불량·불량률), 실시간 Anomaly Score 히스토그램·산점도 (3분할, 단위별 그룹화) |
-| 모델 교체 | history.json의 완료 실험 목록, F1 정렬, 교체 시 이력 초기화 |
-
-**비전검사 대시보드 — OUT OF SCOPE**
-
-| 제외 항목 | 제외 사유 |
-|-----------|-----------|
-| 이력 영속 저장 (DB/파일) | 세션 기반 단순화. 앱 재시작 시 초기화 |
-| 접근 권한 분리 | 단일 로컬 사용자 환경 |
-| 성능 지표 카드 (F1/Accuracy 등) | 현장 실제 사용 시나리오 — 정답 레이블 미공개 원칙 |
-| 실시간 카메라 스트리밍 | MVP 범위 초과. test 데이터셋 샘플링으로 대체 |
-
-### A.5 성공 지표 (측정 기준 포함)
+### A.5 성공 지표 (v2.0 — React UI 기준)
 
 | 지표 | 목표값 | 측정 방법 | 측정 시점 |
 |------|--------|-----------|-----------|
 | 모델 정확도 | AUC ≥ 0.95 (MVTec AD Screw 기준) | `history.json → metrics.auc` | 각 실험 완료 후 |
 | EfficientAD 학습 시간 | 70,000 steps ≤ 20분 (g4dn.xlarge) | `experiment.duration_seconds ≤ 1200` | 실험 완료 후 |
 | PatchCore 학습 시간 | coreset 10% ≤ 10분 (g4dn.xlarge) | `experiment.duration_seconds ≤ 600` | 실험 완료 후 |
-| 단일 실험 사이클 | 설정→학습→평가 ≤ 30분 | 탭1~탭5 E2E 소요 시간 | 통합 테스트 |
-| UI 응답성 | 탭 전환 < 1초, 학습 중 UI 블로킹 없음 | 수동 테스트 | 통합 테스트 |
+| Explorer 단일 실험 사이클 | Dataset→Config→Training→Experiments→AnomalyMap E2E ≤ 30분 | 화면별 소요 시간 합산 | 통합 테스트 |
+| Explorer UI 응답성 | 화면 전환 < 1초, 학습 중 UI 블로킹 없음 (WebSocket 비동기) | 수동 테스트 | 통합 테스트 |
 | 재현성 | 동일 seed+파라미터 → 동일 AUC (소수점 4자리) | 2회 실행 결과 비교 | QA 단계 |
-| 추론 지연 (비전검사) | 이미지 1장 추론 → 판정 결과 표시 ≤ 3초 | 수동 측정 | 통합 테스트 |
-| 자동 검사 타이밍 (비전검사) | 3초 간격 오차 ≤ 0.5초 | 수동 측정 | 통합 테스트 |
+| Vision 추론 지연 | 이미지 1장 수동 검사 → 판정 결과 표시 ≤ 3초 | 수동 측정 | 통합 테스트 |
+| Vision 자동 검사 타이밍 | WS result 수신 간격 ≈ 3초 (오차 ≤ 0.5초) | 수동 측정 | 통합 테스트 |
+| Vision 모델 적용 | 모델 적용 후 첫 검사 가능 상태까지 ≤ 5초 | 수동 측정 | 통합 테스트 |
 
 ---
 
@@ -114,114 +157,153 @@
 
 ### B.1 핵심 사용자 플로우 (Golden Path)
 
-아래는 새로운 실험을 처음부터 완료하는 표준 플로우이다. 각 단계는 탭 번호와 1:1 대응한다.
+#### Explorer Golden Path — 신규 실험 처음부터 완료
 
 ```
-Step 1 [탭1]  데이터 폴더 경로 입력
-              → MVTec AD 구조 검증 (또는 OK/NG 형식 자동 감지)
-              → 폴더 트리, 이미지 수, 썸네일 확인
-              → OK/NG 형식 감지 시 80/20 자동 분할 안내 배너 표시
-              → session_state.dataset_path, dataset_meta 저장
+Step 1 [Dataset 화면]     데이터셋 경로 입력
+                          → POST /api/dataset/validate
+                          → 폴더 트리, 클래스별 이미지 수, 썸네일 확인
+                          → OK/NG 형식 감지 시 80/20 분할 안내 배너
+                          → datasetStore (datasetPath, productName, datasetMeta) 저장
 
-Step 2 [탭2]  전처리 방식 선택 (None / Homomorphic / HE / CLAHE)
-              → 파라미터 조정
-              → 적용 전·후 미리보기 확인
-              → image_size, 정규화 설정
-              → 모델 선택 (EfficientAD / PatchCore)
-              → 공통·전용 파라미터 설정
-              → Threshold 방식·값 설정
-              → 디바이스 확인 (CUDA / CPU)
-              → session_state.preprocessing_config, model_config, device_info 저장
+Step 2 [Config 화면]      전처리 방법 선택 (none / homomorphic / he / clahe)
+                          → 배경 제거 방법 선택 (none / sam2)
+                          → 모델 선택 (EfficientAD / PatchCore)
+                          → 모델별 파라미터, Threshold 방법·값 설정
+                          → POST /api/config
+                          → configStore (preprocessingConfig, modelConfig, deviceInfo) 저장
 
-Step 3 [탭3]  실험명 입력 (또는 자동 생성)
-              → [학습 시작] 클릭
-              → Progress Bar, Loss 곡선, 로그 실시간 확인
-              → 완료 알림 + 소요 시간 확인
+Step 3 [Training 화면]    실험명 입력 (또는 자동 생성)
+                          → [학습 시작] 클릭 → POST /api/training/start
+                          → WS /ws/training 연결 → Progress, Loss 차트, 로그 실시간 확인
+                          → 완료 알림 + 소요 시간 확인
+                          → history.json 기록
 
-Step 4 [탭4]  실험 목록에서 완료된 실험 선택
-              → Confusion Matrix, ROC Curve, Anomaly Score 분포 확인
-              → (선택) 다른 실험과 지표 비교
-              → (선택) 모델 저장
+Step 4 [Experiments 화면] 실험 목록에서 완료 실험 선택
+                          → 메트릭 카드, Confusion Matrix, ROC Curve, Score 분포 확인
+                          → (선택) 다른 실험과 비교
+                          → (선택) POST /api/experiments/{id}/save → 모델 저장
 
-Step 5 [탭5]  선택된 실험의 테스트 이미지 목록 확인
-              → 이미지 선택
-              → 원본 / GT 마스크 / Heatmap 3분할 시각화 확인
-              → Threshold 슬라이더로 이진화 조정
-              → PNG 저장
+Step 5 [AnomalyMap 화면]  선택된 실험의 테스트셋 전체 추론
+                          → POST /api/anomaly-map/{expId}/build → job 시작
+                          → GET /api/anomaly-map/job/{jobId} 폴링 → 완료 대기
+                          → Threshold 슬라이더 조정 (300ms debounce)
+                          → TP/FP/TN/FN 이미지 그리드 확인
+                          → CSV 또는 ZIP 내보내기
 ```
 
-### B.2 탭별 기능 요약
-
-| 탭 | 탭명 | 핵심 입력 | 핵심 출력 | session_state Write |
-|----|------|-----------|-----------|---------------------|
-| 탭1 | 데이터 폴더 구조 | 로컬 경로 텍스트 | 폴더 트리, 이미지 수, 썸네일 | `dataset_path`, `dataset_meta` |
-| 탭2 | 전처리 및 모델 설정 | 전처리 방식, 파라미터, 모델 종류, 하이퍼파라미터 | 전후 미리보기, 설정 요약, 디바이스 정보 | `preprocessing_config`, `model_config`, `device_info` |
-| 탭3 | 학습 시작 + 학습 로그 | 실험명, 학습 시작 버튼 | Progress Bar, Loss 곡선, 로그 | `experiments[exp_id]`, `current_run_status` |
-| 탭4 | 실험 히스토리 + 결과 + 저장 | 실험 선택, 저장 경로 | 지표 카드, 차트, 비교 시각화 | `selected_experiment_id` |
-| 탭5 | 이상 영역 시각화 | 이미지 선택, Threshold 슬라이더 | 3분할 시각화, PNG | `anomaly_map_threshold` |
-
-### B.3 사이드바 구성 (v1.2 변경)
+#### Vision Golden Path — 현장 검사 시작
 
 ```
-┌─────────────────────────────────┐
-│        Smart QC Platform        │
-│  [ 🔬 모델 탐색 플랫폼         ] │  ← 버튼 (active_dashboard == "explorer" 시 강조)
-│  [ 🏭 비전검사 플랫폼          ] │  ← 버튼 (active_dashboard == "inspection" 시 강조)
-└─────────────────────────────────┘
+Step 0 [Model Settings]   학습 완료 실험 목록 확인 (GET /api/models, 30초 폴링)
+                          → 최적 모델 행 선택 → [모델 적용] 클릭
+                          → POST /api/inspection/model
+                          → GpuWarningBanner 표시 (gpu_warning 있는 경우)
+                          → ModelStatusChip 초록으로 전환
+
+Step 1 [Realtime]         수동 검사 또는 자동 검사 선택
+                          수동: [수동 검사 (1개 검사)] 클릭
+                               → POST /api/inspection/run
+                               → polling GET /api/inspection/job/{id} (1초 간격)
+                               → 이미지 3패널 + 판정 pill 갱신
+                          자동: [▶ 자동 검사 (3초마다 1개)] 클릭
+                               → WS /ws/inspection/auto 연결
+                               → result 수신 시 이미지·판정 자동 갱신
+
+Step 2 [불량 감지]        WS type: 'defect_stopped' 수신
+                          → DefectPopup 모달 표시
+                          → [✅ 확인 및 재개]: 새 WS 연결 + 자동 검사 재개
+                          → [🛑 검사 종료]: 팝업 닫기 (자동 검사 유지 중지)
+
+Step 3 [History]          [검사 이력] 탭 이동
+                          → GET /api/inspection/records → 이력 테이블 확인
+                          → KPI 카드 (총검사/양품/불량/불량률) 확인
+                          → 통계 차트 (단위별 그룹화, 히스토그램·산점도)
+                          → [CSV 내보내기] 클릭
 ```
 
-> **v1.2 변경**: 사이드바 타이틀 "Smart QC Dashboard" → **"Smart QC Platform"**, 버튼 레이블 변경.
->
-> - `active_dashboard == "explorer"`: 모델 탐색 플랫폼(탭1~5) 렌더링
-> - `active_dashboard == "inspection"`: 비전검사 플랫폼(탭1~3) 렌더링
-> - 버튼 2개 외 사이드바 추가 콘텐츠 없음
-> - 기존 사이드바 내 정보(데이터셋·디바이스·현재 설정)는 **완전 제거** (v1.1에서 확정)
+---
 
-### B.4 탭 진입 차단 조건 (Guard)
+### B.2 화면별 기능 요약
 
-아래 조건이 충족되지 않으면 해당 탭의 핵심 기능을 렌더링하지 않고 `utils/messages.py`의 표준 메시지를 `st.warning()`으로 표시한다.
+#### Explorer 화면 요약
 
-| 탭 | 차단 조건 | 표시 메시지 키 |
-|----|-----------|---------------|
-| 탭2 | `session_state.dataset_path is None` | `MSG["NO_DATASET"]` |
-| 탭3 | `session_state.model_config is None` | `MSG["NO_MODEL_CONFIG"]` |
-| 탭4 | `len(session_state.experiments) == 0` | `MSG["NO_EXPERIMENTS"]` |
-| 탭5 | `session_state.selected_experiment_id is None` | `MSG["NO_SELECTED_EXP"]` |
+| 화면 | 경로 | 핵심 입력 | 핵심 출력 | Store Write |
+|------|------|-----------|-----------|-------------|
+| Dataset | `/` | 로컬 경로, 제품명 | 폴더 트리, 이미지 수, 썸네일 | `datasetPath`, `productName`, `datasetMeta` |
+| Config | `/config` | 전처리 방법, 배경 제거, 모델 종류, 파라미터 | 디바이스 정보, 설정 요약 | `preprocessingConfig`, `modelConfig`, `deviceInfo`, `queueItems` |
+| Training | `/training` | 실험명, 학습 시작 버튼 | Progress, Loss 차트, 로그 | `trainingStatus`, `progress`, `lossHistory`, `logs` |
+| Experiments | `/experiments` | 실험 선택, 비교 체크박스, 저장 경로 | 메트릭 카드, 차트, 비교 시각화 | `selectedExperimentId` |
+| AnomalyMap | `/anomaly-map` | Threshold 슬라이더, 결함 유형 필터 | Triplet 이미지 그리드, TP/FP/TN/FN 통계 | `threshold` |
 
-차단 탭에서도 탭 자체는 클릭 가능해야 한다. `st.tabs()`는 항상 **5개 탭**을 렌더링하되, 차단 조건에 해당하는 탭의 본문에서 guard 처리한다.
+#### Vision 화면 요약
 
-### B.5 Edge Cases
+| 화면 | 경로 | 핵심 입력 | 핵심 출력 | Store Write |
+|------|------|-----------|-----------|-------------|
+| Realtime Inspection | `/` | 검사 버튼 (수동/자동/불량만/중지) | 이미지 3패널, 판정 pill, 불량 팝업 | `lastResult`, `imageStamp`, `isAutoRunning`, `defectStopped` |
+| History | `/history` | 판정 필터, 단위 선택 | 이력 테이블, KPI 카드, 통계 차트 | — (read only) |
+| Model Settings | `/settings` | 실험 선택, 소스 경로 | 모델 목록 테이블, 적용 버튼 | `activeModel`, `gpuWarning` |
+
+---
+
+### B.3 화면 진입 제한 (Guard)
+
+#### Explorer — Store 기반 진입 차단
+
+| 화면 | 차단 조건 | 동작 |
+|------|-----------|------|
+| Config | `datasetPath === null` | 안내 메시지 표시 (데이터셋 미설정) |
+| Training | `preprocessingConfig === null \|\| modelConfig === null` | 안내 메시지 표시 (설정 미완료) |
+| Experiments | 완료 실험 없음 | 안내 메시지 표시 |
+| AnomalyMap | `selectedExperimentId === null` | 안내 메시지 표시 (실험 미선택) |
+
+#### Vision — NoModelGuard 오버레이
+
+| 화면 | Guard | 동작 |
+|------|-------|------|
+| Realtime Inspection | `activeModel === null` | children 렌더링 + 그 위에 반투명 모달 오버레이. "설정 페이지로 이동" 버튼 → navigate('/settings') |
+| History | `activeModel === null` | 동일 |
+| Model Settings | — | Guard 없음 (항상 접근 가능) |
+
+> **NoModelGuard 특성 (v2.0)**: Streamlit의 렌더링 중단 방식(return)과 달리 children을 항상 렌더링 후 고정 오버레이를 그 위에 표시한다.
+
+---
+
+### B.4 Edge Cases
 
 | # | 상황 | 처리 방식 |
 |---|------|-----------|
-| EC-01 | 입력 경로가 존재하지 않음 | `st.error(ERR_DATASET_NOT_FOUND)` + dataset_path = None 유지 |
-| EC-02 | `train/good/`에 이미지가 0개 | `st.error()` + 탭4 진입 차단 |
-| EC-03 | 지원 포맷 외 파일 포함 | `st.warning()` 안내 후 지원 포맷만 카운트·사용, 학습 차단하지 않음 |
-| EC-04 | Grayscale 이미지 | `st.info(MSG["GRAYSCALE_DETECT"])` + `image_utils.py`에서 자동 RGB 변환 |
-| EC-05 | `ground_truth/` 디렉토리 없음 | 해당 클래스 GT를 빈 마스크(전체 0)로 처리, 탭6 Heatmap은 정상 렌더링 |
-| EC-06 | CUDA 미사용 가능 환경 | CPU fallback, 사이드바에 "CPU" 표시, 학습 진행은 허용 |
-| EC-07 | 학습 중 [학습 중지] 클릭 | 즉시 중단 신호 전달, 데이터 폐기, status="중단"으로 history.json 기록 |
-| EC-12 | 학습 중 [⏸ 일시정지] 클릭 | 현재 step 완료 후 체크포인트 저장, `current_run_status = "paused"`, history.json 기록 안 함 |
-| EC-13 | 일시정지 중 [⏹ 학습 중지] 클릭 | `pause_event.clear()` 후 `stop_event.set()`, 학습 스레드가 stop_event 감지하여 종료, status="중단" 기록 |
-| EC-14 | 체크포인트 파일 손상/호환 불가 | `st.error()` 표시, 재시작 불가 안내, 체크포인트 삭제 버튼 제공 |
-| EC-15 | 체크포인트 재시작 시 experiment_id 충돌 | 새 ID 자동 생성 후 재시작, 사용자에게 `st.info()`로 안내 |
-| EC-08 | configs.yaml 없는 상태에서 불러오기 | 빈 dict 반환, 현재 UI 상태 유지 (오류 발생 금지) |
-| EC-09 | 동일 experiment_id 중복 | uuid4().hex[:4]의 충돌 확률 = 1/65536. 충돌 시 재생성 1회 (최대 2회 시도) |
-| EC-10 | 모델 저장 중 디스크 공간 부족 | `shutil.disk_usage()`로 사전 확인, 여유 < 500MB면 `st.warning()` + 저장 중단 |
-| EC-11 | 탭6에서 GT 마스크 이미지 크기 불일치 | Anomaly Map 크기 기준으로 GT 마스크를 `cv2.resize()` 후 표시 |
-| EC-12 | history.json 파싱 오류 | `st.error()` + 빈 실험 목록 표시, 파일 덮어쓰기 금지 |
-| EC-16 | OK/NG 형식에서 OK 또는 NG 디렉토리 중 하나만 존재 | `st.error(ERR_INVALID_FOLDER_STRUCTURE)` + dataset_path = None 유지 |
-| EC-17 | OK/NG 형식에서 OK 이미지 수 < 5개 | `st.warning()` 표시 (분할 후 학습 데이터 부족 경고), 학습 진행은 허용 |
+| EC-01 | 입력 경로 미존재 | POST /api/dataset/validate 400 → Explorer Dataset 화면 에러 표시 + datasetPath = null 유지 |
+| EC-02 | `train/good/`에 이미지 0개 | 400 응답 + 에러 메시지 → Config/Training 화면 진입 차단 |
+| EC-03 | 지원 포맷 외 파일 포함 | `has_invalid_files=true` 안내 후 지원 포맷만 카운트 사용 |
+| EC-04 | Grayscale 이미지 | `channels == 1` 감지 → `GRAYSCALE_DETECT` 안내, 학습 시 자동 RGB 변환 |
+| EC-05 | `ground_truth/` 없음 | GT를 빈 마스크(전체 0)로 처리, AnomalyMap Triplet은 정상 렌더링 |
+| EC-06 | CUDA 미사용 환경 | CPU fallback, `device_info.device = "cpu"` 표시, 학습 진행 허용 |
+| EC-07 | 학습 중 [학습 중지] 클릭 | POST /api/training/stop → 즉시 중단, status="중단" 기록 |
+| EC-08 | 학습 중 [⏸ 일시정지] 클릭 | POST /api/training/pause → 체크포인트 저장, WS type:"paused" 수신 |
+| EC-09 | 체크포인트 재시작 시 충돌 | 새 experiment_id 자동 생성, 안내 메시지 표시 |
+| EC-10 | 모델 저장 중 디스크 공간 부족 | 여유 < 500MB 시 에러 응답 + 저장 중단 |
+| EC-11 | AnomalyMap GT 크기 불일치 | Anomaly Map 크기 기준으로 GT 리사이즈 후 표시 |
+| EC-12 | history.json 파싱 오류 | 빈 목록 반환, 파일 덮어쓰기 금지 |
+| EC-13 | Vision: activeModel = null 시 검사 클릭 | NoModelGuard 오버레이 표시 (버튼 클릭 자체는 차단되지 않지만 API 호출 전 상태로 진입 불가) |
+| EC-14 | Vision: WS 연결 오류 | setAutoRunning(false), 사용자가 자동 검사 버튼 재클릭으로 재연결 (자동 재연결 없음) |
+| EC-15 | Vision: 불량만 검사 시 불량 이미지 없음 | 에러 대신 amber warning toast (3초 자동 해제) |
+| EC-16 | OK/NG 형식에서 단일 폴더만 존재 | 400 에러 + datasetPath = null 유지 |
+| EC-17 | OK/NG OK 이미지 < 5개 | 경고 표시 (학습 데이터 부족 안내), 학습 진행 허용 |
 
-### B.6 실패 시나리오
+---
+
+### B.5 실패 시나리오
 
 | # | 시나리오 | 감지 방법 | 복구 방법 |
 |---|----------|-----------|-----------|
-| F-01 | 학습 중 GPU OOM | `torch.cuda.OutOfMemoryError` catch | `st.error()` + current_run_status="idle" + batch_size 축소 권장 메시지 |
-| F-02 | Anomalib 모델 초기화 실패 | `Exception` catch in `model_factory.py` | `st.error(ERR_MODEL_INIT_FAILED)` + 로그 파일 기록 |
-| F-03 | history.json 쓰기 실패 (권한·공간) | `OSError` catch | `st.error(ERR_MODEL_SAVE_FAILED)` + session_state에는 유지 (메모리 손실 방지) |
-| F-04 | 학습 완료 후 메트릭 계산 실패 | `Exception` catch in `metrics.py` | status="중단" 처리, metrics=null, 에러 로그 기록 |
-| F-05 | 탭6 모델 재로드 실패 | `FileNotFoundError` catch | `st.error()` + 해당 실험 model_path 확인 안내 |
+| F-01 | 학습 중 GPU OOM | `torch.cuda.OutOfMemoryError` → WS type:"error" 전송 | Explorer Training 화면 에러 표시 + batch_size 축소 권장 |
+| F-02 | Anomalib 모델 초기화 실패 | `Exception` in model_factory.py → 500 응답 | Training 화면 에러 + 로그 파일 기록 |
+| F-03 | history.json 쓰기 실패 | `OSError` 캐치 → 500 응답 | 에러 표시 (메모리 내 실험 상태는 유지) |
+| F-04 | 학습 완료 후 메트릭 계산 실패 | `Exception` in metrics.py | status="중단" 처리, metrics=null, 에러 로그 |
+| F-05 | Vision 모델 로드 실패 (model_path 손상) | `FileNotFoundError` → 500 응답 | Vision Model Settings에서 다른 모델 선택 안내 |
+| F-06 | Vision 수동 검사 타임아웃 (120초) | polling 120s 초과 | InspectionControls 에러 텍스트 표시 |
+| F-07 | AnomalyMap job 실패 | GET /api/anomaly-map/job/{id} status="failed" | BuildSection 에러 표시 + 재시도 버튼 |
 
 ---
 
@@ -239,38 +321,73 @@ Step 5 [탭5]  선택된 실험의 테스트 이미지 목록 확인
 | model_config | 00_Global_Context 1.7절 |
 | dataset_meta | 00_Global_Context 1.5절 |
 | configs.yaml 구조 | 00_Global_Context 1.9절 |
+| inspection_record | 00_Global_Context 1.10절 |
+| inspectionStore 스키마 | [15_UI_UX_Design_Vision.md](./15_UI_UX_Design_Vision.md) 4절 |
+
+---
 
 ### C.2 시스템 구성 참조
 
-시스템 아키텍처(컴포넌트 다이어그램, 디렉토리 구조, 탭별 데이터 흐름)는 [00_Global_Context_Document.md 5절](./00_Global_Context_Document.md#5-system-architecture)에 정의되어 있으며, [04_System_Architecture.md](./04_System_Architecture.md)에서 상세 확장된다.
+시스템 아키텍처(3개 레포 컴포넌트 다이어그램, 디렉토리 구조, 화면별 데이터 흐름)는 [00_Global_Context_Document.md 5절](./00_Global_Context_Document.md#5-system-architecture)에 정의되어 있으며, [04_System_Architecture.md](./04_System_Architecture.md)에서 상세 확장된다.
 
-### C.3 session_state 흐름 요약
+---
+
+### C.3 상태 흐름 요약
+
+#### Explorer Zustand Store 흐름
 
 ```
-탭1 Write: dataset_path, dataset_meta
+Dataset 화면  → datasetStore (datasetPath, productName, datasetMeta)
   ↓
-탭2 Write: preprocessing_config, model_config, device_info
+Config 화면   → configStore (preprocessingConfig, modelConfig, deviceInfo, queueItems)
   ↓
-탭3 Write: experiments[exp_id], current_run_status
+Training 화면 → trainingStore (status, progress, lossHistory, logs)
   ↓
-탭4 Write: selected_experiment_id
+Experiments   → experimentsStore (selectedExperimentId)
   ↓
-탭5 Write: anomaly_map_threshold
+AnomalyMap    → anomalyMapStore (threshold)
 ```
 
-각 키의 타입·제약조건은 [00_Global_Context_Document.md 3.1절](./00_Global_Context_Document.md#31-session_state-초기화-명세)을 따른다.
+#### Vision Zustand Store 흐름
+
+```
+Model Settings → inspectionStore (activeModel, gpuWarning)
+  ↓
+Realtime       → inspectionStore (lastResult, imageStamp, isAutoRunning, defectStopped, reshuffledToast)
+  ↓
+History        → inspectionStore (clearHistory) ← allRecords는 useInspectionRecords 로컬
+```
+
+각 키의 타입·제약조건은 [00_Global_Context_Document.md 3절](./00_Global_Context_Document.md#3-global-state-contract-standard)을 따른다.
 
 ---
 
 ## D. API Contracts
 
-```
-N/A - 이 시스템은 REST API 서버를 포함하지 않는다.
-      Streamlit 단일 프로세스 애플리케이션이며, 외부 클라이언트 접근이 없다.
-      내부 인터페이스(session_state 계약, 파일 I/O 계약)는
-      00_Global_Context_Document.md 3절에 정의되어 있다.
-      상세 인터페이스 명세는 06_API_Specification.md에서 다룬다.
-```
+이 시스템은 FastAPI REST API + WebSocket 서버(smart-qc-dashboard, port 8000)를 포함한다.
+
+전체 API 명세는 [06_API_Specification.md](./06_API_Specification.md)에서 다룬다.
+
+**Explorer API 그룹 요약:**
+
+| 그룹 | 주요 엔드포인트 |
+|------|----------------|
+| 데이터셋 | POST /api/dataset/validate, GET /api/dataset/thumbnail/{class_name} |
+| 설정·큐 | GET/POST /api/config, POST /api/config/preview, GET/POST/DELETE /api/queue/{id} |
+| 학습 | POST /api/training/start·resume·pause·unpause·stop, GET /api/training/checkpoints, POST /api/training/batch/start·skip |
+| 학습 WS | WS /ws/training |
+| 실험 | GET /api/experiments, POST /api/experiments/{id}/save, DELETE /api/experiments/{id} |
+| AnomalyMap | GET /api/anomaly-map/{expId}/status, POST /api/anomaly-map/{expId}/build, GET /api/anomaly-map/job/{jobId}, GET /api/anomaly-map/{expId}/images, GET /api/anomaly-map/{expId}/image/{path}/triplet, GET /api/anomaly-map/{expId}/export/csv, POST /api/anomaly-map/{expId}/export/zip, GET /api/anomaly-map/zip/{jobId} |
+
+**Vision API 그룹 요약:**
+
+| 그룹 | 주요 엔드포인트 |
+|------|----------------|
+| 모델 관리 | GET /api/models, GET/POST /api/inspection/model, PATCH /api/inspection/source-path |
+| 검사 실행 | POST /api/inspection/run, GET /api/inspection/job/{id} |
+| 이미지 | GET /api/inspection/image/last?t={stamp}, GET /api/inspection/anomaly-map/last?t={stamp}, GET /api/inspection/overlay/last?t={stamp} |
+| 이력 | GET/DELETE /api/inspection/records, GET /api/inspection/records/csv |
+| 자동 검사 WS | WS /ws/inspection/auto |
 
 ---
 
@@ -302,25 +419,33 @@ N/A - 이 시스템은 REST API 서버를 포함하지 않는다.
 | **약점** | 메모리 뱅크 크기에 따라 추론 시간 증가, coreset_sampling_ratio 낮으면 recall 감소 |
 | **권장 사용 시나리오** | 학습 데이터 수 적음, 빠른 프로토타이핑 필요 |
 
+---
+
 ### E.2 Anomalib 연동 방침
 
-- Anomalib **≥ 1.0.0 (v1 API)** 기준으로 구현한다 (가정 A-03).
+- Anomalib **≥ 1.0.0 (v1 API)** 기준으로 구현한다.
 - `model_factory.py`에서 EfficientAD Engine, PatchCore Engine을 각각 래퍼 함수로 캡슐화한다.
-- Anomalib 내부 DataModule 대신 커스텀 DataLoader를 사용하여 탭2 전처리 파이프라인과 연동한다.
+- Anomalib 내부 DataModule 대신 커스텀 DataLoader를 사용하여 Config 화면 전처리 파이프라인과 연동한다.
+- Vision의 `run_inference()`는 Dashboard ML 레이어를 통해 동일 Engine을 호출한다.
 - 상세 구현 명세는 [08_AI_ML_Integration.md](./08_AI_ML_Integration.md)에서 다룬다.
+
+---
 
 ### E.3 전처리 파이프라인 위치
 
-전처리(Homomorphic/HE/CLAHE)는 Anomalib DataModule이 아닌 **`utils/image_utils.py`에서 구현**하여 탭2 미리보기와 탭3 학습 루프가 동일 코드를 공유한다.
+전처리(Homomorphic/HE/CLAHE)는 Anomalib DataModule이 아닌 **`utils/image_utils.py`에서 구현**하여 Explorer Config 화면 미리보기와 Training 학습 루프가 동일 코드를 공유한다.
 
 ```
 이미지 로드 (PIL)
   → 채널 변환: Grayscale → RGB (if channels == 1)
+  → 배경 제거 (none / SAM2)
   → 전처리 필터 적용 (None / Homomorphic / HE / CLAHE)
   → Resize + Padding (image_size × image_size, 검정 0)
   → 정규화 (ImageNet 또는 커스텀 mean/std)
   → torch.Tensor 변환
 ```
+
+> **v2.0 추가**: `background_method` 필드 (none/sam2)가 파이프라인에 추가됨. Config 화면 Tab2에서 선택.
 
 ---
 
@@ -332,10 +457,14 @@ N/A - 이 시스템은 REST API 서버를 포함하지 않는다.
 
 | 항목 | 요구사항 |
 |------|----------|
-| **브라우저 호환성** | Chrome ≥ 110, Firefox ≥ 110, Edge ≥ 110. Safari는 미지원 (Streamlit WebSocket 안정성). |
-| **화면 해상도** | 최소 1280×800. 반응형 레이아웃은 Streamlit 기본 제공 범위 내. |
-| **Streamlit 재실행 안전성** | 모든 탭 함수는 Streamlit rerun 시 멱등(idempotent)하게 동작한다. 부작용(파일 쓰기, 모델 초기화)은 버튼 클릭 이벤트 내부에만 위치한다. |
-| **학습 스레드 안전성** | 학습 백그라운드 스레드와 메인 스레드 간 통신은 `queue.Queue`만 사용한다. `st.session_state` 직접 쓰기는 메인 스레드에서만 허용한다. |
+| **브라우저 호환성** | Chrome ≥ 110, Firefox ≥ 110, Edge ≥ 110. Safari는 미지원 (WebSocket 안정성). |
+| **화면 해상도** | 최소 1280×800. 반응형 레이아웃은 Tailwind CSS 유틸리티 범위 내. |
+| **Explorer 기술 스택** | React 19, Vite 8, TypeScript, Zustand v5, react-router-dom v7, Recharts v2, Tailwind CSS v4 |
+| **Vision 기술 스택** | React, Vite, TypeScript, Zustand, react-router-dom v6, Recharts, Tailwind CSS |
+| **Dashboard 기술 스택** | Python 3.12, FastAPI, Uvicorn, Anomalib ≥ 1.0, PyTorch ≥ 2.1, CUDA 12.4 |
+| **API 비동기 안전성** | FastAPI 엔드포인트는 학습 백그라운드 스레드와 asyncio 이벤트 루프 간 통신 시 thread-safe Queue 사용 |
+| **WebSocket 단일 연결** | Explorer WS /ws/training: 화면당 1개. Vision WS /ws/inspection/auto: Tab1 마운트 시 1개, 언마운트 시 cleanup (stop 신호 전송 후 close) |
+| **이미지 cache-bust** | Vision 이미지 URL에 `?t={imageStamp}` 파라미터 필수. imageStamp = setLastResult() 호출 시 Date.now() |
 
 ---
 
@@ -350,6 +479,8 @@ N/A - 이 시스템은 REST API 서버를 포함하지 않는다.
 | 실험 완료 시 AUC 기록 | 성공 지표(AUC ≥ 0.95) 달성 여부 추적 | `history.json → metrics.auc` |
 | 학습 소요 시간 기록 | 성능 목표(EfficientAD ≤ 1200s, PatchCore ≤ 600s) 달성 여부 추적 | `history.json → duration_seconds` |
 | 모델 타입별 실험 수 | EfficientAD vs PatchCore 사용 빈도 | `history.json` 집계 |
+| Vision 검사 이력 | 불량률 추이, 검사 건수 | GET /api/inspection/records → KPI 카드 |
+| GPU 경고 | 모델 적용 시 VRAM 부족 등 경고 | `gpu_warning` 필드 → GpuWarningBanner |
 
 ---
 
@@ -357,62 +488,84 @@ N/A - 이 시스템은 REST API 서버를 포함하지 않는다.
 
 ### H.1 제품 수준 인수 기준 (Acceptance Criteria)
 
-아래 기준을 모두 통과하면 MVP v1.0을 완료로 판정한다.
+아래 기준을 모두 통과하면 MVP v2.0을 완료로 판정한다.
 
 | # | 기준 | 검증 방법 |
 |---|------|-----------|
-| AC-01 | 탭1~탭5 Golden Path 플로우(B.1절)를 오류 없이 완주 | E2E 수동 테스트 |
-| AC-02 | EfficientAD-medium 학습 완료 시 `duration_seconds ≤ 1200` | g4dn.xlarge 실측 |
-| AC-03 | PatchCore (coreset 10%) 학습 완료 시 `duration_seconds ≤ 600` | g4dn.xlarge 실측 |
-| AC-04 | MVTec AD Screw 기준 AUC ≥ 0.95 달성 실험 존재 | history.json 확인 |
-| AC-05 | 동일 seed+파라미터로 2회 실행 시 AUC 소수점 4자리 일치 | 재현성 테스트 |
-| AC-06 | Docker 이미지 빌드 성공 + GPU 컨테이너 정상 실행 | `docker run --gpus all` |
-| AC-07 | 탭 전환 응답 < 1초 (학습 중 포함) | 수동 측정 |
-| AC-08 | 잘못된 폴더 경로 입력 시 탭3 진입 차단 + 경고 메시지 표시 | 수동 테스트 |
+| AC-01 | Explorer Golden Path (B.1절) Dataset→Config→Training→Experiments→AnomalyMap 오류 없이 완주 | E2E 수동 테스트 |
+| AC-02 | Vision Golden Path (B.1절) Model Settings→Realtime→History 오류 없이 완주 | E2E 수동 테스트 |
+| AC-03 | EfficientAD-medium 학습 완료 시 `duration_seconds ≤ 1200` | g4dn.xlarge 실측 |
+| AC-04 | PatchCore (coreset 10%) 학습 완료 시 `duration_seconds ≤ 600` | g4dn.xlarge 실측 |
+| AC-05 | MVTec AD Screw 기준 AUC ≥ 0.95 달성 실험 존재 | history.json 확인 |
+| AC-06 | 동일 seed+파라미터로 2회 실행 시 AUC 소수점 4자리 일치 | 재현성 테스트 |
+| AC-07 | Docker 이미지 빌드 성공 + GPU 컨테이너 정상 실행 | `docker run --gpus all` |
+| AC-08 | Explorer 화면 전환 응답 < 1초 (학습 중 포함) | 수동 측정 |
 | AC-09 | [학습 중지] 클릭 후 history.json에 status="중단" 기록 확인 | 파일 내용 검증 |
-| AC-10 | 모델 저장 후 `./models/{exp_id}/` 디렉토리에 `.pth`와 `configs.yaml` 존재 확인 | 파일 존재 검증 |
-| AC-11 | [⏸ 일시정지] 클릭 후 `./models/checkpoints/{exp_id}_step{N}.ckpt` 파일 존재 확인 | 파일 존재 검증 |
-| AC-12 | 체크포인트에서 재시작 후 중단 지점 이후 step부터 학습 로그 출력 확인 | 수동 테스트 |
+| AC-10 | 모델 저장 후 `./models/{exp_id}/` 에 `.pth`와 `configs.yaml` 존재 | 파일 존재 검증 |
+| AC-11 | [⏸ 일시정지] 클릭 후 `./models/checkpoints/{exp_id}_step{N}.ckpt` 파일 존재 | 파일 존재 검증 |
+| AC-12 | 체크포인트에서 재시작 후 중단 지점 이후 step부터 학습 로그 출력 | 수동 테스트 |
+| AC-13 | Vision 수동 검사: 판정 결과 표시까지 ≤ 3초 | 수동 측정 |
+| AC-14 | Vision activeModel = null 상태에서 Realtime/History 화면 진입 시 NoModelGuard 오버레이 표시 | 수동 테스트 |
+| AC-15 | Vision 불량 감지 시 DefectPopup 표시 + "✅ 확인 및 재개" 클릭 후 자동 검사 재개 | 수동 테스트 |
+| AC-16 | Vision CSV 내보내기 버튼 클릭 시 브라우저 파일 다운로드 트리거 | 수동 테스트 |
+
+---
 
 ### H.2 Given-When-Then 시나리오 (제품 수준)
 
-#### TC-01: 정상 실험 완료 플로우
+#### TC-01: Explorer 정상 실험 완료 플로우
 
 ```
 Given:  MVTec AD Screw 데이터셋이 /app/dataset/screw 에 올바른 구조로 존재한다
+        FastAPI 서버(port 8000)가 실행 중이다
         CUDA 디바이스가 사용 가능하다
-When:   탭1에서 /app/dataset/screw 경로 입력 → 검증 통과
-        탭2에서 전처리 = CLAHE (clipLimit=2.0), image_size=256 및 EfficientAD-medium, train_steps=70000, seed=42 설정
-        탭3에서 [학습 시작] 클릭 → 학습 완료 대기
-        탭4에서 완료된 실험 선택
-        탭5에서 테스트 이미지 선택
+When:   [Dataset] /app/dataset/screw 경로 입력 → POST /api/dataset/validate → 통과
+        [Config] 전처리=CLAHE(clipLimit=2.0), image_size=256, 모델=EfficientAD-medium,
+                 train_steps=70000, seed=42 → POST /api/config
+        [Training] [학습 시작] 클릭 → POST /api/training/start → WS 모니터링 → 완료 대기
+        [Experiments] 완료 실험 선택 → 메트릭 확인
+        [AnomalyMap] build → job 완료 → Threshold 슬라이더 조정
 Then:   history.json에 status="completed" 레코드 존재
         metrics.auc >= 0.95
         duration_seconds <= 1200
         ./models/{exp_id}/model_state_dict.pth 파일 존재
-        3분할 시각화 정상 렌더링
+        AnomalyMap 이미지 그리드 정상 렌더링
 ```
 
-#### TC-02: 학습 중단 플로우
+#### TC-02: Vision 자동 검사 + 불량 감지 플로우
 
 ```
-Given:  탭3에서 학습이 진행 중이다 (current_run_status == "running")
-When:   사용자가 [학습 중지] 버튼을 클릭한다
-Then:   current_run_status == "idle"로 복귀
-        history.json에 status="중단", metrics=null 레코드 추가
-        ./models/{exp_id}/ 디렉토리가 존재하지 않음
-        st.warning(MSG["TRAIN_STOPPED"]) 표시
+Given:  FastAPI 서버가 실행 중이다
+        history.json에 completed 실험이 존재한다
+When:   [Model Settings] 완료 실험 선택 → [모델 적용] 클릭
+        → POST /api/inspection/model → activeModel 설정
+        [Realtime] [▶ 자동 검사] 클릭 → WS /ws/inspection/auto 연결
+        서버에서 type: 'defect_stopped' 메시지 전송
+Then:   DefectPopup 모달 표시 (bg-black/55 오버레이)
+        [✅ 확인 및 재개] 클릭 → setDefectStopped(false) + 새 WS 연결
+        isAutoRunning === true로 복귀
+        이미지 패널 갱신 계속됨
 ```
 
-#### TC-03: 잘못된 경로 입력
+#### TC-03: Explorer 잘못된 경로 입력
 
 ```
-Given:  존재하지 않는 경로 "/nonexistent/path" 를 탭1에 입력한다
-When:   검증 로직이 실행된다
-Then:   st.error(ERR_DATASET_NOT_FOUND) 표시
-        session_state.dataset_path == None 유지
-        탭2 진입 시 MSG["NO_DATASET"] 표시
-        탭3 [학습 시작] 버튼 렌더링 안됨 (guard 적용)
+Given:  존재하지 않는 경로 "/nonexistent/path" 를 Dataset 화면에 입력한다
+When:   POST /api/dataset/validate 호출
+Then:   400 응답 → Dataset 화면 에러 표시
+        datasetPath === null 유지
+        Config 화면에서 "데이터셋 미설정" 안내 메시지
+        Training 화면 진입 차단 (preprocessingConfig === null)
+```
+
+#### TC-04: Vision 모델 미선택 상태 진입
+
+```
+Given:  앱 최초 진입 (activeModel === null)
+When:   사용자가 "/" 경로(Realtime Inspection)에 접근
+Then:   Tab1Realtime 컴포넌트가 렌더링됨 (NoModelGuard는 차단이 아닌 오버레이)
+        반투명 모달 오버레이 표시 ("모델 미선택" + "설정 페이지로 이동" 버튼)
+        "설정 페이지로 이동" 클릭 → navigate('/settings')
 ```
 
 ---
@@ -445,50 +598,157 @@ Then:   st.error(ERR_DATASET_NOT_FOUND) 표시
   ↓
 13_QA_and_Testing_Strategy
 14_Deployment_and_Release_Plan
+15_UI_UX_Design_Explorer (완료)
+15_UI_UX_Design_Vision (완료)
 ```
 
-### I.2 구현 작업 분류 (2일 MVP 기준)
+### I.2 레포별 병렬 개발 전략
 
-| Day | 시간 블록 | 담당 | 작업 |
-|-----|-----------|------|------|
-| Day 1 오전 1h | 09:00~10:00 | A | 프로젝트 구조 초기 세팅, requirements.txt |
-| Day 1 오전 1h | 09:00~10:00 | B | session_state_init.py 구현 |
-| Day 1 오전 1h | 09:00~10:00 | C | config_manager.py, configs_template.yaml |
-| Day 1 오전 2h | 10:00~12:00 | A | 탭1 구현 (폴더 검증, 트리, 썸네일) |
-| Day 1 오전 2h | 10:00~12:00 | B | 통합 탭2 EfficientAD 모델 설정 파트 (tab2_config.py) |
-| Day 1 오전 2h | 10:00~12:00 | C | 통합 탭2 PatchCore 모델 설정 파트 (tab2_config.py) |
-| Day 1 오후 | 13:00~18:00 | A | 탭2 구현 (전처리·모델 설정 통합, 미리보기) (tab2_config.py) |
-| Day 1 오후 | 13:00~18:00 | B | 탭3 EfficientAD 학습 루프 |
-| Day 1 오후 | 13:00~18:00 | C | 탭3 PatchCore 학습 루프 |
-| Day 2 오전 | 09:00~13:00 | A | 탭5 구현 |
-| Day 2 오전 | 09:00~13:00 | B | 탭4 전반 (히스토리, 상세 결과) |
-| Day 2 오전 | 09:00~13:00 | C | 탭4 후반 (비교 차트, 저장) + Docker |
-| Day 2 오후 | 14:00~18:00 | A+B+C | 통합 테스트, 버그 수정 |
+```
+[smart-qc-dashboard] FastAPI 라우터 + ML 레이어 구현
+       │
+       ├── Explorer API (POST /api/dataset/*, /api/config/*, /api/training/*, ...)
+       │         ↓ 동시 가능
+       └── Vision API (/api/inspection/*, /api/models, /ws/inspection/auto)
+                 ↓
+[smart-qc-explorer] Explorer React UI 구현
+[smart-qc-vision]   Vision React UI 구현
+  (Dashboard API 준비되는 화면부터 순차 연동)
+```
 
-> **역할 상세**: [역할분담표_비전검사_대시보드.md](./역할분담표_비전검사_대시보드.md) 참조
+**레포 간 의존성 핵심 계약:**
+
+| 계약 항목 | Explorer 의존 | Vision 의존 |
+|-----------|-------------|------------|
+| history.json 스키마 | 쓰기 전용 (save_history) | 읽기 전용 (load_history) |
+| experiment_id 형식 | 생성 주체 | 참조 주체 |
+| `/api/models` 응답 | — | activeModel 적용 전 목록 조회 |
+| 이미지 파일 경로 | dataset_path 설정 | source_path PATCH 후 사용 |
 
 ---
 
 ---
 
-### B.6 비전검사 대시보드 Golden Path
+# v1.x 참고 (Streamlit 기반 — 삭제 금지)
+
+> 이하 내용은 v1.x Streamlit 구현 기준입니다. v2.0 React/FastAPI UI가 공식 구현입니다.
+> 설계 결정 참고, 탭 기반 플로우 이해를 위해 보존합니다.
+
+---
+
+### v1.x A.1 제품 정의 (Streamlit 단일 앱)
+
+하나의 Streamlit 앱 안에 **두 개의 대시보드**를 포함한다.
+
+| 플랫폼 | 대상 사용자 | 핵심 기능 |
+|----------|------------|---------|
+| **모델 탐색 플랫폼** | AI/ML 엔지니어, 데이터 분석가 | 코드 작성 없이 EfficientAD/PatchCore 학습·평가·비교·자산화 |
+| **비전검사 플랫폼** | 현장 작업자, 품질 관리자 | 검증된 모델로 부품 추론·판정·이력 관리 |
+
+사이드바의 전환 버튼으로 두 플랫폼을 전환한다. 두 플랫폼은 `session_state` 네임스페이스(`insp_` 접두사)로 격리된다.
+
+---
+
+### v1.x B.1 Golden Path (Streamlit 탭 기반)
+
+**모델 탐색 플랫폼:**
 
 ```
-Step 0 [사이드바]  [🏭 비전검사 대시보드] 클릭
-                  → active_dashboard = "inspection"
-Step 1 [탭3]      딥러닝 모델 교체 탭 진입
-                  → 완료 실험 목록 확인 (F1 내림차순)
-                  → 최적 모델 [적용] 클릭 → 확인 → insp_active_model 설정
-Step 2 [탭1]      실시간 검사 탭 진입
-                  → 적용 모델명 상단 표시 확인
-                  → [수동 검사 (1개 검사)] 클릭 → 판정결과/원본/Anomaly Map 확인
-                  → [자동 검사 (3초마다 1개)] 클릭 → 자동 루프 시작
-Step 3 [팝업]     불량 감지 → 팝업 확인 → 자동 검사 중지
-Step 4 [탭2]      검사 이력 및 통계 탭 진입
-                  → 이력 테이블 확인 (번호/시각/이미지명/판정결과/Score)
-                  → KPI 카드(총 검사/양품/불량/불량률) 확인
-                  → [CSV 내보내기] 클릭
+Step 1 [탭1]  데이터 폴더 경로 입력 → MVTec AD 구조 검증
+              → session_state.dataset_path, dataset_meta 저장
+Step 2 [탭2]  전처리 방식 선택 → 파라미터 설정 → 전후 미리보기 확인
+              → 모델 선택 → 파라미터 설정 → Threshold 방식·값 설정
+              → session_state.preprocessing_config, model_config, device_info 저장
+Step 3 [탭3]  실험명 입력 → [학습 시작] 클릭
+              → Progress Bar, Loss 곡선, 로그 실시간 확인
+Step 4 [탭4]  실험 목록에서 완료 실험 선택 → 지표 확인 → (선택) 저장
+Step 5 [탭5]  이미지 선택 → 3분할 시각화 확인 → Threshold 슬라이더 조정 → PNG 저장
 ```
+
+**비전검사 대시보드:**
+
+```
+Step 0 [사이드바]  [🏭 비전검사 대시보드] 클릭 → active_dashboard = "inspection"
+Step 1 [탭3]       완료 실험 목록 → 최적 모델 [적용] → insp_active_model 설정
+Step 2 [탭1]       [수동 검사 (1개 검사)] 클릭 → 4열 결과 확인
+                   [자동 검사 (3초마다 1개)] 클릭 → 자동 루프 시작
+Step 3 [팝업]      불량 감지 → st.dialog 팝업 → [확인 및 재개] 또는 [검사 종료]
+Step 4 [탭2]       이력 테이블, KPI 카드 확인 → [CSV 내보내기]
+```
+
+---
+
+### v1.x B.2 탭별 기능 요약 (Streamlit)
+
+**모델 탐색 대시보드:**
+
+| 탭 | 탭명 | 핵심 입력 | 핵심 출력 | session_state Write |
+|----|------|-----------|-----------|---------------------|
+| 탭1 | 데이터 폴더 구조 | 로컬 경로 텍스트 | 폴더 트리, 이미지 수, 썸네일 | `dataset_path`, `dataset_meta` |
+| 탭2 | 전처리 및 모델 설정 | 전처리 방식, 파라미터, 모델 종류 | 전후 미리보기, 설정 요약, 디바이스 | `preprocessing_config`, `model_config`, `device_info` |
+| 탭3 | 학습 시작 + 학습 로그 | 실험명, 학습 시작 버튼 | Progress Bar, Loss 곡선, 로그 | `experiments[exp_id]`, `current_run_status` |
+| 탭4 | 실험 히스토리 + 결과 + 저장 | 실험 선택, 저장 경로 | 지표 카드, 차트, 비교 시각화 | `selected_experiment_id` |
+| 탭5 | 이상 영역 시각화 | 이미지 선택, Threshold 슬라이더 | 3분할 시각화, PNG | `anomaly_map_threshold` |
+
+---
+
+### v1.x B.3 사이드바 구성 (Streamlit v1.2)
+
+```
+┌─────────────────────────────────┐
+│        Smart QC Platform        │
+│  [ 🔬 모델 탐색 플랫폼         ] │  ← 버튼 (active_dashboard == "explorer" 시 강조)
+│  [ 🏭 비전검사 플랫폼          ] │  ← 버튼 (active_dashboard == "inspection" 시 강조)
+└─────────────────────────────────┘
+```
+
+- `active_dashboard == "explorer"`: 모델 탐색 플랫폼(탭1~5) 렌더링
+- `active_dashboard == "inspection"`: 비전검사 플랫폼(탭1~3) 렌더링
+- 버튼 2개 외 사이드바 추가 콘텐츠 없음 (v1.1에서 데이터셋·디바이스 표시 완전 제거)
+
+---
+
+### v1.x B.4 탭 진입 차단 조건 (Streamlit guard)
+
+| 탭 | 차단 조건 | 표시 메시지 키 |
+|----|-----------|---------------|
+| 탭2 | `session_state.dataset_path is None` | `MSG["NO_DATASET"]` |
+| 탭3 | `session_state.model_config is None` | `MSG["NO_MODEL_CONFIG"]` |
+| 탭4 | `len(session_state.experiments) == 0` | `MSG["NO_EXPERIMENTS"]` |
+| 탭5 | `session_state.selected_experiment_id is None` | `MSG["NO_SELECTED_EXP"]` |
+
+---
+
+### v1.x A.4 MVP 범위 — 비전검사 대시보드 (Streamlit)
+
+**IN SCOPE:**
+
+| 기능 영역 | 포함 항목 |
+|-----------|-----------|
+| 실시간 검사 | 수동 검사(1개 검사) / 자동 검사(3초마다 1개) 버튼, 판정결과·원본·Anomaly Map 4열 표시 |
+| 불량 알림 | 불량 감지 시 st.dialog 팝업, 자동 검사 자동 중지, 확인 버튼으로 팝업 해제 |
+| 검사 이력 | 세션 기반 이력 테이블(5컬럼), CSV 내보내기, KPI 카드(총 검사·양품·불량·불량률), 통계 차트 3분할(단위별 그룹화) |
+| 모델 교체 | history.json의 완료 실험 목록, F1 정렬, 교체 시 이력 초기화 |
+
+**OUT OF SCOPE:**
+
+| 제외 항목 | 제외 사유 |
+|-----------|-----------|
+| 이력 영속 저장 (DB/파일) | 세션 기반 단순화. 앱 재시작 시 초기화 |
+| 접근 권한 분리 | 단일 로컬 사용자 환경 |
+| 성능 지표 카드 (F1/Accuracy) | 현장 실제 사용 — 정답 레이블 미공개 원칙 |
+| 실시간 카메라 스트리밍 | test 데이터셋 샘플링으로 대체 |
+
+---
+
+### v1.x A.5 성공 지표 (Streamlit 기준)
+
+| 지표 | 목표값 | 측정 방법 | 측정 시점 |
+|------|--------|-----------|-----------|
+| 단일 실험 사이클 | 설정→학습→평가 ≤ 30분 | 탭1~탭5 E2E 소요 시간 | 통합 테스트 |
+| UI 응답성 | 탭 전환 < 1초, 학습 중 UI 블로킹 없음 | 수동 테스트 | 통합 테스트 |
+| 추론 지연 (비전검사) | 이미지 1장 추론 → 판정 결과 표시 ≤ 3초 | 수동 측정 | 통합 테스트 |
+| 자동 검사 타이밍 | 3초 간격 오차 ≤ 0.5초 | 수동 측정 | 통합 테스트 |
 
 ---
 

@@ -1,923 +1,1795 @@
-# 06. API Specification (Internal Interface Contracts)
+# 06. API Specification
 
-> **참조 문서**: `04_System_Architecture.md` §B.3 (모듈 책임 명세), `05_Data_Model_and_Storage_Strategy.md`
-> **버전**: v1.1
+> **참조 문서**: [04_System_Architecture.md](./04_System_Architecture.md) §B.3, [05_Data_Model_and_Storage_Strategy.md](./05_Data_Model_and_Storage_Strategy.md)
+> **버전**: v2.0
 > **작성일**: 2026-05-09
-> **수정일**: 2026-05-26 — v1.1: 비전검사 대시보드 인터페이스 추가 (§1 파일 목록, §2.3, §7 Guard, §9 체크리스트)
-> **목적**: 이 시스템은 REST API가 없다. 이 문서는 `utils/` 레이어의 모든 공개 함수 인터페이스, 에러 계약, Queue 메시지 프로토콜, tab3 소비 알고리즘을 단일 참조점으로 확정한다.
->
-> **04와의 역할 분리**: 04.B.3에서 확정된 함수 시그니처는 이 문서에서 반복하지 않는다. 이 문서는 04에서 미정의된 항목(에러 계약, Queue 프로토콜, tab3 소비 루프, 신규 모듈)만 추가로 명세한다.
+> **최종수정**: 2026-06-11
+> **변경 요약**: v2.0 — 전면 재작성. FastAPI 엔드포인트 기준. v1.x Streamlit utils 인터페이스 명세는 §10(v1.x 참고)으로 이동.
 
 ---
 
 ## 목차
 
-1. [확정 모듈 파일 목록](#1-확정-모듈-파일-목록)
-2. [신규 모듈 인터페이스](#2-신규-모듈-인터페이스)
-3. [공개 함수 에러 계약 통합표](#3-공개-함수-에러-계약-통합표)
-4. [Queue 메시지 프로토콜 공식 명세](#4-queue-메시지-프로토콜-공식-명세)
-5. [tab3 Queue 소비 알고리즘](#5-tab3-queue-소비-알고리즘)
-6. [stop_event 경쟁 조건 처리 규칙](#6-stop_event-경쟁-조건-처리-규칙)
-7. [탭 Guard 조건 및 session_state 쓰기 권한](#7-탭-guard-조건-및-session_state-쓰기-권한)
-8. [모듈 간 호출 권한 매트릭스](#8-모듈-간-호출-권한-매트릭스)
-9. [구현 검증 체크리스트](#9-구현-검증-체크리스트)
+1. [기본 설정](#1-기본-설정)
+2. [데이터셋 API](#2-데이터셋-api)
+3. [설정·큐 API](#3-설정큐-api)
+4. [학습 제어 API](#4-학습-제어-api)
+5. [실험 히스토리 API](#5-실험-히스토리-api)
+6. [Anomaly Map API](#6-anomaly-map-api)
+7. [비전검사 API](#7-비전검사-api)
+8. [WebSocket 프로토콜 명세](#8-websocket-프로토콜-명세)
+9. [공통 스키마 참조](#9-공통-스키마-참조)
+10. [v1.x 참고 — Streamlit utils 인터페이스](#10-v1x-참고--streamlit-utils-인터페이스)
 
 ---
 
-## 1. 확정 모듈 파일 목록
+## 1. 기본 설정
 
-04_System_Architecture.md의 디렉토리 구조에 05에서 추가된 파일을 포함하여 최종 확정한다.
+### 1.1 서버 정보
 
-```
-utils/
-├── __init__.py
-├── session_state_init.py   # 04.B.3.3 확정
-├── config_manager.py       # 04.B.3.3 + 05.§4 확정
-├── messages.py             # 04.B.3.3 확정
-├── image_utils.py          # 04.B.3.3 + 08 확정
-├── metrics.py              # 04.B.3.3 + 08 확정
-├── model_factory.py        # 04.B.3.3 + 08 확정
-├── training_worker.py      # 04.B.3.3 + 08 확정
-├── storage.py              # 05 신규 추가 — §2.1 참조
-└── cache_manager.py        # 05 신규 추가 — §2.2 참조
+| 항목 | 값 |
+|------|----|
+| **진입점** | `uvicorn api.main:app --reload --port 8000` |
+| **baseURL** | `http://localhost:8000` |
+| **Content-Type** | `application/json` |
+| **OpenAPI 문서** | `http://localhost:8000/docs` |
+| **CORS 허용 Origin** | `http://localhost:5173`, `http://localhost:5174` |
+| **CORS 허용 Methods** | `*` (GET, POST, PUT, PATCH, DELETE, OPTIONS) |
 
-inspection/                 # v1.1 추가 — 비전검사 대시보드 전용
-├── inspection_app.py       # 비전검사 대시보드 진입점 (3탭 렌더링)
-├── tabs/
-│   ├── insp_tab1_realtime.py   # 실시간 검사 탭 (FR-INSP-T1-*)
-│   ├── insp_tab2_history.py    # 검사 이력 및 통계 탭 (FR-INSP-T2-*)
-│   └── insp_tab3_model.py      # 모델 교체 탭 (FR-INSP-T3-*)
-└── utils/
-    ├── insp_session_init.py    # 검사 세션 초기화 + 모델 캐시 (FR-INSP-CMN-02)
-    └── test_sampler.py         # test_pool 구성 + 샘플링 (FR-INSP-T1-06)
-```
+### 1.2 공통 에러 코드
 
-> `storage.py`와 `cache_manager.py`는 04 작성 시점에 `config_manager.py` 내 단순 함수로 설계됐으나, 05에서 책임 분리 원칙에 따라 독립 파일로 분리 확정됐다.
-> `inspection/` 디렉토리는 v1.1에서 추가됐다. `inspection/utils/` 모듈은 `utils/`의 기존 모듈을 읽기 전용으로 참조한다 (R-INSP-04).
+| HTTP 코드 | 발생 조건 | 응답 형식 |
+|-----------|----------|-----------|
+| `400 Bad Request` | 요청 파라미터 오류, 경로 없음, 잘못된 값 | `{"detail": "..."}` |
+| `404 Not Found` | exp_id·job_id·checkpoint 없음 | `{"detail": "..."}` |
+| `409 Conflict` | 학습 중 재시작, 상태 충돌 | `{"detail": "..."}` |
+| `422 Unprocessable Entity` | Pydantic 유효성 검사 실패 | `{"detail": [...]}` |
+| `500 Internal Server Error` | 추론 실패, 파일시스템 오류 | `{"detail": "..."}` |
+
+### 1.3 이미지 응답 규칙
+
+이미지를 반환하는 엔드포인트는 `image/png` 또는 원본 파일의 MIME 타입 바이너리로 응답한다. JSON 응답이 아님에 주의.
 
 ---
 
-## 2. 신규 모듈 인터페이스
+## 2. 데이터셋 API
 
-04.B.3에 포함되지 않은 두 모듈의 전체 공개 인터페이스를 명세한다.
+> **태그**: `탭1 · 데이터셋` | **prefix**: `/api/dataset`
 
-### 2.1 `utils/storage.py`
+---
+
+### POST /api/dataset/validate
+
+데이터셋 경로를 검증하고 메타 정보를 반환한다. MVTec AD 형식과 OK/NG(oking) 이진 형식을 자동 감지한다.
+
+**Request Body**
+
+```json
+{
+  "path": "C:/datasets/bottle",
+  "product_name": "bottle"
+}
+```
+
+| 필드 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| `path` | `string` | ✅ | 데이터셋 루트 경로 (빈 문자열 금지) |
+| `product_name` | `string` | ❌ | 실험 기록용 제품명 (기본값 `""`) |
+
+**Response 200**
+
+```json
+{
+  "dataset_format": "mvtec",
+  "channels": 3,
+  "train_good_count": 209,
+  "test_counts": {"good": 42, "broken_large": 12, "broken_small": 10},
+  "gt_counts": {"broken_large": 12, "broken_small": 10},
+  "total_test_count": 64,
+  "defect_classes": ["broken_large", "broken_small"],
+  "supported_formats": ["png", "jpg"],
+  "has_invalid_files": false,
+  "invalid_file_count": 0,
+  "folder_tree": "bottle/\n  train/\n    good/ (209)\n  test/\n    ...",
+  "has_background_clean": false,
+  "oking_ok_dir": null,
+  "oking_ng_dir": null,
+  "oking_ok_count": null,
+  "oking_ng_count": null,
+  "train_ratio": null
+}
+```
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `dataset_format` | `"mvtec" \| "oking"` | 감지된 데이터셋 형식 |
+| `channels` | `int` | 이미지 채널 수 (1=그레이스케일, 3=RGB) |
+| `train_good_count` | `int` | 학습 정상 이미지 수 |
+| `test_counts` | `dict[str, int]` | 테스트 클래스별 이미지 수 |
+| `gt_counts` | `dict[str, int]` | GT 마스크 클래스별 수 (MVTec 전용) |
+| `total_test_count` | `int` | 전체 테스트 이미지 수 |
+| `defect_classes` | `list[str]` | 결함 클래스 목록 |
+| `has_invalid_files` | `bool` | 지원되지 않는 형식 파일 존재 여부 |
+| `invalid_file_count` | `int` | 지원되지 않는 파일 수 |
+| `folder_tree` | `string` | 폴더 구조 텍스트 |
+| `has_background_clean` | `bool` | `{dataset_path}/background_clean/` 폴더 존재 여부 |
+| `oking_ok_dir` | `string \| null` | OK 폴더 경로 (oking 형식 전용) |
+| `oking_ng_dir` | `string \| null` | NG 폴더 경로 (oking 형식 전용) |
+| `oking_ok_count` | `int \| null` | OK 이미지 수 (oking 형식 전용) |
+| `oking_ng_count` | `int \| null` | NG 이미지 수 (oking 형식 전용) |
+| `train_ratio` | `float \| null` | 학습/전체 비율 (oking 형식 전용) |
+
+**에러**
+
+| 코드 | 조건 |
+|------|------|
+| `400` | `path`가 비어있거나 존재하지 않는 경로, 지원되지 않는 데이터셋 형식 |
+
+---
+
+### GET /api/dataset/thumbnail/{class_name}
+
+특정 클래스의 대표 썸네일 이미지를 반환한다.
+
+**Path Parameter**
+
+| 파라미터 | 타입 | 설명 |
+|---------|------|------|
+| `class_name` | `string` | 클래스 이름 (`good`, `broken_large` 등) |
+
+**Query Parameter**
+
+| 파라미터 | 타입 | 필수 | 설명 |
+|---------|------|------|------|
+| `dataset_path` | `string` | ✅ | 데이터셋 루트 경로 |
+
+**Response 200**: `image/png` 바이너리
+
+**에러**
+
+| 코드 | 조건 |
+|------|------|
+| `404` | 해당 클래스의 이미지를 찾을 수 없음 |
+
+---
+
+## 3. 설정·큐 API
+
+> **태그**: `탭2 · 설정`, `탭2 · 큐`
+
+---
+
+### GET /api/config
+
+현재 저장된 설정과 device 정보를 반환한다.
+
+**Response 200**
+
+```json
+{
+  "preprocessing_config": {
+    "method": "none",
+    "background_method": "none",
+    "image_size": 256,
+    "params": {}
+  },
+  "model_config": {
+    "model_type": "EfficientAD",
+    "model_size": "S",
+    "train_steps": 70000,
+    "batch_size": 1,
+    "threshold_method": "percentile",
+    "threshold_value": 95.0
+  },
+  "device_info": {
+    "available": true,
+    "free_mb": 4096,
+    "total_mb": 8192,
+    "used_mb": 4096
+  }
+}
+```
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `preprocessing_config` | `dict \| null` | 저장된 전처리 설정 (미설정 시 `null`) |
+| `model_config` | `dict \| null` | 저장된 모델 설정 (미설정 시 `null`) |
+| `device_info` | `dict` | GPU 정보. `available: false`이면 CPU |
+
+---
+
+### POST /api/config
+
+전처리·모델 설정을 서버 메모리에 저장하고 저장된 설정을 반환한다.
+
+**Request Body**
+
+```json
+{
+  "preprocessing_config": {
+    "method": "none",
+    "background_method": "none",
+    "image_size": 256,
+    "params": {}
+  },
+  "model_config": {
+    "model_type": "EfficientAD",
+    "model_size": "S",
+    "train_steps": 70000,
+    "batch_size": 1,
+    "threshold_method": "percentile",
+    "threshold_value": 95.0
+  }
+}
+```
+
+> **주의**: 요청 JSON 키는 `model_config`이다 (`model_cfg` 아님). 서버 내부에서 Pydantic alias를 사용하나 클라이언트는 `model_config` 키를 사용.
+
+**Response 200**: `GET /api/config` 응답과 동일
+
+---
+
+### POST /api/config/preview
+
+현재 학습 이력의 Anomaly Score 기준으로 threshold 값이 정상/결함 비율을 어떻게 나누는지 미리보기한다.
+
+**Request Body**
+
+```json
+{
+  "threshold_method": "percentile",
+  "threshold_value": 95.0
+}
+```
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `threshold_method` | `"percentile" \| "absolute"` | Threshold 결정 방법 |
+| `threshold_value` | `float` | 백분위수 (percentile) 또는 절댓값 (absolute) |
+
+**Response 200**
+
+```json
+{
+  "normal_ratio": 0.95,
+  "defect_ratio": 0.05
+}
+```
+
+비교 대상 데이터가 없으면 두 필드 모두 `null`.
+
+---
+
+### POST /api/config/preview-image
+
+전처리 설정 적용 전/후 이미지를 Base64로 반환한다.
+
+**Request Body**
+
+```json
+{
+  "dataset_path": "C:/datasets/bottle",
+  "background_method": "none",
+  "method": "clahe",
+  "params": {"clip_limit": 2.0, "tile_grid_size": 8},
+  "image_size": 256
+}
+```
+
+| 필드 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| `dataset_path` | `string` | ✅ | 샘플 이미지를 가져올 데이터셋 경로 |
+| `background_method` | `string` | ❌ | 배경 제거 방법 (`"none"` \| `"sam2"`) |
+| `method` | `string` | ✅ | 전처리 방법 (`"none"` \| `"homomorphic"` \| `"he"` \| `"clahe"`) |
+| `params` | `dict \| null` | ❌ | 방법별 파라미터 |
+| `image_size` | `int` | ✅ | 리사이즈 목표 크기 (픽셀) |
+
+**Response 200**
+
+```json
+{
+  "original_b64": "iVBORw0KGgo...",
+  "processed_b64": "iVBORw0KGgo...",
+  "warning": null
+}
+```
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `original_b64` | `string` | 원본 이미지 Base64 PNG |
+| `processed_b64` | `string` | 전처리 후 이미지 Base64 PNG |
+| `warning` | `string \| null` | 경고 메시지 (GPU 부족 등) |
+
+**에러**
+
+| 코드 | 조건 |
+|------|------|
+| `400` | 경로 없음, 이미지 없음, 잘못된 파라미터 |
+
+---
+
+### POST /api/config/yaml/save
+
+현재 서버 메모리의 설정을 `configs.yaml` 파일로 저장한다.
+
+**Request Body**: 없음
+
+**Response 200**
+
+```json
+{"success": true}
+```
+
+**에러**
+
+| 코드 | 조건 |
+|------|------|
+| `400` | 저장할 설정이 없음 |
+| `500` | 파일시스템 쓰기 실패 |
+
+---
+
+### POST /api/config/yaml/load
+
+`configs.yaml` 파일을 읽어 서버 메모리에 반영하고 내용을 반환한다.
+
+**Request Body**: 없음
+
+**Response 200**
+
+```json
+{
+  "preprocessing_config": {...},
+  "model_config": {...}
+}
+```
+
+**에러**
+
+| 코드 | 조건 |
+|------|------|
+| `400` | `configs.yaml` 파일 없음 또는 파싱 실패 |
+
+---
+
+### GET /api/queue
+
+배치 학습 대기열 전체를 반환한다.
+
+**Response 200**
+
+```json
+[
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "name": "EfficientAD-S #1",
+    "preprocessing_config": {...},
+    "model_config": {...},
+    "status": "대기중",
+    "set_id": "set-2026-06-11"
+  }
+]
+```
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `id` | `string` (UUID) | 큐 항목 ID |
+| `name` | `string` | 자동 생성 이름 (`{모델타입} #순번`) |
+| `preprocessing_config` | `dict` | 전처리 설정 |
+| `model_config` | `dict` | 모델 설정 |
+| `status` | `"대기중" \| "실행중" \| "완료" \| "실패" \| "건너뜀"` | 항목 상태 |
+| `set_id` | `string \| null` | 배치 실험 세트 ID (그룹화용) |
+
+---
+
+### POST /api/queue
+
+현재 설정을 배치 대기열에 추가한다.
+
+**Request Body**
+
+```json
+{
+  "preprocessing_config": {...},
+  "model_config": {...},
+  "set_id": "set-2026-06-11"
+}
+```
+
+| 필드 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| `preprocessing_config` | `dict` | ✅ | 전처리 설정 |
+| `model_config` | `dict` | ✅ | 모델 설정 |
+| `set_id` | `string \| null` | ❌ | 실험 세트 식별자 |
+
+**Response 200**
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "EfficientAD-S #1"
+}
+```
+
+---
+
+### DELETE /api/queue/{item_id}
+
+대기열 항목을 삭제한다. `"대기중"` 상태인 항목만 삭제 가능.
+
+**Path Parameter**
+
+| 파라미터 | 타입 | 설명 |
+|---------|------|------|
+| `item_id` | `string` | 큐 항목 ID |
+
+**Response 200**
+
+```json
+{"success": true}
+```
+
+**에러**
+
+| 코드 | 조건 |
+|------|------|
+| `404` | 해당 ID 없음 |
+| `400` | `"대기중"` 이외 상태 항목 삭제 시도 |
+
+---
+
+### PATCH /api/queue/reorder
+
+대기열 항목 순서를 변경한다. `"대기중"` 상태인 항목만 이동 가능.
+
+**Request Body**
+
+```json
+{
+  "item_id": "550e8400-e29b-41d4-a716-446655440000",
+  "direction": "up"
+}
+```
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `item_id` | `string` | 이동할 항목 ID |
+| `direction` | `"up" \| "down"` | 이동 방향 |
+
+**Response 200**
+
+```json
+{"success": true}
+```
+
+**에러**
+
+| 코드 | 조건 |
+|------|------|
+| `404` | 해당 ID 없음 |
+| `400` | `"대기중"` 이외 항목, 이미 처음/마지막 위치 |
+
+---
+
+## 4. 학습 제어 API
+
+> **태그**: `탭3 · 학습` | **prefix**: `/api/training`
+
+---
+
+### POST /api/training/start
+
+단일 설정으로 학습을 시작한다. 학습 스레드를 백그라운드에서 시작하고 즉시 반환.
+
+**Request Body**
+
+```json
+{
+  "experiment_name": "bottle-efficientad-v1"
+}
+```
+
+| 필드 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| `experiment_name` | `string` | ❌ | 실험 이름 (기본값 `""`, 빈 문자열이면 자동 생성) |
+
+**Response 201**
+
+```json
+{
+  "exp_id": "bottle-20260611-143022-a1b2c3"
+}
+```
+
+**에러**
+
+| 코드 | 조건 |
+|------|------|
+| `400` | 설정(`preprocessing_config` 또는 `model_config`)이 서버 메모리에 없음 |
+| `409` | 이미 학습 실행 중 (status != "idle") |
+
+---
+
+### POST /api/training/resume
+
+체크포인트에서 학습을 재개한다.
+
+**Request Body**
+
+```json
+{
+  "checkpoint_name": "ckpt_step_5000_20260611_143022.pkl"
+}
+```
+
+| 필드 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| `checkpoint_name` | `string` | ✅ | 재개할 체크포인트 파일명 |
+
+**Response 201**
+
+```json
+{
+  "exp_id": "bottle-20260611-143022-a1b2c3"
+}
+```
+
+**에러**
+
+| 코드 | 조건 |
+|------|------|
+| `404` | 체크포인트 파일 없음 |
+| `409` | 이미 학습 실행 중 |
+
+---
+
+### POST /api/training/pause
+
+실행 중인 학습에 일시정지 신호를 전송한다. 실제 일시정지는 현재 스텝 완료 후 WS `paused` 메시지로 확인.
+
+**Request Body**: 없음
+
+**Response 200**
+
+```json
+{
+  "success": true,
+  "message": "일시정지 신호를 전송했습니다."
+}
+```
+
+**에러**
+
+| 코드 | 조건 |
+|------|------|
+| `409` | 학습 실행 중이 아님 |
+
+---
+
+### POST /api/training/unpause
+
+일시정지된 학습을 재개한다.
+
+**Request Body**: 없음
+
+**Response 200**
+
+```json
+{
+  "success": true,
+  "message": "학습을 재개합니다."
+}
+```
+
+**에러**
+
+| 코드 | 조건 |
+|------|------|
+| `409` | 일시정지 상태가 아님 |
+
+---
+
+### POST /api/training/stop
+
+실행 중인 학습에 중단 신호를 전송한다. 실제 중단은 현재 스텝 완료 후 WS `stopped` 메시지로 확인.
+
+**Request Body**: 없음
+
+**Response 200**
+
+```json
+{
+  "success": true,
+  "message": "중지 신호를 전송했습니다."
+}
+```
+
+**에러**
+
+| 코드 | 조건 |
+|------|------|
+| `409` | 학습 실행 중이 아님 |
+
+---
+
+### GET /api/training/status
+
+현재 학습 상태를 반환한다. WS 재연결 복구 또는 화면 복귀 시 사용.
+
+**Response 200**
+
+```json
+{
+  "status": "running",
+  "exp_id": "bottle-20260611-143022-a1b2c3",
+  "batch_mode": false,
+  "batch_total": 0,
+  "progress": {
+    "step": 12000,
+    "total": 70000,
+    "loss": 0.003141,
+    "elapsed": 342.5
+  },
+  "current_stage_idx": 1,
+  "current_stage_name": "Feature Extractor 학습",
+  "log_lines": ["[14:30:22] 학습 시작", "..."],
+  "loss_history": [
+    {"step": 500, "loss": 0.025},
+    {"step": 1000, "loss": 0.018}
+  ],
+  "last_ckpt_path": null
+}
+```
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `status` | `"idle" \| "running" \| "paused"` | 현재 학습 상태 |
+| `exp_id` | `string \| null` | 실행 중인 실험 ID |
+| `batch_mode` | `bool` | 배치 학습 실행 중 여부 |
+| `batch_total` | `int` | 배치 항목 총 수 |
+| `progress` | `dict \| null` | 진행상황 (`{step, total, loss, elapsed}`) |
+| `current_stage_idx` | `int \| null` | 현재 학습 단계 인덱스 |
+| `current_stage_name` | `string \| null` | 현재 학습 단계 이름 |
+| `log_lines` | `list[string]` | 최근 로그 줄 (최대 100줄) |
+| `loss_history` | `list[dict]` | Loss 히스토리 (`[{step, loss}, ...]`) |
+| `last_ckpt_path` | `string \| null` | 마지막 체크포인트 경로 (일시정지 시) |
+
+---
+
+### GET /api/training/checkpoints
+
+저장된 체크포인트 목록을 반환한다.
+
+**Response 200**
+
+```json
+{
+  "checkpoints": [
+    {
+      "name": "ckpt_step_5000_20260611_143022.pkl",
+      "model_type": "EfficientAD",
+      "created_at": "2026-06-11 14:30:22",
+      "step": 5000,
+      "total_steps": 70000,
+      "batch_idx": null,
+      "total_batches": null,
+      "n_patches": null
+    }
+  ]
+}
+```
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `name` | `string` | 체크포인트 파일명 |
+| `model_type` | `string` | 모델 타입 (`"EfficientAD"` \| `"PatchCore"`) |
+| `created_at` | `string` | 생성 시각 (`"YYYY-MM-DD HH:MM:SS"`) |
+| `step` | `int \| null` | 중단 스텝 (EfficientAD 전용) |
+| `total_steps` | `int \| null` | 전체 스텝 수 (EfficientAD 전용) |
+| `batch_idx` | `int \| null` | 배치 인덱스 (PatchCore 전용) |
+| `total_batches` | `int \| null` | 전체 배치 수 (PatchCore 전용) |
+| `n_patches` | `int \| null` | 누적 패치 수 (PatchCore 전용) |
+
+---
+
+### DELETE /api/training/checkpoints/{name}
+
+체크포인트 파일을 삭제한다.
+
+**Path Parameter**
+
+| 파라미터 | 타입 | 설명 |
+|---------|------|------|
+| `name` | `string` | 삭제할 체크포인트 파일명 |
+
+**Response 200**
+
+```json
+{"success": true}
+```
+
+**에러**
+
+| 코드 | 조건 |
+|------|------|
+| `404` | 해당 체크포인트 없음 |
+
+---
+
+### POST /api/training/batch/start
+
+대기열에 있는 설정들을 순차적으로 학습하는 배치를 시작한다.
+
+**Request Body**: 없음
+
+**Response 201**
+
+```json
+{
+  "exp_id": "bottle-20260611-143022-a1b2c3",
+  "batch_total": 3
+}
+```
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `exp_id` | `string` | 첫 번째 학습 실험 ID |
+| `batch_total` | `int` | 배치 항목 총 수 |
+
+**에러**
+
+| 코드 | 조건 |
+|------|------|
+| `400` | 대기열이 비어있음 |
+| `409` | 이미 학습 실행 중 |
+
+---
+
+### POST /api/training/batch/skip
+
+배치 학습에서 현재 항목을 건너뛰고 다음 항목으로 이동한다.
+
+**Request Body**: 없음
+
+**Response 200**
+
+```json
+{
+  "success": true,
+  "message": "건너뜀 신호를 전송했습니다."
+}
+```
+
+**에러**
+
+| 코드 | 조건 |
+|------|------|
+| `409` | 배치 학습 실행 중이 아님 |
+
+---
+
+### POST /api/training/batch/stop
+
+배치 학습 전체를 중단한다.
+
+**Request Body**: 없음
+
+**Response 200**
+
+```json
+{
+  "success": true,
+  "message": "전체 배치 중단 신호를 전송했습니다."
+}
+```
+
+**에러**
+
+| 코드 | 조건 |
+|------|------|
+| `409` | 배치 학습 실행 중이 아님 |
+
+---
+
+## 5. 실험 히스토리 API
+
+> **태그**: `탭4 · 실험 히스토리` | **prefix**: `/api/experiments`
+
+---
+
+### GET /api/experiments
+
+`history.json`에 저장된 모든 실험 레코드를 반환한다. `created_at` 역순 정렬.
+
+**Response 200**
+
+```json
+[
+  {
+    "experiment_id": "bottle-20260611-143022-a1b2c3",
+    "name": "bottle-efficientad-v1",
+    "status": "completed",
+    "model_type": "EfficientAD",
+    "product_name": "bottle",
+    "created_at": "2026-06-11T14:30:22+09:00",
+    "duration_seconds": 1823,
+    "model_path": "./models/bottle-20260611-143022-a1b2c3",
+    "metrics": {
+      "accuracy": 0.984,
+      "precision": 0.976,
+      "recall": 0.991,
+      "f1_score": 0.983,
+      "f2_score": 0.988,
+      "auc": 0.996,
+      "threshold": 0.312
+    }
+  }
+]
+```
+
+응답 레코드의 전체 필드 구조는 [00_Global_Context_Document.md §1.5](./00_Global_Context_Document.md) `ExperimentRecord` 참조.
+
+---
+
+### DELETE /api/experiments/{exp_id}
+
+실험 레코드를 삭제한다. `history.json`에서 제거하고 연관 모델 파일도 삭제.
+
+**Path Parameter**
+
+| 파라미터 | 타입 | 설명 |
+|---------|------|------|
+| `exp_id` | `string` | 삭제할 실험 ID |
+
+**Response 200**
+
+```json
+{"success": true}
+```
+
+**에러**
+
+| 코드 | 조건 |
+|------|------|
+| `404` | 해당 실험 없음 |
+
+---
+
+### POST /api/experiments/{exp_id}/save
+
+실험의 모델 파일을 지정한 경로에 복사 저장한다.
+
+**Path Parameter**
+
+| 파라미터 | 타입 | 설명 |
+|---------|------|------|
+| `exp_id` | `string` | 저장할 실험 ID |
+
+**Request Body**
+
+```json
+{
+  "save_path": "C:/exports/bottle_model.pth"
+}
+```
+
+**Response 200**
+
+```json
+{
+  "success": true,
+  "saved_path": "C:/exports/bottle_model.pth",
+  "size_mb": 42.3,
+  "warning": null
+}
+```
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `success` | `bool` | 저장 성공 여부 |
+| `saved_path` | `string` | 실제 저장된 경로 |
+| `size_mb` | `float` | 저장된 파일 크기 (MB) |
+| `warning` | `string \| null` | 경고 메시지 (디스크 공간 부족 등) |
+
+**에러**
+
+| 코드 | 조건 |
+|------|------|
+| `404` | 해당 실험 없음 |
+| `400` | `save_path`가 비어있거나 `completed` 상태 아님 |
+| `500` | 파일 복사 실패 |
+
+---
+
+## 6. Anomaly Map API
+
+> **태그**: `탭5 · Anomaly Map` | **prefix**: `/api/anomaly-map`
+>
+> **라우터 선언 순서 주의**: 정적 prefix(`/job/`, `/zip/`)가 동적 `/{exp_id}/` 보다 먼저 선언되어야 FastAPI가 정적 경로를 우선 매칭한다.
+
+---
+
+### GET /api/anomaly-map/{exp_id}/status
+
+실험의 Anomaly Map 캐시 빌드 상태를 반환한다.
+
+**Path Parameter**
+
+| 파라미터 | 타입 | 설명 |
+|---------|------|------|
+| `exp_id` | `string` | 실험 ID |
+
+**Response 200**
+
+```json
+{
+  "built": true,
+  "image_count": 64
+}
+```
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `built` | `bool` | 캐시 빌드 완료 여부 |
+| `image_count` | `int` | 캐시된 이미지 수 (미빌드 시 0) |
+
+**에러**
+
+| 코드 | 조건 |
+|------|------|
+| `404` | 해당 실험 없음 |
+
+---
+
+### POST /api/anomaly-map/{exp_id}/build
+
+Anomaly Map 생성 Job을 시작한다. 이미 캐시가 존재하면 즉시 완료 상태의 job을 반환한다.
+
+**Path Parameter**
+
+| 파라미터 | 타입 | 설명 |
+|---------|------|------|
+| `exp_id` | `string` | 실험 ID |
+
+**Request Body**: 없음
+
+**Response 200**
+
+```json
+{
+  "job_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+}
+```
+
+**에러**
+
+| 코드 | 조건 |
+|------|------|
+| `404` | 해당 실험 없음 또는 모델 파일 없음 |
+
+---
+
+### GET /api/anomaly-map/job/{job_id}
+
+Build 또는 ZIP 생성 Job의 상태를 조회한다.
+
+> **라우터 선언 순서**: 이 엔드포인트는 `/{exp_id}/...` 경로보다 먼저 선언되어야 한다.
+
+**Path Parameter**
+
+| 파라미터 | 타입 | 설명 |
+|---------|------|------|
+| `job_id` | `string` | Job ID |
+
+**Response 200**
+
+```json
+{
+  "status": "completed",
+  "error": null
+}
+```
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `status` | `"pending" \| "running" \| "completed" \| "failed"` | Job 상태 |
+| `error` | `string \| null` | 실패 시 오류 메시지 |
+
+**에러**
+
+| 코드 | 조건 |
+|------|------|
+| `404` | 해당 job_id 없음 |
+
+---
+
+### GET /api/anomaly-map/{exp_id}/images
+
+Anomaly Map 이미지 목록과 TP/FP/TN/FN 통계를 반환한다. 캐시가 없으면 404.
+
+**Path Parameter**
+
+| 파라미터 | 타입 | 설명 |
+|---------|------|------|
+| `exp_id` | `string` | 실험 ID |
+
+**Query Parameters**
+
+| 파라미터 | 타입 | 필수 | 설명 |
+|---------|------|------|------|
+| `threshold` | `float` | ✅ | 정규화된 threshold 값 (0~1.2 범위) |
+| `defect_class` | `string` | ❌ | 결함 유형 필터 (`"전체"` 또는 클래스명, 기본값 `"전체"`) |
+
+**Response 200**
+
+```json
+{
+  "images": [
+    {
+      "image_name": "000.png",
+      "defect_class": "broken_large",
+      "anomaly_score": 0.843,
+      "verdict": "NG",
+      "gt_match": true,
+      "classification": "TP",
+      "image_path": "broken_large/000.png"
+    }
+  ],
+  "score_max": 0.843,
+  "score_avg": 0.412,
+  "tp": 18,
+  "fp": 2,
+  "tn": 38,
+  "fn": 6
+}
+```
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `images` | `list[ImageRow]` | 이미지 목록 |
+| `score_max` | `float` | 최대 Anomaly Score |
+| `score_avg` | `float` | 평균 Anomaly Score |
+| `tp` / `fp` / `tn` / `fn` | `int` | 분류 통계 |
+
+**ImageRow 필드**
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `image_name` | `string` | 파일명 |
+| `defect_class` | `string` | 결함 클래스명 (`"good"` 포함) |
+| `anomaly_score` | `float` | Min-Max 정규화된 Anomaly Score |
+| `verdict` | `"OK" \| "NG"` | 판정 결과 |
+| `gt_match` | `bool` | GT 레이블과 판정 일치 여부 |
+| `classification` | `"TP" \| "FP" \| "TN" \| "FN"` | 분류 결과 |
+| `image_path` | `string` | triplet 등 이미지 API의 `{path:path}` 파라미터에 사용할 값 (`"{class}/{filename}"`) |
+
+**에러**
+
+| 코드 | 조건 |
+|------|------|
+| `400` | threshold 범위 오류 |
+| `404` | 실험 없음 또는 캐시 미빌드 |
+
+---
+
+### GET /api/anomaly-map/{exp_id}/image/{image_path:path}/triplet
+
+원본/GT마스크/히트맵 3분할 합성 이미지를 PNG로 반환한다.
+
+**Path Parameters**
+
+| 파라미터 | 타입 | 설명 |
+|---------|------|------|
+| `exp_id` | `string` | 실험 ID |
+| `image_path` | `string` | `"{class_name}/{image_name}"` 형식 (`ImageRow.image_path` 값) |
+
+**Response 200**: `image/png` 바이너리 (3분할 합성)
+
+**에러**
+
+| 코드 | 조건 |
+|------|------|
+| `400` | `image_path` 형식 오류 (`"/"` 포함 필요) |
+| `404` | 실험 없음, 캐시 없음, 이미지 없음 |
+
+---
+
+### GET /api/anomaly-map/{exp_id}/image/{image_path:path}/original
+
+원본 이미지를 PNG로 반환한다.
+
+> 요청/에러 구조: `/triplet`과 동일
+
+---
+
+### GET /api/anomaly-map/{exp_id}/image/{image_path:path}/gt_mask
+
+GT 마스크 이미지를 PNG로 반환한다. MVTec AD 결함 클래스에만 존재.
+
+> 요청 구조: `/triplet`과 동일
+>
+> **에러 추가**: GT 마스크 파일이 없으면 `404` 반환
+
+---
+
+### GET /api/anomaly-map/{exp_id}/image/{image_path:path}/heatmap
+
+Anomaly Map 히트맵 이미지를 PNG로 반환한다.
+
+> 요청/에러 구조: `/triplet`과 동일
+
+---
+
+### GET /api/anomaly-map/{exp_id}/export/csv
+
+Anomaly Map 결과를 CSV로 다운로드한다.
+
+**Path Parameter**: `exp_id`
+
+**Query Parameters**
+
+| 파라미터 | 타입 | 필수 | 설명 |
+|---------|------|------|------|
+| `threshold` | `float` | ✅ | 정규화된 threshold |
+| `defect_class` | `string` | ❌ | 필터 클래스 (기본값 `"전체"`) |
+
+**Response 200**: `text/csv; charset=utf-8-sig`
+
+```
+Content-Disposition: attachment; filename={exp_id}_results.csv
+```
+
+CSV 컬럼: `image_name`, `defect_class`, `anomaly_score`, `verdict`, `classification`
+
+**에러**
+
+| 코드 | 조건 |
+|------|------|
+| `400` | threshold 오류 |
+| `404` | 실험 없음 또는 캐시 없음 |
+
+---
+
+### POST /api/anomaly-map/{exp_id}/export/zip
+
+Triplet 이미지 전체를 ZIP으로 묶는 Job을 시작한다.
+
+**Path Parameter**: `exp_id`
+
+**Request Body**
+
+```json
+{
+  "threshold": 0.45,
+  "defect_class": "전체"
+}
+```
+
+| 필드 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| `threshold` | `float` | ✅ | 정규화된 threshold |
+| `defect_class` | `string` | ❌ | 필터 클래스 (기본값 `"전체"`) |
+
+**Response 200**
+
+```json
+{
+  "job_id": "a3b8c2d1-f4e7-4b9a-a123-456789abcdef"
+}
+```
+
+**에러**
+
+| 코드 | 조건 |
+|------|------|
+| `400` | threshold 오류 |
+| `404` | 실험 없음 또는 캐시 없음 |
+
+---
+
+### GET /api/anomaly-map/zip/{job_id}
+
+ZIP Job 완료 후 파일을 다운로드한다.
+
+> **라우터 선언 순서**: 이 엔드포인트는 `/{exp_id}/...` 경로보다 먼저 선언되어야 한다.
+
+**Path Parameter**
+
+| 파라미터 | 타입 | 설명 |
+|---------|------|------|
+| `job_id` | `string` | ZIP Job ID |
+
+**Response 200**: `application/zip`
+
+```
+Content-Disposition: attachment; filename={job_id}_anomaly_maps.zip
+```
+
+**에러**
+
+| 코드 | 조건 |
+|------|------|
+| `404` | Job 없음 |
+| `400` | Job 미완료 (pending/running/failed) |
+| `500` | ZIP 파일 생성 실패 |
+
+---
+
+## 7. 비전검사 API
+
+> **태그**: `탭3 · 모델 교체`, `탭1 · 실시간 검사`, `탭2 · 검사 이력`
+
+---
+
+### GET /api/models
+
+`history.json`에서 `status == "completed"` 인 실험 목록을 반환한다. F1 내림차순 정렬.
+
+**Response 200**
+
+```json
+[
+  {
+    "experiment_id": "bottle-20260611-143022-a1b2c3",
+    "name": "bottle-efficientad-v1",
+    "status": "completed",
+    "model_type": "EfficientAD",
+    "product_name": "bottle",
+    "created_at": "2026-06-11 14:30:22",
+    "metrics": {
+      "f1_score": 0.983,
+      "auc": 0.996,
+      ...
+    },
+    ...
+  }
+]
+```
+
+> `metrics.anomaly_scores` 등 히스토리 데이터도 포함 — `POST /api/inspection/model`의 threshold 재계산에 사용.
+
+---
+
+### POST /api/inspection/model
+
+실험 모델을 비전검사에 적용한다. 모델 로드, 검사 이력 초기화, test pool 구성을 수행한다.
+
+**Request Body**
+
+```json
+{
+  "experiment_id": "bottle-20260611-143022-a1b2c3",
+  "source_path": "C:/new-dataset/bottle"
+}
+```
+
+| 필드 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| `experiment_id` | `string` | ✅ | 적용할 실험 ID |
+| `source_path` | `string \| null` | ❌ | 검사 이미지 소스 경로. `null`이면 실험의 `dataset_path` 사용 |
+
+**Response 200**
+
+```json
+{
+  "success": true,
+  "active_model": {
+    "experiment_id": "bottle-20260611-143022-a1b2c3",
+    "name": "bottle-efficientad-v1",
+    "model_path": "./models/bottle-20260611-143022-a1b2c3",
+    "model_type": "EfficientAD",
+    "threshold": 0.472,
+    "dataset_path": "C:/datasets/bottle",
+    "preprocessing_config": {
+      "method": "none",
+      "background_method": "none",
+      "image_size": 256,
+      "params": {}
+    },
+    "score_min": 0.012,
+    "score_max": 0.891,
+    "device": "cuda",
+    "background_method": "none",
+    "product_name": "bottle"
+  },
+  "gpu_warning": null
+}
+```
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `success` | `bool` | 적용 성공 여부 |
+| `active_model` | `dict` | 적용된 모델 정보 (§9.1 `ActiveModel` 참조) |
+| `gpu_warning` | `string \| null` | GPU 메모리 1GB 미만 시 경고 메시지 |
+
+**에러**
+
+| 코드 | 조건 |
+|------|------|
+| `404` | 해당 실험 없음 |
+| `400` | `completed` 상태 아닌 실험, 빈 test pool, 데이터셋 경로 없음 |
+| `500` | 모델 로드 실패 |
+
+---
+
+### GET /api/inspection/model
+
+현재 적용된 모델 정보를 반환한다.
+
+**Response 200**
+
+```json
+{
+  "active_model": { ... }
+}
+```
+
+모델 미선택 시: `{"active_model": null}`
+
+---
+
+### PATCH /api/inspection/source-path
+
+모델 재로드 없이 검사 이미지 소스 경로만 변경한다.
+
+**Request Body**
+
+```json
+{
+  "source_path": "C:/production/bottle"
+}
+```
+
+| 필드 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| `source_path` | `string \| null` | ❌ | 새 소스 경로. `null` 또는 빈 문자열이면 실험의 원래 `dataset_path`로 초기화 |
+
+**Response 200**
+
+```json
+{
+  "success": true,
+  "source_path": "C:/production/bottle"
+}
+```
+
+**에러**
+
+| 코드 | 조건 |
+|------|------|
+| `400` | 모델 미선택, 경로 없음, 빈 pool, 유효성 검사 실패 |
+
+---
+
+### POST /api/inspection/run
+
+수동 검사를 1회 비동기로 실행한다. 즉시 `job_id`를 반환하고 추론은 백그라운드에서 실행.
+
+**Request Body**
+
+```json
+{
+  "defect_only": false
+}
+```
+
+| 필드 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| `defect_only` | `bool` | ❌ | `true`이면 불량 이미지(`gt_label == "불량"`)만 대상으로 샘플링 (기본값 `false`) |
+
+**Response 200**
+
+```json
+{
+  "job_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+}
+```
+
+> 추론 완료 확인: `GET /api/inspection/job/{job_id}` 폴링
+
+---
+
+### GET /api/inspection/job/{job_id}
+
+수동 검사 Job 상태를 조회한다. 완료(`completed` 또는 `failed`) 상태이면 데이터를 반환 후 서버에서 제거된다.
+
+**Path Parameter**
+
+| 파라미터 | 타입 | 설명 |
+|---------|------|------|
+| `job_id` | `string` | Job ID |
+
+**Response 200 — pending/running**
+
+```json
+{
+  "status": "running",
+  "result": null,
+  "error": null
+}
+```
+
+**Response 200 — completed**
+
+```json
+{
+  "status": "completed",
+  "result": {
+    "seq": 42,
+    "inspected_at": "2026-06-11 14:35:22",
+    "image_name": "000.png",
+    "image_path": "C:/datasets/bottle/test/broken_large/000.png",
+    "verdict": "불량",
+    "anomaly_score": 0.843621,
+    "was_reshuffled": false
+  },
+  "error": null
+}
+```
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `status` | `"pending" \| "running" \| "completed" \| "failed"` | Job 상태 |
+| `result` | `InspectionResult \| null` | 완료 시 검사 결과 (§9.2 참조) |
+| `error` | `string \| null` | 실패 시 오류 메시지 |
+
+**에러**
+
+| 코드 | 조건 |
+|------|------|
+| `404` | 해당 job_id 없음 (이미 소비됨 포함) |
+
+---
+
+### GET /api/inspection/image/last
+
+마지막 검사 원본 이미지를 반환한다.
+
+**Response 200**: 원본 파일 포맷 바이너리 (`image/jpeg`, `image/png`, `image/bmp` 중 하나)
+
+**에러**
+
+| 코드 | 조건 |
+|------|------|
+| `404` | 검사 이력 없음, 이미지 파일 없음 |
+
+---
+
+### GET /api/inspection/anomaly-map/last
+
+마지막 검사의 Anomaly Map 히트맵 이미지를 PNG로 반환한다.
+
+**Response 200**: `image/png` 바이너리 (히트맵 컬러맵 적용)
+
+**에러**
+
+| 코드 | 조건 |
+|------|------|
+| `404` | 검사 이력 없음 또는 Anomaly Map 없음 |
+
+---
+
+### GET /api/inspection/overlay/last
+
+마지막 검사의 이상 영역 오버레이 이미지를 PNG로 반환한다.
+
+**Response 200**: `image/png` 바이너리 (원본 위에 threshold 초과 영역 마스크 오버레이)
+
+**에러**
+
+| 코드 | 조건 |
+|------|------|
+| `400` | 모델 미선택 |
+| `404` | 검사 이력 없음 또는 Anomaly Map 없음 |
+
+---
+
+### GET /api/inspection/records
+
+검사 이력 목록을 반환한다. `seq` 역순 정렬. `image_path` 필드는 제외되어 반환.
+
+**Query Parameters**
+
+| 파라미터 | 타입 | 필수 | 설명 |
+|---------|------|------|------|
+| `verdict` | `"양품" \| "불량" \| "전체"` | ❌ | 필터 (기본값 `"전체"`) |
+
+**Response 200**
+
+```json
+[
+  {
+    "seq": 42,
+    "inspected_at": "2026-06-11 14:35:22",
+    "image_name": "000.png",
+    "verdict": "불량",
+    "anomaly_score": 0.843621
+  }
+]
+```
+
+> `image_path` 필드는 보안 상 응답에서 제외됨. 이미지 조회는 `/api/inspection/image/last` 사용.
+
+---
+
+### GET /api/inspection/records/csv
+
+검사 이력 전체를 CSV로 다운로드한다. 필터 없이 전체 반환.
+
+**Response 200**: `text/csv; charset=utf-8-sig`
+
+```
+Content-Disposition: attachment; filename=inspection_history_20260611_143522.csv
+```
+
+CSV 컬럼: `번호`, `시각`, `이미지명`, `판정결과`, `Anomaly Score`
+
+---
+
+### DELETE /api/inspection/records
+
+검사 이력을 초기화한다. test pool과 active model은 유지.
+
+**Response 200**
+
+```json
+{"success": true}
+```
+
+---
+
+## 8. WebSocket 프로토콜 명세
+
+### 8.1 WS /ws/training — 학습 진행상황 Push
+
+Explorer 학습 화면과 연결. 서버 → 클라이언트 단방향 Push (push-only).
+
+**동작 방식**
+1. 연결 즉시 현재 상태 스냅샷 전송 (재연결 복구 지원)
+2. 이후 학습 이벤트 실시간 Push
+3. 단일 사용자 전제: 새 연결이 들어오면 이전 연결의 브로드캐스트 큐가 교체됨
+
+#### 연결 직후 서버 → 클라이언트
+
+```json
+{
+  "type": "snapshot",
+  "status": "running",
+  "exp_id": "bottle-20260611-143022-a1b2c3",
+  "progress": {"step": 12000, "total": 70000, "loss": 0.003141, "elapsed": 342.5},
+  "current_stage_idx": 1,
+  "current_stage_name": "Feature Extractor 학습",
+  "log_lines": ["[14:30:22] 학습 시작", "..."],
+  "loss_history": [{"step": 500, "loss": 0.025}],
+  "last_ckpt_path": null
+}
+```
+
+#### 학습 진행 중 메시지 타입
+
+| `type` | 필드 | 설명 |
+|--------|------|------|
+| `"progress"` | `step: int`, `total: int`, `loss: float`, `elapsed: float` | 학습 진행상황 |
+| `"log"` | `message: string` | 학습 로그 한 줄 |
+| `"stage"` | `stage_idx: int`, `stage_name: string` | 학습 단계 전환 |
+| `"paused"` | `step: int`, `ckpt_path: string` | 일시정지 완료, 체크포인트 경로 |
+| `"completed"` | `exp_id: string`, `auc: float`, `duration_seconds: int`, `message: string` | 학습 완료 |
+| `"stopped"` | `step: int` | 사용자 중단 완료 |
+| `"error"` | `message: string`, `traceback: string` | 학습 중 예외 |
+
+#### 배치 학습 메시지 타입
+
+| `type` | 필드 | 설명 |
+|--------|------|------|
+| `"batch_item_started"` | `exp_id: string`, `queue_idx: int` | 배치 항목 학습 시작 |
+| `"batch_item_skipped"` | — | 현재 항목 건너뜀 완료 |
+| `"batch_item_error"` | `traceback: string` | 배치 항목 오류 (다음 항목 계속 진행) |
+| `"batch_stopped"` | `step: int` | 전체 배치 중단 |
+| `"batch_completed"` | `completed: int`, `failed: int`, `skipped: int` | 전체 배치 완료 |
+
+#### 메시지 발생 순서 불변 조건
+
+- `completed`, `stopped`, `error` 중 정확히 하나가 단일 학습의 종료를 의미한다.
+- `paused`는 종료 메시지가 아니다. 이후 `unpause → progress` 또는 `stop → stopped`로 이어진다.
+
+---
+
+### 8.2 WS /ws/inspection/auto — 자동 검사 Push
+
+Vision 실시간 검사 화면과 연결. 양방향 프로토콜.
+
+**동작 방식**
+1. 클라이언트가 `"start"` 전송 → 서버 자동 검사 루프 시작
+2. 3초 간격으로 추론 실행 후 `type: "result"` Push
+3. 불량 감지 시 `type: "defect_stopped"` Push 후 루프 자동 중지
+4. 클라이언트가 `"stop"` 전송 → `type: "stopped"` Push 후 루프 중지
+
+#### 클라이언트 → 서버 (텍스트 메시지)
+
+| 메시지 | 설명 |
+|--------|------|
+| `"start"` | 자동 검사 루프 시작 |
+| `"stop"` | 자동 검사 루프 중지 요청 |
+
+#### 서버 → 클라이언트 (JSON)
+
+| `type` | 필드 | 설명 |
+|--------|------|------|
+| `"result"` | `seq`, `inspected_at`, `image_name`, `verdict`, `anomaly_score`, `was_reshuffled` | 정상 추론 결과 (§9.2 `InspectionResult` 참조) |
+| `"defect_stopped"` | — | 불량 감지, 루프 자동 중지 |
+| `"stopped"` | — | `"stop"` 메시지 수신 후 확인 |
+| `"error"` | `message: string` | 추론 중 RuntimeError |
+
+#### 자동 검사 타이밍 규칙
+
+- 검사 간격: 3초 (`_INSPECTION_INTERVAL = 3.0`)
+- 검사 완료 후 3초 내 `"stop"` 수신 시 즉시 중지
+- 3초 타임아웃 → 다음 검사 자동 실행
+- 연결 해제 시 `insp_auto_active = False` 자동 설정
+
+---
+
+## 9. 공통 스키마 참조
+
+### 9.1 ActiveModel 구조
+
+`GET /api/inspection/model` 및 `POST /api/inspection/model` 응답의 `active_model` 필드.
+
+```json
+{
+  "experiment_id": "bottle-20260611-143022-a1b2c3",
+  "name": "bottle-efficientad-v1",
+  "model_path": "./models/bottle-20260611-143022-a1b2c3",
+  "model_type": "EfficientAD",
+  "threshold": 0.472,
+  "dataset_path": "C:/datasets/bottle",
+  "preprocessing_config": {
+    "method": "none",
+    "background_method": "none",
+    "image_size": 256,
+    "params": {}
+  },
+  "score_min": 0.012,
+  "score_max": 0.891,
+  "device": "cuda",
+  "background_method": "none",
+  "product_name": "bottle"
+}
+```
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `experiment_id` | `string` | 실험 ID |
+| `name` | `string` | 실험 이름 |
+| `model_path` | `string` | 모델 디렉토리 경로 |
+| `model_type` | `string` | `"EfficientAD"` \| `"PatchCore"` |
+| `threshold` | `float` | 정규화된 판정 threshold [0, 1] |
+| `dataset_path` | `string` | 검사 이미지 소스 경로 (현재 적용 중인 경로) |
+| `preprocessing_config` | `dict` | 전처리 설정 |
+| `score_min` | `float` | 학습 테스트셋 최솟값 (정규화 기준) |
+| `score_max` | `float` | 학습 테스트셋 최댓값 (정규화 기준) |
+| `device` | `"cuda" \| "cpu"` | 추론 디바이스 |
+| `background_method` | `string` | 배경 제거 방법 |
+| `product_name` | `string` | 제품명 |
+
+---
+
+### 9.2 InspectionResult 구조
+
+`GET /api/inspection/job/{job_id}` 응답의 `result` 필드 및 `WS /ws/inspection/auto` `type: "result"` 메시지.
+
+```json
+{
+  "seq": 42,
+  "inspected_at": "2026-06-11 14:35:22",
+  "image_name": "000.png",
+  "image_path": "C:/datasets/bottle/test/broken_large/000.png",
+  "verdict": "불량",
+  "anomaly_score": 0.843621,
+  "was_reshuffled": false
+}
+```
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `seq` | `int` | 검사 순번 (1-based, 서버 메모리 기준) |
+| `inspected_at` | `string` | 검사 시각 (`"YYYY-MM-DD HH:MM:SS"` KST) |
+| `image_name` | `string` | 파일명만 |
+| `image_path` | `string` | 절대 경로 (이력 GET에서는 제외됨) |
+| `verdict` | `"양품" \| "불량"` | 판정 결과 |
+| `anomaly_score` | `float` | 정규화된 Anomaly Score [0, 1] |
+| `was_reshuffled` | `bool` | 이 샘플에서 test pool이 재셔플됐는지 여부 |
+
+---
+
+### 9.3 서버 인메모리 상태 지속성
+
+FastAPI 서버는 in-memory 상태를 사용한다. **서버 재시작 시 아래 상태는 초기화**된다.
+
+| 상태 | 유지 여부 | 영속 저장소 |
+|------|----------|------------|
+| 전처리/모델 설정 | ❌ 초기화 | `configs.yaml` (명시적 저장 시) |
+| 실험 히스토리 | ✅ 유지 | `history.json` |
+| 체크포인트 | ✅ 유지 | 파일시스템 |
+| 비전검사 이력 | ❌ 초기화 | 없음 (세션 한정) |
+| 적용 중인 모델 | ❌ 초기화 | 없음 (재적용 필요) |
+| Anomaly Map 캐시 | ❌ 초기화 | 없음 (재빌드 필요) |
+| 학습 상태 | ❌ 초기화 | 체크포인트로 재개 가능 |
+
+---
+
+## 10. v1.x 참고 — Streamlit utils 인터페이스
+
+> **v1.x 참고 전용**: 아래 내용은 v1.x Streamlit 단독 아키텍처의 `utils/` 레이어 인터페이스 명세다. v2.0에서 REST API로 대체됐으나 `utils/` 모듈은 FastAPI Service Layer와 공유하므로 구현 참조용으로 보존.
+
+### 10.1 utils/storage.py
 
 ```python
-"""
-책임: history.json 읽기/쓰기, 모델 파일 저장/삭제, 로그 파일 접근, 디스크 모니터링.
-금지: st.session_state 직접 접근, Anomalib/torch 직접 import (model 인자만 수신).
-"""
-
-# 상수
-IMAGENET_PENALTY_DIR: Path = Path("./dataset/imagenet_penalty")
-
-# ── history.json ──────────────────────────────────────────────────────────────
-
 def load_history() -> list[dict]:
-    """실험 레코드 전체 로드. 파일 미존재·파싱 실패 모두 [] 반환. 예외 전파 없음."""
+    """파일 미존재·파싱 실패 시 [] 반환. 예외 없음."""
 
 def append_experiment(record: dict) -> None:
-    """
-    레코드 append 후 원자적 쓰기.
-    Raises: RuntimeError("ERR_HISTORY_WRITE_FAILED: ...") — IOError 발생 시.
-    """
+    """원자적 쓰기. Raises: RuntimeError("ERR_HISTORY_WRITE_FAILED")"""
 
 def delete_experiment_from_history(experiment_id: str) -> bool:
-    """
-    해당 ID 제거 후 원자적 쓰기.
-    Returns: True(제거 성공) | False(ID 없음).
-    """
+    """제거 성공 시 True, ID 없음 시 False."""
 
-# ── 모델 저장/삭제 ─────────────────────────────────────────────────────────────
-
-def prepare_model_dir(experiment_id: str) -> Path:
-    """
-    ./models/{experiment_id}/ 생성 후 Path 반환.
-    Raises: RuntimeError — 동일 경로 이미 존재 시 (중복 ID 방지).
-    """
-
-def save_completed_experiment(
-    experiment_id: str,
-    model: object,            # EfficientAd | Patchcore 인스턴스
-    experiment_record: dict   # status="completed" 레코드
-) -> None:
-    """
-    3단계 원자성 프로토콜 실행 (05.§6 참조).
-    Raises: RuntimeError("ERR_MODEL_SAVE_FAILED ...") — 단계1/2 실패 시 (파일 정리 후 raise).
-    Raises: RuntimeError("ERR_HISTORY_WRITE_FAILED ...") — 단계3 실패 시 (파일 보존 후 raise).
-    """
+def save_completed_experiment(experiment_id, model, experiment_record) -> None:
+    """3단계 원자성 프로토콜. Raises: RuntimeError (단계별 에러코드)"""
 
 def delete_experiment(experiment_id: str, model_path: str | None = None) -> None:
-    """
-    history.json 제거 + 모델 디렉토리 삭제 + 로그 파일 삭제.
-    model_path=None이면 파일 삭제 생략 (status="중단" 레코드용).
-    """
-
-def validate_imagenet_penalty_dir() -> tuple[bool, int]:
-    """
-    Returns: (이미지 존재 여부, 이미지 수).
-    EfficientAD 학습 시작 전 tab3에서 호출.
-    """
-
-# ── 로그 파일 ──────────────────────────────────────────────────────────────────
-
-def get_log_writer(experiment_id: str):
-    """
-    ./logs/{experiment_id}.log append 모드 파일 객체 반환 (line-buffered).
-    백그라운드 스레드(TrainingWorker)에서 직접 호출.
-    반환된 파일 객체는 호출자가 close() 책임.
-    """
-
-def read_log_tail(experiment_id: str, n_lines: int = 100) -> str:
-    """최신 n_lines줄 반환. 파일 미존재 시 빈 문자열."""
-
-# ── 디스크 모니터링 ────────────────────────────────────────────────────────────
+    """예외 없음 (ignore_errors=True)"""
 
 def check_disk_space(required_mb: float = 500.0, path: str = ".") -> tuple[bool, float]:
-    """Returns: (충분 여부, 여유 공간 MB)."""
+    """Returns: (충분 여부, 여유 공간 MB)"""
 
-def check_disk_before_save(model_type: str) -> None:
-    """
-    100 MB 미만: RuntimeError("ERR_DISK_SPACE: ...") raise.
-    500 MB 미만: st.warning() 표시 (저장은 허용).
-    Streamlit context에서만 호출 가능 (st.warning 사용).
-    """
+def get_log_writer(experiment_id: str): ...
+def read_log_tail(experiment_id: str, n_lines: int = 100) -> str: ...
 ```
 
----
-
-### 2.2 `utils/cache_manager.py`
+### 10.2 utils/cache_manager.py
 
 ```python
-"""
-책임: session_state 기반 anomaly_map 캐시 CRUD.
-주의: session_state Write 함수이므로 메인 스레드(Streamlit context)에서만 호출.
-"""
-
-MAX_ANOMALY_MAP_CACHE: int = 3  # 동시 보유 최대 실험 수
+MAX_ANOMALY_MAP_CACHE: int = 3
 
 def set_anomaly_map_cache(experiment_id: str, data: dict) -> None:
-    """
-    캐시 저장. 기존 캐시가 MAX_ANOMALY_MAP_CACHE개 이상이면 cached_at 기준
-    가장 오래된 캐시 자동 제거 후 저장.
-
-    data 구조:
-        {
-            "anomaly_maps": np.ndarray,  # shape (N, H, W), float32
-            "image_paths":  list[str]    # 테스트 이미지 경로 목록
-        }
-    cached_at(float)은 이 함수가 time.time()으로 자동 추가.
-    """
+    """캐시 저장. MAX 초과 시 가장 오래된 항목 자동 제거."""
 
 def get_anomaly_map_cache(experiment_id: str) -> dict | None:
-    """
-    캐시 반환. 없으면 None.
-    반환 dict: {"anomaly_maps": np.ndarray, "image_paths": list[str], "cached_at": float}
-    """
+    """반환: {"anomaly_maps": np.ndarray, "image_paths": list[str], "cached_at": float} | None"""
 
 def invalidate_anomaly_map_cache(experiment_id: str) -> None:
-    """
-    특정 실험의 캐시 제거. 키 없으면 no-op.
-    실험 삭제(storage.delete_experiment) 직후 호출.
-    """
+    """특정 실험 캐시 제거. no-op if not exists."""
 ```
+
+### 10.3 v1.x Queue 메시지 프로토콜
+
+`TrainingWorker` → `result_queue` 메시지 TypedDict:
+
+```python
+# 타입: "progress" | "log" | "completed" | "error" | "stopped" | "paused"
+# completed: {"type", "y_true", "anomaly_scores", "anomaly_maps", "image_paths", "model", "duration_seconds"}
+# paused:    {"type", "step", "ckpt_path"}
+# stopped:   {"type", "step"}
+# error:     {"type", "exception", "traceback"}
+```
+
+> v2.0에서는 이 Queue 메시지가 `api/ws/training.py` WebSocket Manager에 의해 소비되어 `WS /ws/training`으로 Push된다. 메시지 필드는 §8.1 참조.
+
+### 10.4 v1.x 탭 Guard 조건
+
+| 탭 | Guard 조건 |
+|----|-----------|
+| 탭2 | `dataset_path is not None` |
+| 탭3 | `dataset_path`, `preprocessing_config`, `model_config` 모두 not None |
+| 탭5 | `selected_experiment_id is not None` |
+
+> v2.0에서는 Guard가 React 프론트엔드(Explorer/Vision)에서 구현된다.
+
+### 10.5 v1.x session_state 쓰기 권한
+
+> 상세 내용: 구 06_API_Specification.md §7.2 참조 (git history에서 확인 가능).
 
 ---
 
-### 2.3 `inspection/utils/` 인터페이스 (v1.1)
-
-#### `inspection/utils/insp_session_init.py`
-
-```python
-"""
-책임: 검사 대시보드 session_state 초기화 + st.cache_resource 기반 모델 캐시.
-금지: 학습 관련 session_state 키 직접 수정, history.json 쓰기.
-"""
-
-@st.cache_resource
-def _load_insp_model(model_path: str, model_type: str, device: str) -> object:
-    """
-    (model_path, model_type, device) 조합이 같으면 캐시 반환.
-    모델 교체 시 호출 측에서 _load_insp_model.clear() 호출 필수.
-    Raises: RuntimeError("ERR_INSP_MODEL_LOAD_FAILED: ...") — pth 파일 없거나 state_dict 불일치.
-    """
-
-def get_insp_model() -> object | None:
-    """
-    insp_active_model 기준으로 _load_insp_model() 호출.
-    insp_active_model is None 이면 None 반환 (예외 전파 없음).
-    """
-
-def init_inspection_session() -> None:
-    """
-    00_Global §1.11 INSPECTION_SESSION_SCHEMA 기준 초기화.
-    멱등성: 이미 존재하는 키는 덮어쓰지 않는다.
-    """
-```
-
-#### `inspection/utils/test_sampler.py`
-
-```python
-"""
-책임: test_pool 구성(build) + 순서 관리(sample).
-금지: st.session_state 직접 수정 (sample_from_pool 제외).
-"""
-
-def build_test_pool(dataset_path: str) -> list[tuple[str, str]]:
-    """
-    dataset_path/test/ 하위 이미지 스캔 → (image_path, gt_label) 리스트.
-    gt_label: "양품" (good/) | "불량" (기타 클래스)  — A-17 레이블 규칙.
-    결과는 random.shuffle() 1회 적용 후 반환.
-    Raises: FileNotFoundError — dataset_path/test/ 미존재 시.
-    Returns: list[tuple[str, str]], 빈 리스트 가능.
-    """
-
-def sample_from_pool() -> tuple[str, str]:
-    """
-    insp_pool_index 위치 항목 반환 후 index 증가.
-    pool 소진 시 shuffle + index 리셋 (A-16: pool 소진 정책).
-    Precondition: insp_test_pool is not None (build_test_pool() 선행 호출 필요).
-    Returns: (image_path, gt_label)
-    """
-```
-
----
-
-## 3. 공개 함수 에러 계약 통합표
-
-> 각 함수가 예외를 raise하는지, 안전하게 기본값을 반환하는지 통합 정리.
-> "예외 없음"은 내부 오류 발생 시 기본값 반환 + WARNING 로그를 의미.
-
-| 모듈 | 함수 | 실패 시 동작 | 비고 |
-|------|------|-------------|------|
-| `config_manager` | `load_config()` | `{}` 반환, 예외 없음 | YAML 파싱 실패 포함 |
-| `config_manager` | `save_config_section()` | `RuntimeError` raise | ERR_CONFIG_WRITE_FAILED |
-| `storage` | `load_history()` | `[]` 반환, 예외 없음 | JSON 파싱 실패 포함 |
-| `storage` | `append_experiment()` | `RuntimeError` raise | ERR_HISTORY_WRITE_FAILED |
-| `storage` | `delete_experiment_from_history()` | `False` 반환 | ID 없으면 no-op |
-| `storage` | `prepare_model_dir()` | `RuntimeError` raise | 중복 경로 존재 시 |
-| `storage` | `save_completed_experiment()` | `RuntimeError` raise | 단계별 에러코드 다름 (05.§6) |
-| `storage` | `delete_experiment()` | 예외 없음 | `ignore_errors=True` |
-| `storage` | `validate_imagenet_penalty_dir()` | `(False, 0)` 반환 | 디렉토리 없으면 |
-| `storage` | `read_log_tail()` | `""` 반환 | 파일 없으면 |
-| `storage` | `check_disk_space()` | 예외 없음 | `shutil.disk_usage` 실패 시 `(False, 0.0)` |
-| `storage` | `check_disk_before_save()` | `RuntimeError` raise (100MB↓) | 500MB↓는 warning만 |
-| `image_utils` | `load_image()` | `FileNotFoundError` raise | 호출자(탭)가 처리 |
-| `image_utils` | `apply_filter()` | `RuntimeError` raise | cv2 오류 래핑 |
-| `image_utils` | `apply_preprocessing()` | 내부 예외 전파 | load_image + apply_filter 연쇄 |
-| `metrics` | `compute_metrics()` | 예외 없음 | 단일 클래스 데이터 시 auc=0.0 |
-| `metrics` | `compute_roc_curve()` | `([], [], 0.0)` 반환 | 단일 클래스 시 |
-| `model_factory` | `load_model_for_inference()` | `RuntimeError` raise | 파일 없거나 state_dict 불일치 |
-| `model_factory` | `run_inference()` | `RuntimeError` raise | CUDA OOM 등 torch 예외 래핑 |
-| `cache_manager` | `set_anomaly_map_cache()` | 예외 없음 | session_state 쓰기 실패 없음 |
-| `cache_manager` | `get_anomaly_map_cache()` | `None` 반환 | |
-| `cache_manager` | `invalidate_anomaly_map_cache()` | 예외 없음 | no-op if not exists |
-
-**원칙**: UI 렌더링 경로(탭 render 함수 최상위 호출)에 있는 함수는 예외를 raise하지 않는다. 학습/저장 경로의 함수는 명시적으로 raise하고 탭의 try-except에서 처리한다.
-
----
-
-## 4. Queue 메시지 프로토콜 공식 명세
-
-> `TrainingWorker`(백그라운드 스레드)가 `result_queue`(queue.Queue)에 put하는 메시지의 공식 스키마.
-> 04.B.3.3과 08에서 비공식으로 기술된 내용을 TypedDict 형식으로 확정한다.
-
-### 4.1 메시지 타입 정의
-
-```python
-from typing import TypedDict, Literal
-
-class ProgressMessage(TypedDict):
-    type: Literal["progress"]
-    step: int           # 현재 스텝 (1-based)
-    total: int          # 전체 스텝 수 (EfficientAD: train_steps, PatchCore: 1)
-    loss: float         # 현재 스텝 loss 값 (PatchCore는 0.0 고정)
-    elapsed: float      # 학습 시작부터 경과 시간 (초)
-
-class LogMessage(TypedDict):
-    type: Literal["log"]
-    message: str        # 로그 파일에도 기록할 텍스트 (ISO8601 타임스탬프 미포함)
-
-class CompletedMessage(TypedDict):
-    type: Literal["completed"]
-    y_true: list[int]                      # 테스트 이미지 정답 레이블 (0=정상, 1=결함)
-    anomaly_scores: list[float]            # 테스트 이미지별 anomaly score
-    anomaly_maps: dict[str, np.ndarray]    # image_path → anomaly map (H, W), float32
-    image_paths: list[str]                 # 테스트 이미지 경로 목록 (anomaly_maps 키 순서)
-    model: object                          # 학습 완료된 EfficientAd | Patchcore 인스턴스
-    duration_seconds: int                  # 학습 소요 시간 (초, int 변환)
-
-class ErrorMessage(TypedDict):
-    type: Literal["error"]
-    exception: Exception    # 발생한 예외 객체
-    traceback: str          # traceback.format_exc() 결과
-
-class StoppedMessage(TypedDict):
-    type: Literal["stopped"]
-    step: int               # 중단된 시점의 스텝 번호
-
-class PausedMessage(TypedDict):
-    type: Literal["paused"]
-    step: int               # 일시정지된 시점의 스텝 번호
-    ckpt_path: str          # 저장된 체크포인트 파일의 절대 경로
-
-QueueMessage = ProgressMessage | LogMessage | CompletedMessage | ErrorMessage | StoppedMessage | PausedMessage
-```
-
-### 4.2 메시지 발생 시점 규칙
-
-| 메시지 타입 | 발생 조건 | 발생 횟수 |
-|------------|-----------|-----------|
-| `"progress"` | EfficientAD: 매 100 step. PatchCore: feature 추출 완료, coreset 구성 완료 | N회 |
-| `"log"` | 학습 시작, 완료, 중단, 오류, 주요 단계 전환 | N회 |
-| `"completed"` | 학습 루프 정상 종료 직후 | **정확히 1회** |
-| `"error"` | 예외 발생 시 (except 블록 내) | **정확히 1회** |
-| `"stopped"` | `stop_event.is_set()` 확인 후 루프 탈출 시 | **정확히 1회** |
-| `"paused"` | `pause_event.is_set()` 확인 후 체크포인트 저장 완료 시 | pause마다 1회 (중복 저장 방지) |
-
-**종료 메시지 불변 조건**: `"completed"`, `"error"`, `"stopped"` 중 정확히 하나만 전송된다. 이 세 메시지 중 하나가 Queue에 들어오면 학습 스레드는 곧 종료된다.
-
-**`"paused"` 비종료 특성**: `"paused"` 메시지는 종료 메시지가 아니다. 스레드는 계속 실행 중이며 `pause_event.is_set()` 동안 `time.sleep(0.5)` 루프로 대기한다. `pause_event.clear()` 시 학습이 재개된다.
-
-### 4.3 메시지 생성 코드 패턴 (TrainingWorker 내부)
-
-```python
-# utils/training_worker.py 내부 패턴
-
-def run(self) -> None:
-    try:
-        self._run_impl()
-    except Exception as e:
-        self.result_queue.put({
-            "type": "error",
-            "exception": e,
-            "traceback": traceback.format_exc()
-        })
-
-def _run_impl(self) -> None:
-    # ... 학습 루프 ...
-    for step in range(1, total_steps + 1):
-        if self.stop_event.is_set():
-            self.result_queue.put({"type": "stopped", "step": step})
-            return  # ← 즉시 반환, completed 미전송
-
-        loss = self._train_step(step)
-
-        if step % 500 == 0 or step == total_steps:
-            self.result_queue.put({
-                "type": "progress",
-                "step": step, "total": total_steps,
-                "loss": round(loss, 6),
-                "elapsed": round(time.time() - self._start_time, 1)
-            })
-
-    # 테스트 추론
-    y_true, anomaly_scores, _ = self._run_full_test_inference()
-
-    self.result_queue.put({
-        "type": "completed",
-        "y_true": y_true,
-        "anomaly_scores": anomaly_scores,
-        "model": self._model,
-        "duration_seconds": int(time.time() - self._start_time)
-    })
-```
-
----
-
-## 5. tab3 Queue 소비 알고리즘
-
-> 04.B.5에서 메인 스레드의 rerun 사이클을 개략적으로 기술했으나, tab3_training.py 구현자가 직접 참조할 수 있는 수준의 알고리즘을 이 절에서 확정한다.
-
-### 5.1 전체 polling loop 구조
-
-```python
-# tabs/tab3_training.py
-
-def render() -> None:
-    _guard()
-
-    status = st.session_state["current_run_status"]
-
-    if status == "idle":
-        _render_idle_ui()
-    elif status == "running":
-        finished = _drain_queue()   # 먼저 Queue 드레인하여 session_state 최신화
-        _render_running_ui()        # 최신화된 session_state로 UI 렌더링
-        if not finished:
-            time.sleep(0.3)         # R-THREAD-05: 0.3초 고정 (종료 시 슬립 없음)
-        st.rerun()                  # 항상 rerun — 종료 시 idle UI 전환
-    elif status == "paused":
-        # 일시정지 중: 드레인 후 UI 표시, 자동 rerun 없음
-        _drain_queue()
-        _render_running_ui()        # paused 상태 UI 표시 (재시작/중지 버튼 포함)
-    # "stopped" / "completed" 상태는 drain 중 _handle_terminal() 호출로 처리됨
-    # → 처리 완료 후 status = "idle" 로 전환되므로 여기서 별도 분기 불필요
-
-
-def _drain_queue() -> bool:
-    """
-    Queue에 쌓인 메시지를 모두 소비한다.
-    종료 메시지(completed/error/stopped)를 만나면 즉시 처리 후 True 반환.
-    paused 메시지는 비종료이므로 드레인 계속 진행 (True 반환 안 함).
-    """
-    q: queue.Queue = st.session_state.get("_result_queue")
-    if q is None:
-        return False
-
-    while True:
-        try:
-            msg: QueueMessage = q.get_nowait()   # 비블로킹
-        except queue.Empty:
-            break  # 더 이상 메시지 없음 → 다음 rerun 대기
-
-        msg_type = msg["type"]
-
-        if msg_type == "progress":
-            _handle_progress(msg)
-
-        elif msg_type == "log":
-            _handle_log(msg)
-
-        elif msg_type == "paused":
-            _handle_paused(msg)  # status="paused" 전환, ckpt_path 저장
-            # 비종료 메시지 → 드레인 계속 (이후 메시지 없을 것이나 안전하게 처리)
-
-        elif msg_type == "completed":
-            _handle_completed(msg)  # 메인 스레드에서 저장 처리
-            return True  # 종료 메시지
-
-        elif msg_type == "error":
-            _handle_error(msg)
-            return True
-
-        elif msg_type == "stopped":
-            _handle_stopped(msg)
-            return True
-
-    return False  # 종료 메시지 미수신
-```
-
-### 5.2 각 메시지 처리 함수
-
-```python
-def _handle_progress(msg: ProgressMessage) -> None:
-    """
-    session_state._progress 갱신.
-    session_state._loss_history 에 {"step": step, "loss": loss} append.
-    """
-    st.session_state["_progress"] = {
-        "step": msg["step"],
-        "total": msg["total"],
-        "loss": msg["loss"],
-        "elapsed": msg["elapsed"]
-    }
-    st.session_state["_loss_history"].append({
-        "step": msg["step"],
-        "loss": msg["loss"]
-    })
-
-
-def _handle_log(msg: LogMessage) -> None:
-    """
-    session_state._log_lines 에 타임스탬프 포함 줄 append.
-    최대 100줄 유지 (초과분 앞에서 제거).
-    항상 key를 재할당하여 Streamlit 변경 감지를 보장한다.
-    """
-    timestamp = datetime.now(tz=KST).strftime("%H:%M:%S")
-    line = f"[{timestamp}] {msg['message']}"
-    lines: list = st.session_state["_log_lines"]
-    lines.append(line)
-    if len(lines) > 100:
-        st.session_state["_log_lines"] = lines[-100:]
-    else:
-        st.session_state["_log_lines"] = lines
-
-
-def _handle_completed(msg: CompletedMessage) -> None:
-    """
-    1. compute_metrics() 호출로 metrics dict 생성
-    2. experiment_record 구성
-    3. save_completed_experiment() 호출 (3단계 저장)
-    4. session_state.experiments 갱신
-    5. session_state["_last_result"] 저장 (알림 지연 표시 — 07_Backend §6.4)
-    6. current_run_status = "idle"
-    """
-    exp_id: str = st.session_state["current_exp_id"]
-    model_config: dict = st.session_state["model_config"]
-
-    threshold = _compute_threshold(
-        msg["anomaly_scores"],
-        model_config["threshold_method"],
-        model_config["threshold_value"]
-    )
-    metrics = compute_metrics(msg["y_true"], msg["anomaly_scores"], threshold)
-
-    record = _build_experiment_record(
-        exp_id=exp_id,
-        status="completed",
-        metrics=metrics,
-        duration_seconds=msg["duration_seconds"]
-    )
-
-    try:
-        check_disk_before_save(model_config["model_type"])
-        save_completed_experiment(exp_id, msg["model"], record)
-        st.session_state["experiments"][exp_id] = record
-        mins, secs = divmod(msg["duration_seconds"], 60)
-        auc = metrics.get("auc", 0.0)
-        st.session_state["_last_result"] = {
-            "level": "success",
-            "text": f"학습이 완료되었습니다. AUC: {auc:.4f} | 소요 시간: {mins}분 {secs}초",
-        }
-    except RuntimeError as e:
-        error_msg = str(e)
-        if "ERR_HISTORY_WRITE_FAILED" in error_msg:
-            st.session_state["_last_result"] = {
-                "level": "warning",
-                "text": f"모델 파일은 저장되었으나 히스토리 기록에 실패했습니다. {error_msg}",
-            }
-        else:
-            st.session_state["_last_result"] = {
-                "level": "error",
-                "text": f"모델 저장에 실패했습니다. 디스크 공간을 확인해 주세요. {error_msg}",
-            }
-    finally:
-        _reset_run_state()   # current_run_status = "idle"
-        del msg["model"]     # GC 즉시 유도
-        torch.cuda.empty_cache()
-
-
-def _handle_error(msg: ErrorMessage) -> None:
-    """
-    session_state["_last_result"] 저장 (level="error").
-    current_run_status = "idle".
-    history.json에 기록하지 않음.
-    """
-    st.session_state["_last_result"] = {
-        "level": "error",
-        "text": f"학습 중 오류가 발생했습니다.\n{msg['traceback']}",
-    }
-    _reset_run_state()
-
-
-def _handle_stopped(msg: StoppedMessage) -> None:
-    """
-    status="중단" 레코드 생성 후 history.json append.
-    metrics, model_path, configs_path 모두 null.
-    session_state["_last_result"] 저장 (level="warning").
-    current_run_status = "idle".
-    """
-    exp_id: str = st.session_state["current_exp_id"]
-    record = _build_experiment_record(
-        exp_id=exp_id,
-        status="중단",
-        metrics=None,
-        duration_seconds=None
-    )
-    try:
-        append_experiment(record)
-        st.session_state["experiments"][exp_id] = record
-    except RuntimeError:
-        pass  # 중단 레코드 저장 실패는 치명적이지 않음
-    step = msg.get("step", 0)
-    st.session_state["_last_result"] = {
-        "level": "warning",
-        "text": MSG["TRAIN_STOPPED"] + (f" ({step:,} step 완료 후 중단)" if step else ""),
-    }
-    _reset_run_state()
-
-
-def _handle_paused(msg: PausedMessage) -> None:
-    """
-    일시정지 메시지 처리.
-    current_run_status = "paused" 전환.
-    _last_ckpt_path 저장.
-    history.json에 기록하지 않음 (일시정지는 영구 중단이 아님).
-    """
-    st.session_state["current_run_status"] = "paused"
-    st.session_state["_last_ckpt_path"]    = msg.get("ckpt_path")
-
-
-def _reset_run_state() -> None:
-    """학습 종료 후 내부 상태 초기화."""
-    st.session_state["current_run_status"] = "idle"
-    st.session_state["current_exp_id"]     = None
-    st.session_state["_stop_event"]        = None
-    st.session_state["_pause_event"]       = None
-    st.session_state["_result_queue"]      = None
-    st.session_state["_last_ckpt_path"]    = None
-```
-
-### 5.3 _render_running_ui 에서의 UI 갱신
-
-```python
-def _render_running_ui() -> None:
-    """
-    running/paused 상태 모두에서 사용.
-    _drain_queue() 호출 후 실행되어 최신화된 session_state 값을 표시.
-    """
-    status = st.session_state.get("current_run_status", "running")
-
-    if status == "paused":
-        st.warning("⏸ 일시정지됨 — 체크포인트 저장 완료")
-        ckpt_path = st.session_state.get("_last_ckpt_path")
-        if ckpt_path:
-            st.caption(f"저장 위치: `{ckpt_path}`")
-    else:
-        st.info("🔄 학습이 진행 중입니다. 탭을 전환해도 학습은 계속됩니다.")
-
-    progress = st.session_state.get("_progress", {})
-    step = progress.get("step", 0)
-    total = progress.get("total", 1)
-    loss = progress.get("loss")
-    elapsed = progress.get("elapsed", 0)
-
-    # Progress Bar
-    pct = step / total if total > 0 else 0
-    st.progress(pct, text=f"Step {step:,} / {total:,} ({pct*100:.1f}%) | 경과: {elapsed:.0f}s")
-
-    # Loss 곡선 (Plotly)
-    loss_history = st.session_state.get("_loss_history", [])
-    if loss_history:
-        df = pd.DataFrame(loss_history)
-        fig = px.line(df, x="step", y="loss", title="학습 Loss 곡선")
-        st.plotly_chart(fig, use_container_width=True)
-
-    # 로그 텍스트
-    log_text = "\n".join(st.session_state.get("_log_lines", []))
-    st.text_area("학습 로그", value=log_text, height=200, disabled=True)
-
-    # 제어 버튼 — 3열 레이아웃
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        if st.button("⏸ 일시정지", disabled=(status == "paused"), use_container_width=True):
-            pause_ev = st.session_state.get("_pause_event")
-            if pause_ev:
-                pause_ev.set()
-    with col2:
-        if st.button("▶ 재시작", disabled=(status == "running"), use_container_width=True):
-            pause_ev = st.session_state.get("_pause_event")
-            if pause_ev:
-                pause_ev.clear()
-            st.session_state["current_run_status"] = "running"
-            st.rerun()
-    with col3:
-        if st.button("⏹ 학습 중지", type="secondary", use_container_width=True):
-            stop_ev = st.session_state.get("_stop_event")
-            pause_ev = st.session_state.get("_pause_event")
-            if stop_ev:
-                stop_ev.set()
-            if pause_ev:
-                pause_ev.clear()  # 일시정지 중이면 해제하여 스레드가 stop_event 감지 가능
-            if status == "paused":
-                st.session_state["current_run_status"] = "running"
-                st.rerun()
-            else:
-                st.info("중지 신호를 전송했습니다. 현재 스텝 완료 후 중단됩니다.")
-```
-
----
-
-## 6. stop_event 경쟁 조건 처리 규칙
-
-> 04.B.5에서 기술된 스레드 모델에서 발생할 수 있는 경쟁 조건을 확정한다.
-
-### 6.1 경쟁 조건 시나리오
-
-```
-시나리오: 사용자가 [학습 중지]를 클릭한 직후, 마지막 학습 스텝이 완료되어
-         TrainingWorker가 completed 메시지를 Queue에 put하려는 순간이 겹침.
-
-가능한 Queue 상태:
-  A. stopped만 있음     → _handle_stopped() 호출
-  B. completed만 있음   → _handle_completed() 호출
-  C. completed + stopped 순서 → completed 먼저 드레인
-  D. stopped + completed 순서 → stopped 먼저 드레인 → break → completed 잔류
-```
-
-### 6.2 우선순위 규칙 (확정)
-
-| 규칙 | 내용 |
-|------|------|
-| **R-RACE-01** | `_drain_queue()`는 Queue를 순서대로 처리한다. 첫 번째 종료 메시지(completed/error/stopped)를 처리한 즉시 break한다. |
-| **R-RACE-02** | 시나리오 D의 경우 — stopped가 먼저 처리되어 "중단" 레코드가 기록된다. Queue에 남은 completed 메시지는 다음 rerun에서 드레인되지 않는다. 이유: `_reset_run_state()` 후 `_result_queue = None`으로 초기화되므로 Q 참조 소멸. |
-| **R-RACE-03** | 시나리오 C의 경우 — completed가 먼저 처리되어 "완료" 레코드가 기록된다. 이후 stopped 메시지는 소멸. |
-| **R-RACE-04** | 사용자의 [학습 중지] 클릭 의도가 항상 우선한다는 보장은 없다. stop_event.set() 이후 TrainingWorker가 이미 completed를 put했다면 "완료"로 처리되어 모델이 저장된다. 이것은 정상 동작이다. |
-| **R-RACE-05** | 일시정지 중 [⏹ 학습 중지] 클릭 시 `stop_event.set()` + `pause_event.clear()` 순서로 처리한다. `pause_event.clear()` 없이는 스레드가 pause 대기 루프에 갇혀 stop_event를 감지하지 못한다. |
-| **R-RACE-06** | `_ckpt_saved` 플래그로 동일 pause_event 세트에서 체크포인트가 1회만 저장된다. `pause_event.clear()` 후 플래그는 초기화되므로 다음 일시정지 시 재저장 가능. |
-
-**요약**: 경쟁 조건은 Queue의 메시지 도착 순서로 자연 해결된다. 별도의 락이나 플래그 없이 "먼저 도착한 종료 메시지가 우선"이다.
-
-### 6.3 미아 스레드(orphan thread) 처리
-
-```python
-# tabs/tab3_training.py — render() 최상위 guard
-
-def _guard() -> None:
-    """
-    미아 스레드 감지: worker가 살아있는데 result_queue가 None인 경우.
-    브라우저 새로고침 후 재진입 시 발생 가능.
-    """
-    worker = st.session_state.get("_worker")
-    if worker is not None and worker.is_alive():
-        q = st.session_state.get("_result_queue")
-        if q is None:
-            # 새로고침으로 Queue 참조 소멸 — 스레드는 daemon이므로 강제 종료 불가
-            # 상태만 초기화하고 UI에 안내
-            _reset_run_state()
-            st.info(
-                "새로고침으로 인해 학습 상태를 확인할 수 없습니다. "
-                "새로 학습을 시작하거나 탭4에서 히스토리를 확인하세요."
-            )
-```
-
-> **참고**: `worker.daemon = True` (04.B.5.2 R-THREAD-03)이므로 Streamlit 프로세스가 살아있는 한 학습은 계속된다. 새로고침 후 탭4에서 history.json을 확인하면 완료 레코드가 있을 수 있다.
-
----
-
-## 7. 탭 Guard 조건 및 session_state 쓰기 권한
-
-### 7.1 탭별 Guard 조건 (진입 차단 기준)
-
-| 탭 | Guard 조건 (미충족 시 진입 차단) | 차단 메시지 |
-|----|--------------------------------|-------------|
-| **탭1** | 없음 | — |
-| **탭2** | `dataset_path is not None` | `MSG["NO_DATASET"]` |
-| **탭3** | `dataset_path is not None` AND `preprocessing_config is not None` AND `model_config is not None` | 미충족 항목별 메시지 |
-| **탭4** | Guard 없음. `experiments == {}` 이면 `MSG["NO_EXPERIMENTS"]` 표시 후 렌더링 계속 | — |
-| **탭5** | `selected_experiment_id is not None` | `MSG["NO_SELECTED_EXP"]` |
-
-**차단 구현 패턴**:
-```python
-def _guard() -> None:
-    if st.session_state["dataset_path"] is None:
-        st.warning(MSG["NO_DATASET"])
-        st.stop()
-```
-
-`st.stop()`은 이후 코드 실행을 중단하므로 `return`보다 안전하다.
-
-### 7.1.1 비전검사 대시보드 Guard 조건 (v1.1)
-
-| 탭 | Guard 조건 (미충족 시 진입 차단) | 차단 메시지 |
-|----|--------------------------------|-------------|
-| **검사 탭1** | `insp_active_model is not None` | `INSP_MSG["NO_MODEL"]` |
-| **검사 탭2** | `insp_active_model is not None` | `INSP_MSG["NO_MODEL"]` |
-| **검사 탭3** | Guard 없음. completed 실험 없으면 `INSP_MSG["NO_COMPLETED_EXP"]` 표시 | — |
-
-**추가 Guard — 검사 탭1 팝업 우선 처리**:
-```python
-# insp_tab1_realtime.py — render() 상단
-def render() -> None:
-    if st.session_state.get("insp_active_model") is None:
-        st.info(INSP_MSG["NO_MODEL"])
-        return
-
-    # 팝업이 열린 동안 루프 중단, 팝업만 렌더링
-    if st.session_state.get("insp_defect_popup"):
-        _render_defect_popup()
-        return
-
-    # 정상 검사 UI 렌더링 ...
-```
-
-### 7.2 탭별 session_state 쓰기 권한 (확정)
-
-#### 모델 탐색 대시보드
-
-| session_state 키 | Write 탭 | 조건 |
-|-----------------|----------|------|
-| `dataset_path` | 탭1 | 경로 검증 성공 시 |
-| `dataset_meta` | 탭1 | 경로 검증 성공 시 |
-| `preprocessing_config` | 탭2 | [설정 저장] 버튼 클릭 시 |
-| `model_config` | 탭2 | [설정 저장] 버튼 클릭 시 |
-| `device_info` | 탭2 | 탭2 최초 진입 시 1회 (idempotent) |
-| `experiments` | 탭3 (추가), 탭4 (삭제) | 학습 완료/중단, 실험 삭제 |
-| `current_run_status` | 탭3 | 학습 시작/완료/중단 |
-| `current_exp_id` | 탭3 | 학습 시작 시 설정, 완료/중단 시 None |
-| `selected_experiment_id` | 탭4 | 실험 행 클릭 시 |
-| `anomaly_map_threshold` | 탭5 | Threshold 슬라이더 변경 시 |
-| `_stop_event` | 탭3 내부 | 학습 시작 시 |
-| `_result_queue` | 탭3 내부 | 학습 시작 시 |
-| `_progress` | 탭3 내부 | `_handle_progress()` 호출 시 |
-| `_log_lines` | 탭3 내부 | `_handle_log()` 호출 시 |
-| `_loss_history` | 탭3 내부 | `_handle_progress()` 호출 시 |
-| `_anomaly_maps_{exp_id}` | 탭5 (`cache_manager`) | 캐시 미스 시 추론 후 |
-
-#### 비전검사 대시보드 (v1.1) — insp_ 네임스페이스
-
-| session_state 키 | Write 위치 | 조건 |
-|-----------------|------------|------|
-| `insp_active_model` | 검사 탭3 | [이 모델로 검사 시작] 클릭 시 |
-| `insp_records` | 검사 탭1 | 검사 1회 완료 시 append |
-| `insp_seq_counter` | 검사 탭1 | 검사 1회 완료 시 +1 |
-| `insp_auto_active` | 검사 탭1 | 버튼 클릭 / 불량 감지 시 |
-| `insp_last_result` | 검사 탭1 | 검사 1회 완료 시 덮어쓰기 |
-| `insp_last_anomaly_map` | 검사 탭1 | 검사 1회 완료 시 덮어쓰기 |
-| `insp_defect_popup` | 검사 탭1 | 불량 감지 시 True, 팝업 확인 시 False |
-| `insp_test_pool` | 검사 탭3 (초기), 검사 탭1 (pool 소진 시 reshuffle) | 모델 교체 또는 pool 소진 |
-| `insp_pool_index` | 검사 탭1 | 샘플링 1회 시 +1, pool 소진 시 0 리셋 |
-
-### 7.3 탭1 데이터셋 경로 변경 시 연쇄 초기화
-
-```python
-# tabs/tab1_data_folder.py
-
-def _handle_path_change(new_path: str) -> None:
-    """
-    새 경로가 기존 dataset_path와 다를 때 하위 session_state 초기화.
-    이전 설정이 새 데이터셋에 맞지 않을 수 있으므로 리셋.
-    """
-    if new_path != st.session_state.get("dataset_path"):
-        st.session_state["preprocessing_config"] = None
-        st.session_state["model_config"] = None
-        st.session_state["device_info"] = None
-        # experiments, selected_experiment_id는 유지 (이전 실험 보존)
-```
-
----
-
-## 8. 모듈 간 호출 권한 매트릭스
-
-> 04.B.4의 "금지된 의존성"을 표 형식으로 확장한다.
-
-| 호출자 \ 피호출자 | session_state | Anomalib | 파일시스템 직접 | storage.py | config_manager.py | cache_manager.py |
-|-----------------|:---:|:---:|:---:|:---:|:---:|:---:|
-| `tabs/*` | Read ✅ / Write ✅ | ❌ 금지 | ❌ 금지 | ✅ | ✅ | ✅ |
-| `utils/image_utils.py` | ❌ 금지 | ❌ 금지 | Read ✅ | ❌ | ❌ | ❌ |
-| `utils/metrics.py` | ❌ 금지 | ❌ 금지 | ❌ 금지 | ❌ | ❌ | ❌ |
-| `utils/model_factory.py` | ❌ 금지 | ✅ | ❌ 금지 | ✅ (penalty dir) | ✅ (config read) | ❌ |
-| `utils/training_worker.py` | ❌ 금지 | ✅ | Write ✅ (log only) | ✅ (log writer) | ❌ | ❌ |
-| `utils/storage.py` | ❌ 금지 | ❌ 금지 | Read/Write ✅ | — | ✅ (config read) | ❌ |
-| `utils/config_manager.py` | ❌ 금지 | ❌ 금지 | Read/Write ✅ | ❌ | — | ❌ |
-| `utils/cache_manager.py` | Write ✅ | ❌ 금지 | ❌ 금지 | ❌ | ❌ | — |
-| `components/sidebar.py` | Read ✅ | ❌ 금지 | ❌ 금지 | ❌ | ❌ | ❌ |
-
-**특이사항**:
-- `training_worker.py`의 파일시스템 쓰기는 **로그 파일(`./logs/`)만** 허용. 모델/히스토리 저장은 반드시 완료 후 메인 스레드(탭3)가 `storage.save_completed_experiment()` 경유.
-- `cache_manager.py`는 session_state를 직접 쓰는 유일한 utils 모듈 — 메인 스레드에서만 호출해야 함.
-
----
-
-## 9. 구현 검증 체크리스트
-
-> 이 문서 기준으로 구현 완료 여부를 확인하는 체크리스트.
-
-### Queue 프로토콜
-
-- [ ] TrainingWorker가 `"completed"` / `"error"` / `"stopped"` 중 정확히 하나만 전송
-- [ ] `"completed"` 전송 후 스레드 정상 종료 (추가 메시지 없음)
-- [ ] `"stopped"` 메시지에 `step` 필드 포함
-- [ ] `"error"` 메시지에 `traceback` 필드 포함 (str 타입)
-
-### tab3 polling loop
-
-- [ ] `q.get_nowait()` 사용 (블로킹 get 금지)
-- [ ] 종료 메시지 처리 후 즉시 `break`
-- [ ] `_reset_run_state()` 이후 `_result_queue = None` 처리
-- [ ] 종료 메시지 미수신 시 `time.sleep(0.3)` 후 `st.rerun()` 호출 (0.3초 고정, 종료 시 슬립 없음)
-- [ ] `_handle_completed()` 내 `del msg["model"]` + `torch.cuda.empty_cache()`
-
-### 에러 계약
-
-- [ ] `load_history()` — 어떤 예외도 전파하지 않음
-- [ ] `load_config()` — 어떤 예외도 전파하지 않음
-- [ ] `compute_metrics()` — 단일 클래스 데이터 시 `auc=0.0` 반환
-- [ ] `check_disk_before_save()` — Streamlit context에서만 호출
-
-### Guard 조건
-
-- [ ] 탭2: `dataset_path is None` 시 `st.stop()`
-- [ ] 탭3: 3개 조건 모두 확인 후 학습 시작 버튼 활성화
-- [ ] 탭5: `selected_experiment_id is None` 시 `st.stop()`
-
-### 경쟁 조건
-
-- [ ] `_drain_queue()` 종료 메시지 처리 후 즉시 break
-- [ ] `_reset_run_state()` 호출 직후 `_result_queue = None` 설정
-- [ ] 미아 스레드 감지 로직 (`_guard()` 내 `worker.is_alive()` 확인)
-
-### 신규 모듈 파일 생성
-
-- [ ] `utils/storage.py` 생성 (§2.1 전체 구현)
-- [ ] `utils/cache_manager.py` 생성 (§2.2 전체 구현)
-- [ ] 두 파일 모두 `utils/__init__.py`에 import 추가
-
-### 비전검사 대시보드 (v1.1)
-
-- [ ] `inspection/utils/insp_session_init.py` 생성 (§2.3 전체 구현)
-- [ ] `inspection/utils/test_sampler.py` 생성 (§2.3 전체 구현)
-- [ ] `_load_insp_model()` — `@st.cache_resource` 데코레이터 적용
-- [ ] `build_test_pool()` — A-17 레이블 규칙 (`good/` → "양품", 나머지 → "불량")
-- [ ] `sample_from_pool()` — pool 소진 시 reshuffle + index=0 리셋
-- [ ] `insp_tab1_realtime.py` — `insp_defect_popup == True` 시 팝업만 렌더링 (§7.1.1)
-- [ ] 검사 탭1·탭2 — `insp_active_model is None` Guard 적용
-- [ ] 검사 탭3 — Guard 없이 항상 접근 가능, completed 없으면 안내 메시지만
-- [ ] `insp_` 네임스페이스 쓰기 권한 §7.2 테이블 준수
-
----
-
-*이 문서는 04_System_Architecture.md §B.3 (모듈 시그니처)와 05_Data_Model_and_Storage_Strategy.md §3~§10 (스토리지 구현)의 보완 명세이다.*
 *다음: [07_Backend_Service_Design.md](./07_Backend_Service_Design.md)*

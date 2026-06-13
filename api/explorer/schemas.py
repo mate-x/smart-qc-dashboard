@@ -31,7 +31,7 @@ class ValidateDatasetResponse(BaseModel):
     has_invalid_files: bool
     invalid_file_count: int
     folder_tree: str
-    has_background_clean: bool        # {dataset_path}/background_clean/ 폴더 존재 여부
+    available_bg_methods: list[str]   # 사용 가능한 배경분리 방법 목록 (예: ["sam2", "sam3"])
     # OK/NG 전용
     oking_ok_dir: str | None = None
     oking_ng_dir: str | None = None

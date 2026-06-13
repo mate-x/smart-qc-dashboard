@@ -41,7 +41,7 @@ def remove_from_queue(item_id: str) -> None:
     queue = get_state()["experiment_queue"]
     for i, item in enumerate(queue):
         if item["id"] == item_id:
-            if item["status"] != "pending":
+            if item["status"] == "running":
                 raise ValueError(f"'{item['status']}' 상태의 항목은 삭제할 수 없습니다.")
             queue.pop(i)
             return

@@ -49,7 +49,7 @@ def validate_dataset(path: str, product_name: str = "") -> dict:
             if meta["train_good_count"] == 0:
                 raise ValueError(f"`{ok_dir.name}/` 폴더에 유효한 이미지가 없습니다.")
             meta["folder_tree"] = _build_tree_text(root, meta)
-            meta["has_background_clean"] = (root / "background_clean").is_dir()
+            meta["available_bg_methods"] = _get_available_bg_methods(root, meta)
             state = get_state()
             state["dataset_path"] = path
             state["product_name"] = product_name
@@ -72,7 +72,7 @@ def validate_dataset(path: str, product_name: str = "") -> dict:
 
     meta = _build_mvtec_meta(root)
     meta["folder_tree"] = _build_tree_text(root, meta)
-    meta["has_background_clean"] = (root / "background_clean").is_dir()
+    meta["available_bg_methods"] = _get_available_bg_methods(root, meta)
     state = get_state()
     state["dataset_path"] = path
     state["product_name"] = product_name
@@ -267,3 +267,41 @@ def _build_tree_text(root: Path, meta: dict) -> str:
                 lines.append(f"    📂 {cls_name}/ ({count}장)")
 
     return "\n".join(lines)
+
+
+def _get_available_bg_methods(root: Path, meta: dict) -> list[str]:
+    parent = root.parent
+    name = root.name
+    available: list[str] = []
+    for method in ("sam2", "sam3"):
+        _lower = parent / f"{name}_{method}"
+        _upper = parent / f"{name}_{method.upper()}"
+        sibling = _lower if _lower.is_dir() else (_upper if _upper.is_dir() else None)
+        if sibling is None:
+            continue
+        if meta.get("dataset_format") == "mvtec":
+            train_good = sibling / "train" / "good"
+            has_train = train_good.is_dir() and any(
+                f.suffix.lower() in SUPPORTED_FORMATS for f in train_good.iterdir()
+            )
+            if not has_train:
+                continue
+            test_dir = sibling / "test"
+            has_test = test_dir.is_dir() and any(
+                f.suffix.lower() in SUPPORTED_FORMATS
+                for cls_dir in test_dir.iterdir() if cls_dir.is_dir()
+                for f in cls_dir.iterdir()
+            )
+            if not has_test:
+                continue
+        elif meta.get("dataset_format") == "oking":
+            ok_dir_name = meta.get("oking_ok_dir")
+            if not ok_dir_name:
+                continue
+            ok_dir = sibling / ok_dir_name
+            if not (ok_dir.is_dir() and any(
+                f.suffix.lower() in SUPPORTED_FORMATS for f in ok_dir.iterdir()
+            )):
+                continue
+        available.append(method)
+    return available

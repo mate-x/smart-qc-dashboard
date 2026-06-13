@@ -27,6 +27,7 @@ from api.explorer.services.config_service import (
     load_config_yaml,
     preview_preprocessing_image,
     preview_threshold,
+    refresh_device_info,
     save_config,
     save_config_yaml,
 )
@@ -75,6 +76,11 @@ def save_yaml_route() -> dict:
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
     return {"success": True}
+
+
+@router.post("/refresh-device", summary="device_info 강제 재감지")
+def refresh_device_route() -> dict:
+    return {"device_info": refresh_device_info()}
 
 
 @router.post("/yaml/load", summary="configs.yaml 불러오기", response_model_by_alias=True)

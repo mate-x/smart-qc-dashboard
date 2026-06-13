@@ -31,7 +31,7 @@ class ValidateDatasetResponse(BaseModel):
     has_invalid_files: bool
     invalid_file_count: int
     folder_tree: str
-    has_background_clean: bool        # {dataset_path}/background_clean/ 폴더 존재 여부
+    available_bg_methods: list[str]   # 사용 가능한 배경분리 방법 목록 (예: ["sam2", "sam3"])
     # OK/NG 전용
     oking_ok_dir: str | None = None
     oking_ng_dir: str | None = None
@@ -96,6 +96,7 @@ class AddQueueRequest(BaseModel):
     preprocessing_config: dict
     model_cfg: dict = Field(alias="model_config")
     set_id: str | None = None
+    name: str | None = None
 
 
 class QueueItemResponse(BaseModel):
@@ -130,18 +131,22 @@ class ReorderQueueResponse(BaseModel):
 # 탭4 · 실험 히스토리
 # ---------------------------------------------------------------------------
 
-class SaveModelRequest(BaseModel):
-    save_path: str
-
-
-class SaveModelResponse(BaseModel):
-    success: bool
-    saved_path: str
-    size_mb: float
-    warning: str | None = None
-
 class DeleteExperimentResponse(BaseModel):
     success: bool
+
+
+class ExportRequest(BaseModel):
+    format: str  # "onnx" | "openvino" | "trt"
+
+
+class ExportResponse(BaseModel):
+    job_id: str
+
+
+class ExportJobStatusResponse(BaseModel):
+    status: str               # "pending" | "running" | "completed" | "failed"
+    error: str | None = None
+    result: dict | None = None  # 완료 시: {"saved_path": str, "format": str}
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +170,7 @@ class ImageRowResponse(BaseModel):
     gt_match: bool
     classification: str       # "TP" | "FP" | "TN" | "FN"
     image_path: str           # "{class}/{filename}" — triplet 엔드포인트 키
+    has_gt_mask: bool
 
 
 class AnomalyImagesResponse(BaseModel):
@@ -180,6 +186,7 @@ class AnomalyImagesResponse(BaseModel):
 class ZipRequest(BaseModel):
     threshold: float
     defect_class: str = "전체"
+    verdict_filter: str = "전체"    # "OK" | "NG" | "전체"
 
 
 class ZipJobResponse(BaseModel):
@@ -205,6 +212,7 @@ class ResumeTrainingRequest(BaseModel):
 
 class StartTrainingResponse(BaseModel):
     exp_id: str
+    model_type: str | None = None
 
 
 class TrainingControlResponse(BaseModel):
@@ -244,8 +252,10 @@ class TrainingStatusResponse(BaseModel):
     log_lines: list[str] = []
     loss_history: list[dict] = []
     last_ckpt_path: str | None = None
+    model_type: str | None = None
 
 
 class BatchStartResponse(BaseModel):
     exp_id: str
     batch_total: int
+    model_type: str | None = None

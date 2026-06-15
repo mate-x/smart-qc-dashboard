@@ -32,6 +32,7 @@ class ValidateDatasetResponse(BaseModel):
     invalid_file_count: int
     folder_tree: str
     available_bg_methods: list[str]   # 사용 가능한 배경분리 방법 목록 (예: ["sam2", "sam3"])
+    has_background_clean: bool = False
     # OK/NG 전용
     oking_ok_dir: str | None = None
     oking_ng_dir: str | None = None
@@ -107,6 +108,7 @@ class QueueItemResponse(BaseModel):
     model_cfg: dict = Field(alias="model_config")
     status: str
     set_id: str | None = None
+    duration_seconds: int | None = None
 
 
 class AddQueueResponse(BaseModel):

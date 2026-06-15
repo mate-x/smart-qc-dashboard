@@ -48,6 +48,14 @@ def remove_from_queue(item_id: str) -> None:
     raise LookupError(f"항목을 찾을 수 없습니다: {item_id}")
 
 
+def clear_queue() -> int:
+    """running 상태가 아닌 모든 항목을 삭제. 삭제된 항목 수 반환."""
+    queue = get_state()["experiment_queue"]
+    before = len(queue)
+    get_state()["experiment_queue"] = [item for item in queue if item.get("status") == "running"]
+    return before - len(get_state()["experiment_queue"])
+
+
 def move_queue_item(item_id: str, direction: str) -> None:
     """
     pending 항목을 위(up) 또는 아래(down)로 이동한다.

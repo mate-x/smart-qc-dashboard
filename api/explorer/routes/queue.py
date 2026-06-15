@@ -4,7 +4,8 @@ api/explorer/routes/queue.py  — HTTP 레이어 전담
 탭2 · 큐:
     GET    /api/queue           대기열 전체 조회
     POST   /api/queue           항목 추가
-    DELETE /api/queue/{id}      항목 삭제 ("대기중" 상태만 가능)
+    DELETE /api/queue           전체 삭제 (running 제외)
+    DELETE /api/queue/{id}      항목 삭제
     PATCH  /api/queue/reorder   항목 순서 변경 ("대기중" 항목만)
 """
 from __future__ import annotations
@@ -21,6 +22,7 @@ from api.explorer.schemas import (
 )
 from api.explorer.services.queue_service import (
     add_to_queue,
+    clear_queue,
     get_queue,
     move_queue_item,
     remove_from_queue,
@@ -38,6 +40,12 @@ def list_queue_route() -> list[QueueItemResponse]:
 def add_queue_route(body: AddQueueRequest) -> AddQueueResponse:
     item = add_to_queue(body.preprocessing_config, body.model_cfg, body.set_id, body.name)
     return AddQueueResponse(id=item["id"], name=item["name"])
+
+
+@router.delete("", summary="대기열 전체 삭제 (running 제외)")
+def clear_queue_route() -> dict:
+    deleted = clear_queue()
+    return {"deleted": deleted}
 
 
 @router.delete("/{item_id}", summary="대기열 항목 삭제")

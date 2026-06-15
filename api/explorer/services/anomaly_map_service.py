@@ -34,6 +34,7 @@ from api.explorer.state import get_state
 from utils.image_utils import (
     anomaly_map_to_heatmap,
     build_gt_mask_path,
+    compute_padding_info,
     create_triplet_image,
     load_image,
     make_anomaly_overlay,
@@ -131,12 +132,30 @@ def _build_sync(exp_id: str, exp: dict) -> dict:
     maps_list: list[np.ndarray] = []
     for i in range(len(test_ds)):
         item = test_ds[i]
-        maps_list.append(run_inference(model, item["image"]))
+        # 원본 이미지 크기를 읽어 기하학적 패딩 좌표 계산 (강도 기반 오마스킹 방지)
+        with Image.open(item["image_path"]) as _pil:
+            _ow, _oh = _pil.size
+        padding_info = compute_padding_info(_ow, _oh, image_size)
+        maps_list.append(run_inference(model, item["image"], padding_info=padding_info))
         image_paths.append(item["image_path"])
 
+    # pixel-level min/max 로 정규화 범위 결정 (image-level score 사용 시 배경 경계가 hard-clip 됨)
+    all_maps = np.stack(maps_list, axis=0)
+    s_min = float(all_maps.min())
+    s_max = float(all_maps.max())
+
+    metrics = exp.get("metrics") or {}
+    anomaly_scores: list[float] = metrics.get("anomaly_scores", [])
+    image_labels: list[int]     = metrics.get("image_labels", [])
+
     return {
-        "anomaly_maps": np.stack(maps_list, axis=0),
-        "image_paths":  image_paths,
+        "anomaly_maps":   all_maps,
+        "image_paths":    image_paths,
+        "dataset_path":   exp.get("dataset_path", ""),
+        "anomaly_scores": anomaly_scores,
+        "image_labels":   image_labels,
+        "s_min":          s_min,
+        "s_max":          s_max,
     }
 
 
@@ -160,12 +179,19 @@ def get_images(exp_id: str, threshold: float, defect_class: str) -> dict:
     if cache is None:
         raise ValueError("Anomaly Map 캐시가 없습니다. 먼저 build를 실행하세요.")
 
-    exp = _get_experiment(exp_id)
-    metrics = exp.get("metrics") or {}
-    dataset_path: str                = exp.get("dataset_path", "")
-    anomaly_scores_raw: list[float]  = metrics.get("anomaly_scores", [])
-    image_labels: list[int]          = metrics.get("image_labels", [])
-    image_paths: list[str]           = cache["image_paths"]
+    # 캐시에 저장된 값을 우선 사용, 없으면 history.json fallback
+    if "anomaly_scores" in cache:
+        anomaly_scores_raw: list[float] = cache["anomaly_scores"]
+        image_labels: list[int]         = cache.get("image_labels", [])
+        dataset_path: str               = cache.get("dataset_path", "")
+    else:
+        exp = _get_experiment(exp_id)
+        metrics = exp.get("metrics") or {}
+        anomaly_scores_raw = metrics.get("anomaly_scores", [])
+        image_labels       = metrics.get("image_labels", [])
+        dataset_path       = exp.get("dataset_path", "")
+
+    image_paths: list[str] = cache["image_paths"]
 
     # Min-Max 정규화 (0~1)
     arr = np.array(anomaly_scores_raw, dtype=np.float64)
@@ -249,10 +275,16 @@ def _resolve_image_components(
     if cache is None:
         raise ValueError("Anomaly Map 캐시가 없습니다. 먼저 build를 실행하세요.")
 
-    exp              = _get_experiment(exp_id)
     image_paths: list[str]   = cache["image_paths"]
     anomaly_maps: np.ndarray = cache["anomaly_maps"]
-    dataset_path: str        = exp.get("dataset_path", "")
+    # 캐시 우선, 없으면 history.json fallback
+    if "dataset_path" in cache:
+        dataset_path: str = cache["dataset_path"]
+    else:
+        try:
+            dataset_path = _get_experiment(exp_id).get("dataset_path", "")
+        except LookupError:
+            dataset_path = ""
 
     target = (class_name, image_name)
     idx = next(
@@ -263,9 +295,10 @@ def _resolve_image_components(
     if idx is None:
         raise LookupError(f"이미지를 찾을 수 없습니다: {class_name}/{image_name}")
 
+    s_min, s_max = _get_score_range(exp_id)
     original    = load_image(image_paths[idx])
     gt_mask_pil = _load_gt_mask(image_paths[idx], dataset_path)
-    heatmap     = anomaly_map_to_heatmap(anomaly_maps[idx])
+    heatmap     = anomaly_map_to_heatmap(anomaly_maps[idx], s_min=s_min, s_max=s_max)
 
     if gt_mask_pil is not None:
         heatmap = _overlay_contour(heatmap, gt_mask_pil)
@@ -274,7 +307,10 @@ def _resolve_image_components(
 
 
 def _get_score_range(exp_id: str) -> tuple[float, float]:
-    """experiment metrics의 anomaly_scores에서 s_min, s_max 반환."""
+    """s_min, s_max 반환. 캐시 우선, 없으면 history.json fallback."""
+    cache = _get_cache(exp_id)
+    if cache and "s_min" in cache:
+        return cache["s_min"], cache["s_max"]
     exp = _get_experiment(exp_id)
     scores = (exp.get("metrics") or {}).get("anomaly_scores", [])
     if not scores:
@@ -490,11 +526,12 @@ def _build_zip_sync(
 
 
 def get_build_status(exp_id: str) -> dict:
-    _get_experiment(exp_id)  # raises LookupError if not found
     cache = _get_cache(exp_id)
-    if cache is None:
-        return {"built": False, "image_count": 0}
-    return {"built": True, "image_count": len(cache["image_paths"])}
+    if cache is not None:
+        return {"built": True, "image_count": len(cache["image_paths"])}
+    # 캐시 없을 때만 history.json 확인 (실험 존재 여부 검증)
+    _get_experiment(exp_id)  # raises LookupError if not found
+    return {"built": False, "image_count": 0}
 
 
 def get_zip_result(job_id: str) -> bytes:

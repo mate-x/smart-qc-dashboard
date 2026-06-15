@@ -607,7 +607,7 @@ async def _handle_completed(msg: dict) -> None:
             torch.cuda.empty_cache()
 
     if batch_mode:
-        _mark_batch_item(batch_item_status)
+        _mark_batch_item(batch_item_status, duration_seconds=msg.get("duration_seconds"))
         _reset_run_state()
         await _advance_batch_queue()
     else:
@@ -731,11 +731,14 @@ async def _advance_batch_queue() -> None:
 # 배치 헬퍼
 # ---------------------------------------------------------------------------
 
-def _mark_batch_item(status: str) -> None:
+def _mark_batch_item(status: str, duration_seconds: int | None = None) -> None:
     queue_items = get_state()["experiment_queue"]
     for i, item in enumerate(queue_items):
         if item.get("status") == "running":
-            queue_items[i] = {**item, "status": status}
+            updated = {**item, "status": status}
+            if duration_seconds is not None:
+                updated["duration_seconds"] = duration_seconds
+            queue_items[i] = updated
             break
 
 

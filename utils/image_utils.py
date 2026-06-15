@@ -65,6 +65,26 @@ def apply_he(img: np.ndarray) -> np.ndarray:
     return np.stack(channels, axis=2)
 
 
+def compute_padding_info(
+    orig_w: int,
+    orig_h: int,
+    target_size: int,
+) -> tuple[int, int, int, int]:
+    """resize_with_padding 의 패딩 좌표를 이미지 로드 없이 계산.
+
+    반환: (offset_x, offset_y, new_w, new_h)
+      - offset_x, offset_y : 원본 이미지가 배치되는 좌상단 좌표
+      - new_w,    new_h    : 리사이즈 후 원본 이미지 크기
+    패딩 영역 = 이 사각형 바깥 픽셀 전체.
+    """
+    scale  = target_size / max(orig_w, orig_h)
+    new_w  = int(orig_w * scale)
+    new_h  = int(orig_h * scale)
+    offset_x = (target_size - new_w) // 2
+    offset_y = (target_size - new_h) // 2
+    return (offset_x, offset_y, new_w, new_h)
+
+
 def resize_with_padding(
     image: Image.Image | np.ndarray,
     target_size: int,
@@ -198,10 +218,19 @@ def tensor_to_display_image(tensor: torch.Tensor) -> Image.Image:
 def anomaly_map_to_heatmap(
     anomaly_map: np.ndarray,
     colormap: int = cv2.COLORMAP_JET,
+    s_min: float | None = None,
+    s_max: float | None = None,
 ) -> Image.Image:
-    """Anomaly Score 2D 배열 → jet colormap 히트맵 PIL Image."""
-    normalized = cv2.normalize(anomaly_map, None, 0, 255, cv2.NORM_MINMAX)
-    normalized = normalized.astype(np.uint8)
+    """Anomaly Score 2D 배열 → jet colormap 히트맵 PIL Image.
+
+    s_min / s_max 를 넘기면 실험 전체 score 범위로 전역 정규화.
+    넘기지 않으면 이 이미지 내 min-max 로 per-image 정규화 (디버그 용).
+    """
+    if s_min is not None and s_max is not None and s_max > s_min:
+        norm_f = np.clip((anomaly_map - s_min) / (s_max - s_min), 0.0, 1.0)
+        normalized = (norm_f * 255).astype(np.uint8)
+    else:
+        normalized = cv2.normalize(anomaly_map, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
     heatmap_bgr = cv2.applyColorMap(normalized, colormap)
     heatmap_rgb = cv2.cvtColor(heatmap_bgr, cv2.COLOR_BGR2RGB)
     return Image.fromarray(heatmap_rgb, mode="RGB")

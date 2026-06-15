@@ -50,6 +50,10 @@ def validate_dataset(path: str, product_name: str = "") -> dict:
                 raise ValueError(f"`{ok_dir.name}/` 폴더에 유효한 이미지가 없습니다.")
             meta["folder_tree"] = _build_tree_text(root, meta)
             meta["available_bg_methods"] = _get_available_bg_methods(root, meta)
+            meta["has_background_clean"] = (
+                len(meta["available_bg_methods"]) > 0
+                or (root / "background_clean").is_dir()
+            )
             state = get_state()
             state["dataset_path"] = path
             state["product_name"] = product_name
@@ -73,6 +77,10 @@ def validate_dataset(path: str, product_name: str = "") -> dict:
     meta = _build_mvtec_meta(root)
     meta["folder_tree"] = _build_tree_text(root, meta)
     meta["available_bg_methods"] = _get_available_bg_methods(root, meta)
+    meta["has_background_clean"] = (
+        len(meta["available_bg_methods"]) > 0
+        or (root / "background_clean").is_dir()
+    )
     state = get_state()
     state["dataset_path"] = path
     state["product_name"] = product_name

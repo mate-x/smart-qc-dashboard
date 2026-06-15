@@ -298,44 +298,52 @@ def _efficientad_training_step(
 def _mask_padding_from_anomaly_map(
     amap: np.ndarray,
     image: torch.Tensor,
+    padding_info: tuple[int, int, int, int] | None = None,
     padding_threshold: float = -1.7,
 ) -> np.ndarray:
     """
     resize_with_padding()로 추가된 zero-padding 영역을 anomaly map에서 제거한다.
 
-    zero-padding은 ImageNet 정규화 후 매우 낮은 값(-2.1, -2.0, -1.8)을 가진다.
-    모든 채널이 threshold 미만인 픽셀 = padding → anomaly score를 0으로 설정.
+    padding_info=(offset_x, offset_y, new_w, new_h) 가 제공되면 기하학적으로 정확한
+    직사각형 마스크를 사용한다 — X-ray 검정 배경과 패딩을 올바르게 구분.
 
-    padding 영역이 anomaly map에서 높게 나오면 heatmap 코너가 붉게 표시되는
-    시각적 버그를 유발한다.
+    padding_info 없을 때만 강도 기반 fallback(모든 채널 < -1.7)을 사용하며,
+    이 경우 검정 X-ray 배경도 패딩으로 오인될 수 있다.
     """
     try:
-        if image.dim() == 4 and image.shape[1] == 3:
-            # (1, 3, H, W) → 모든 채널이 threshold 미만인 픽셀 = padding
-            is_padding = (image[0] < padding_threshold).all(dim=0).cpu().numpy()  # (H, W)
-            # 이미지 전체가 padding이거나 padding이 없으면 마스킹 불필요
+        H, W = amap.shape[:2]
+        if padding_info is not None:
+            offset_x, offset_y, new_w, new_h = padding_info
+            padding_mask = np.ones((H, W), dtype=bool)
+            padding_mask[offset_y:offset_y + new_h, offset_x:offset_x + new_w] = False
+            if padding_mask.any() and not padding_mask.all():
+                amap = amap.copy()
+                amap[padding_mask] = 0.0
+        elif image.dim() == 4 and image.shape[1] == 3:
+            # fallback: 강도 기반 (X-ray 검정 배경 오마스킹 가능)
+            is_padding = (image[0] < padding_threshold).all(dim=0).cpu().numpy()
             if is_padding.any() and not is_padding.all():
                 amap = amap.copy()
                 amap[is_padding] = 0.0
     except Exception:
-        pass  # 마스킹 실패 시 원본 반환
+        pass
     return amap
 
 
 def _get_anomaly_map(
     model: object,
     image: torch.Tensor,
+    padding_info: tuple[int, int, int, int] | None = None,
 ) -> np.ndarray:
     """
     단일 이미지 추론 → Anomaly Map (H, W) float32 반환.
 
     anomalib 2.4.x: model.model(image) → InferenceBatch(anomaly_map=...) 반환.
     model(image) 보다 model.model(image)를 먼저 시도해 LightningModule forward 미정의 문제를 회피.
-    padding 영역은 자동으로 0으로 마스킹하여 heatmap 코너 아티팩트를 제거한다.
+    padding_info 가 주어지면 기하학적으로 정확한 패딩 마스킹을 수행한다.
     """
     torch_model = getattr(model, "model", None)
 
-    # model.model → model 순서로 시도 (2.4.x는 torch_model이 더 안정적)
     for m in ([torch_model, model] if torch_model is not None else [model]):
         if m is None:
             continue
@@ -349,7 +357,7 @@ def _get_anomaly_map(
                 amap = output
             if isinstance(amap, torch.Tensor):
                 raw = amap.squeeze().cpu().numpy().astype(np.float32)
-                return _mask_padding_from_anomaly_map(raw, image)
+                return _mask_padding_from_anomaly_map(raw, image, padding_info=padding_info)
         except Exception:
             continue
 
@@ -377,7 +385,7 @@ def _get_anomaly_map(
         patch_map = patch_scores.reshape(spatial_size, spatial_size).cpu().numpy()
         H = W = image.shape[-1]
         raw = cv2.resize(patch_map, (W, H), interpolation=cv2.INTER_LINEAR).astype(np.float32)
-        return _mask_padding_from_anomaly_map(raw, image)
+        return _mask_padding_from_anomaly_map(raw, image, padding_info=padding_info)
 
     raise NotImplementedError(f"알 수 없는 모델 구조: {type(model)}")
 
@@ -474,11 +482,15 @@ def load_model_for_inference(
 def run_inference(
     model: object,
     image_tensor: torch.Tensor,  # (1, C, H, W) — 이미 전처리된 텐서
+    padding_info: tuple[int, int, int, int] | None = None,
 ) -> np.ndarray:
-    """단일 이미지 추론. Anomaly Map (H, W) float32 반환."""
+    """단일 이미지 추론. Anomaly Map (H, W) float32 반환.
+
+    padding_info=(offset_x, offset_y, new_w, new_h) 를 넘기면 기하학적 패딩 마스킹 적용.
+    """
     device = next(model.parameters()).device
     if image_tensor.dim() == 3:
         image_tensor = image_tensor.unsqueeze(0)
     image_tensor = image_tensor.to(device)
     with torch.no_grad():
-        return _get_anomaly_map(model, image_tensor)
+        return _get_anomaly_map(model, image_tensor, padding_info=padding_info)

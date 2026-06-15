@@ -69,6 +69,7 @@ _run: dict = {
     "batch_advance_pending": False,
     "batch_stopping":     False,    # stop_batch_all() 진행 중 플래그
     "set_id":             None,     # 현재 학습 중인 큐 항목의 set_id (배치 자동 실험 세트 식별자)
+    "current_batch_indices": [],
     # 내부
     "_poll_task":         None,
 }
@@ -345,6 +346,7 @@ def start_batch() -> tuple[str, int, str]:
     _run["batch_advance_pending"] = False
     _run["batch_stopping"]        = False
     _run["batch_skip_current"]    = False
+    _run["current_batch_indices"] = [i for i, _ in pending]
 
     first_idx, first_item = pending[0]
     queue_items[first_idx] = {**queue_items[first_idx], "status": "running"}
@@ -688,9 +690,10 @@ async def _advance_batch_queue() -> None:
     pending     = [(i, item) for i, item in enumerate(queue_items) if item.get("status") == "pending"]
 
     if not pending:
-        completed = sum(1 for item in queue_items if item.get("status") == "completed")
-        failed    = sum(1 for item in queue_items if item.get("status") == "failed")
-        skipped   = sum(1 for item in queue_items if item.get("status") == "skipped")
+        current_indices = _run.get("current_batch_indices", [])
+        completed = sum(1 for i in current_indices if queue_items[i].get("status") == "completed")
+        failed    = sum(1 for i in current_indices if queue_items[i].get("status") == "failed")
+        skipped   = sum(1 for i in current_indices if queue_items[i].get("status") == "skipped")
         _run["batch_mode"] = False
         await _broadcast({
             "type":      "batch_completed",

@@ -322,7 +322,7 @@ def _get_score_range(exp_id: str) -> tuple[float, float]:
 def get_triplet_image(
     exp_id: str, class_name: str, image_name: str, threshold: float
 ) -> Image.Image:
-    """원본 / Overlay / Predicted Mask 3개를 가로로 이어 붙인 단일 PIL Image."""
+    """원본 / Heatmap / Predicted Mask 3개를 가로로 이어 붙인 단일 PIL Image."""
     cache = _get_cache(exp_id)
     if cache is None:
         raise ValueError("Anomaly Map 캐시가 없습니다. 먼저 build를 실행하세요.")
@@ -341,13 +341,13 @@ def get_triplet_image(
 
     s_min, s_max = _get_score_range(exp_id)
     original  = load_image(image_paths[idx])
-    overlay   = make_anomaly_overlay(image_paths[idx], anomaly_maps[idx], threshold, s_min, s_max)
     w, h      = original.size
+    heatmap   = anomaly_map_to_heatmap(anomaly_maps[idx], s_min=s_min, s_max=s_max).resize((w, h), Image.BILINEAR)
     predicted = make_predicted_mask(anomaly_maps[idx], threshold, s_min, s_max, target_size=(w, h))
 
     triplet = Image.new("RGB", (w * 3, h))
     triplet.paste(original,  (0,     0))
-    triplet.paste(overlay,   (w,     0))
+    triplet.paste(heatmap,   (w,     0))
     triplet.paste(predicted, (w * 2, 0))
     return triplet
 
@@ -500,7 +500,7 @@ def _build_zip_sync(
                 continue
 
             w, h        = original.size
-            overlay     = make_anomaly_overlay(actual_path, anomaly_maps[cache_idx], threshold, s_min, s_max)
+            heatmap     = anomaly_map_to_heatmap(anomaly_maps[cache_idx], s_min=s_min, s_max=s_max).resize((w, h), Image.BILINEAR)
             predicted   = make_predicted_mask(anomaly_maps[cache_idx], threshold, s_min, s_max, target_size=(w, h))
             gt_mask_pil = _load_gt_mask(actual_path, dataset_path)
 
@@ -509,12 +509,12 @@ def _build_zip_sync(
                 composite = Image.new("RGB", (w * 4, h))
                 composite.paste(original,  (0,      0))
                 composite.paste(gt_rgb,    (w,      0))
-                composite.paste(overlay,   (w * 2,  0))
+                composite.paste(heatmap,   (w * 2,  0))
                 composite.paste(predicted, (w * 3,  0))
             else:
                 composite = Image.new("RGB", (w * 3, h))
                 composite.paste(original,  (0,     0))
-                composite.paste(overlay,   (w,     0))
+                composite.paste(heatmap,   (w,     0))
                 composite.paste(predicted, (w * 2, 0))
 
             img_buf = io.BytesIO()

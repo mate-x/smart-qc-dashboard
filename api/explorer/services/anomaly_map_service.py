@@ -307,12 +307,34 @@ def _resolve_image_components(
 
 
 def _get_score_range(exp_id: str) -> tuple[float, float]:
-    """s_min, s_max 반환. 캐시 우선, 없으면 history.json fallback."""
+    """pixel-level s_min/s_max 반환 (heatmap 시각화용). 캐시 우선, fallback은 image-level."""
     cache = _get_cache(exp_id)
     if cache and "s_min" in cache:
         return cache["s_min"], cache["s_max"]
     exp = _get_experiment(exp_id)
     scores = (exp.get("metrics") or {}).get("anomaly_scores", [])
+    if not scores:
+        return 0.0, 1.0
+    arr = np.array(scores, dtype=np.float64)
+    return float(arr.min()), float(arr.max())
+
+
+def _get_image_level_score_range(exp_id: str) -> tuple[float, float]:
+    """image-level anomaly_scores의 min/max 반환 (threshold와 동일한 스케일).
+
+    threshold는 Tab4 ScoreDistChart에서 image-level score 기준으로 정규화되므로
+    make_predicted_mask() 호출 시 반드시 이 함수의 범위를 사용해야 한다.
+    """
+    cache = _get_cache(exp_id)
+    scores: list[float] = []
+    if cache:
+        scores = cache.get("anomaly_scores", [])
+    if not scores:
+        try:
+            exp = _get_experiment(exp_id)
+            scores = (exp.get("metrics") or {}).get("anomaly_scores", [])
+        except LookupError:
+            pass
     if not scores:
         return 0.0, 1.0
     arr = np.array(scores, dtype=np.float64)
@@ -339,11 +361,12 @@ def get_triplet_image(
     if idx is None:
         raise LookupError(f"이미지를 찾을 수 없습니다: {class_name}/{image_name}")
 
-    s_min, s_max = _get_score_range(exp_id)
+    pix_s_min, pix_s_max = _get_score_range(exp_id)
+    img_s_min, img_s_max = _get_image_level_score_range(exp_id)
     original  = load_image(image_paths[idx])
     w, h      = original.size
-    heatmap   = anomaly_map_to_heatmap(anomaly_maps[idx], s_min=s_min, s_max=s_max).resize((w, h), Image.BILINEAR)
-    predicted = make_predicted_mask(anomaly_maps[idx], threshold, s_min, s_max, target_size=(w, h))
+    heatmap   = anomaly_map_to_heatmap(anomaly_maps[idx], s_min=pix_s_min, s_max=pix_s_max).resize((w, h), Image.BILINEAR)
+    predicted = make_predicted_mask(anomaly_maps[idx], threshold, img_s_min, img_s_max, target_size=(w, h))
 
     triplet = Image.new("RGB", (w * 3, h))
     triplet.paste(original,  (0,     0))
@@ -372,8 +395,8 @@ def get_overlay_image(
     if idx is None:
         raise LookupError(f"이미지를 찾을 수 없습니다: {class_name}/{image_name}")
 
-    s_min, s_max = _get_score_range(exp_id)
-    return make_anomaly_overlay(image_paths[idx], anomaly_maps[idx], threshold, s_min, s_max)
+    img_s_min, img_s_max = _get_image_level_score_range(exp_id)
+    return make_anomaly_overlay(image_paths[idx], anomaly_maps[idx], threshold, img_s_min, img_s_max)
 
 
 def get_predicted_mask_image(
@@ -398,8 +421,8 @@ def get_predicted_mask_image(
 
     original = load_image(image_paths[idx])
     w, h = original.size
-    s_min, s_max = _get_score_range(exp_id)
-    return make_predicted_mask(anomaly_maps[idx], threshold, s_min, s_max, target_size=(w, h))
+    img_s_min, img_s_max = _get_image_level_score_range(exp_id)
+    return make_predicted_mask(anomaly_maps[idx], threshold, img_s_min, img_s_max, target_size=(w, h))
 
 
 def get_original_image(exp_id: str, class_name: str, image_name: str) -> Image.Image:
@@ -470,7 +493,8 @@ def _build_zip_sync(
     dataset_path  = exp.get("dataset_path", "")
     image_paths   = cache["image_paths"]
     anomaly_maps  = cache["anomaly_maps"]
-    s_min, s_max  = _get_score_range(exp_id)
+    pix_s_min, pix_s_max = _get_score_range(exp_id)
+    img_s_min, img_s_max = _get_image_level_score_range(exp_id)
 
     result = get_images(exp_id, threshold, defect_class)
     rows   = result["images"]
@@ -500,8 +524,8 @@ def _build_zip_sync(
                 continue
 
             w, h        = original.size
-            heatmap     = anomaly_map_to_heatmap(anomaly_maps[cache_idx], s_min=s_min, s_max=s_max).resize((w, h), Image.BILINEAR)
-            predicted   = make_predicted_mask(anomaly_maps[cache_idx], threshold, s_min, s_max, target_size=(w, h))
+            heatmap     = anomaly_map_to_heatmap(anomaly_maps[cache_idx], s_min=pix_s_min, s_max=pix_s_max).resize((w, h), Image.BILINEAR)
+            predicted   = make_predicted_mask(anomaly_maps[cache_idx], threshold, img_s_min, img_s_max, target_size=(w, h))
             gt_mask_pil = _load_gt_mask(actual_path, dataset_path)
 
             if gt_mask_pil is not None:
